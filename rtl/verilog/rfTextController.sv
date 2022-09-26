@@ -53,9 +53,9 @@
 //  The controller expects a 128kB memory region to be reserved.
 //
 //  Memory Map:
-//  00000-1DEFF   display ram
-//  1DF00-1DFFF   controller registers
-//  1E000-1FFFF   character bitmap ram
+//  00000-0FFFF   display ram
+//  10000-1FEFF   character bitmap ram
+//  1FF00-1FFFF   controller registers
 //
 //--------------------------------------------------------------------
 // Registers
@@ -93,26 +93,25 @@
 //  47-32   aaaaaaaa aaaaaaaa	 cursor position
 // 05h
 //  15- 0   aaaaaaaa aaaaaaaa  start address (index into display memory)
-// 07h
-//	150 - - aaaaaaaa aaaaaaaa  light pen position
+// 06h
+//  15- 0   aaaaaaaa aaaaaaaa  font address in char bitmap memory
+//  63-32   nnnnnnnn nnnnnnnn  font ram lock "LOCK" or "UNLK"
 //--------------------------------------------------------------------
 //
 // ============================================================================
 
 //`define USE_CLOCK_GATE
-`define INTERNAL_RAMS	1'b1
 
 module rfTextController(
 	rst_i, clk_i, cs_i,
 	cti_i, cyc_i, stb_i, ack_o, wr_i, sel_i, adr_i, dat_i, dat_o,
-	txt_clk_o, txt_cyc_o, txt_stb_o, txt_ack_i, txt_we_o, txt_sel_o, txt_adr_o, txt_dat_o, txt_dat_i,
-	cbm_clk_o, cbm_cyc_o, cbm_stb_o, cbm_ack_i, cbm_we_o, cbm_sel_o, cbm_adr_o, cbm_dat_o, cbm_dat_i,
-	lp_i,
 	dot_clk_i, hsync_i, vsync_i, blank_i, border_i, zrgb_i, zrgb_o, xonoff_i
 );
 parameter num = 4'd1;
 parameter COLS = 8'd64;
 parameter ROWS = 8'd32;
+parameter BUSWID = 64;
+
 
 // Syscon
 input  rst_i;			// reset
@@ -121,37 +120,14 @@ input  clk_i;			// clock
 // Slave signals
 input  cs_i;            // circuit select
 input  [2:0] cti_i;
-input  cyc_i;			// valid bus cycle
-input  stb_i;           // data strobe
-output ack_o;			// data acknowledge
-input  wr_i;			// write
-input  [ 7:0] sel_i;	// byte lane select
+input  cyc_i;				// valid bus cycle
+input  stb_i;       // data strobe
+output ack_o;				// data acknowledge
+input  wr_i;				// write
+input  [BUSWID/8-1:0] sel_i;	// byte lane select
 input  [16:0] adr_i;	// address
-input  [63:0] dat_i;	// data input
-output reg [63:0] dat_o;	// data output
-
-// Master Signals
-output txt_clk_o;
-output reg txt_cyc_o;
-output reg txt_stb_o;
-input txt_ack_i;
-output txt_we_o;
-output [7:0] txt_sel_o;
-output reg [16:0] txt_adr_o;
-output [63:0] txt_dat_o;
-input [63:0] txt_dat_i;
-
-output cbm_clk_o;			// character bitmap data fetch clock
-output reg cbm_cyc_o;
-output reg cbm_stb_o;
-input cbm_ack_i;
-output cbm_we_o;
-output [7:0] cbm_sel_o;
-output reg [15:0] cbm_adr_o;
-output [63:0] cbm_dat_o;
-input [63:0] cbm_dat_i;
-
-input lp_i;				// light pen
+input  [BUSWID-1:0] dat_i;			// data input
+output reg [BUSWID-1:0] dat_o;	// data output
 
 // Video signals
 input dot_clk_i;		// video dot clock
@@ -195,6 +171,7 @@ reg [15:0] cursorPos;
 reg [1:0] cursorType;
 reg [15:0] startAddress;
 reg [15:0] fontAddress;
+reg font_locked;
 reg [ 2:0] rBlink;
 reg [31:0] bdrColor;		// Border color
 reg [ 3:0] pixelWidth;	// horizontal pixel width in clock cycles
@@ -248,32 +225,43 @@ reg rwr_i;
 reg [7:0] rsel_i;
 reg [7:0] wrs_i;
 always_ff @(posedge clk_i)
-	cs_rom <= cs_i && cyc_i && stb_i && (adr_i[16:8] > 9'h1DF);
+	cs_rom <= cs_i && cyc_i && stb_i && (adr_i[16:8] >= 9'h100 && adr_i[16:8] < 9'h1FF);
 always_ff @(posedge clk_i)
-	cs_reg <= cs_i && cyc_i && stb_i && (adr_i[16:8] == 9'h1DF);
+	cs_reg <= cs_i && cyc_i && stb_i && (adr_i[16:8] == 9'h1FF);
 always_ff @(posedge clk_i)
-	cs_text <= cs_i && cyc_i && stb_i && (adr_i[16:8] < 9'h1DF);
+	cs_text <= cs_i && cyc_i && stb_i && (adr_i[16:8] < 9'h100);
 always_ff @(posedge clk_i)
 	cs_any <= cs_i && cyc_i && stb_i;
 always_ff @(posedge clk_i)
-	wrs_i <= {8{wr_i}} & sel_i;
+	wrs_i <= BUSWID==64 ? {8{wr_i}} & sel_i :
+		adr_i[2] ? {{4{wr_i}} & sel_i,4'h0} : {4'h0,{4{wr_i}} & sel_i};
 always_ff @(posedge clk_i)
 	rwr_i <= wr_i;
 always_ff @(posedge clk_i)
-	rsel_i <= sel_i;
+	rsel_i <= BUSWID==64 ? sel_i : adr_i[2] ? {sel_i,4'h0} : {4'h0,sel_i};
 always_ff @(posedge clk_i)
 	radr_i <= adr_i;
 always_ff @(posedge clk_i)
-	rdat_i <= dat_i;	
+	rdat_i <= BUSWID==64 ? dat_i : {2{dat_i}};
 
 // Register outputs
 always @(posedge clk_i)
+if (BUSWID==64)
 	casez({cs_rom,cs_reg,cs_text})
 	3'b1??:	dat_o <= {55'd0,chdat_o};
 	3'b01?:	dat_o <= rego;
 	3'b001:	dat_o <= tdat_o;
-	default:	dat_o <= 64'h0;
+	default:	dat_o <= 'h0;
 	endcase
+else if (BUSWID==32)
+	casez({cs_rom,cs_reg,cs_text})
+	3'b1??:	dat_o <= {23'd0,chdat_o};
+	3'b01?:	dat_o <= radr_i[2] ? rego[63:32] : rego[31:0];
+	3'b001:	dat_o <= radr_i[2] ? tdat_o[63:32] : tdat_o[31:0];
+	default:	dat_o <= 'd0;
+	endcase
+else
+	dat_o <= 'd0;
 
 //always @(posedge clk_i)
 //	if (cs_text) begin
@@ -324,6 +312,7 @@ always_ff @(posedge vclk)
 	txtAddr <= startAddress + rowcol + col;
 
 // Register read-back memory
+// This core to be found under Memory-Cores folder
 // Allows reading back of register values by shadowing them with ram
 
 wire [3:0] rrm_adr = radr_i[6:3];
@@ -443,8 +432,11 @@ always @(posedge clk_i)
 // text screen RAM
 wire [13:0] bram_adr = radr_i[16:3];
 
-`ifdef INTERNAL_RAMS
-syncRam15kx64 screen_ram1
+// Generated using block RAM generator tool from ip catalogue.
+// True dual-port RAM using independent clocks
+// 8192 deep by 64 bits wide, with 8 bit byte write enables.
+// Using primitives output register, so read latency is two.
+syncRam8kx64 screen_ram1
 (
   .clka(clk_i),
   .ena(cs_text),
@@ -463,62 +455,26 @@ syncRam15kx64 screen_ram1
 //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // Character bitmap ROM
 // - room for 512 8x8 characters
+// - This core can be found in the Memory-Cores repository
 //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 wire [63:0] char_bmp;		// character ROM output
 char_ram charRam0
 (
 	.clk_i(clk_i),
 	.cs_i(cs_rom),
-	.we_i(1'b0),
-	.adr_i(bram_adr[13:0]),
+	.we_i(rwr_i & ~font_locked),
+	.adr_i(bram_adr[15:0]),
 	.dat_i(rdat_i[7:0]),
 	.dat_o(chdat_o),
 	.dot_clk_i(vclk),
 	.ce_i(ld_shft),
 	.fontAddress_i(fontAddress),
-	.char_code_i(screen_ram_out[8:0]),
+	.char_code_i(screen_ram_out[12:0]),
 	.maxScanpix_i(maxScanpix),
 	.maxscanline_i(maxScanlinePlusOne),
 	.scanline_i(rowscan[4:0]),
 	.bmp_o(char_bmp)
 );
-`else
-reg [63:0] char_bmp;		// character ROM output
-`endif
-
-reg [63:0] txt_dati;
-reg [31:0] bmp_ndx;
-`ifdef INTERNAL_RAMS
-`else
-always_ff @(posedge vclk)
-	bmp_ndx <= (maxScanlinePlusOne * txt_dati[15:0] + rowscan[4:0]) << tileWidth;
-always_ff @(posedge vclk)
-begin
-	if (ld_shft) begin
-		txt_cyc_o <= 1'b1;
-		txt_stb_o <= 1'b1;
-		txt_adr_o <= {txtAddr[13:0],3'b0};
-		cbm_cyc_o <= 1'b1;
-		cbm_stb_o <= 1'b1;
-		cbm_adr_o <= {bmp_ndx[31:3],3'b0};
-	end
-	if (txt_ack_i) begin
-		txt_cyc_o <= 1'b0;
-		txt_stb_o <= 1'b0;
-		txt_dati <= txt_dat_i;
-	end
-	if (cbm_ack_i) begin
-		cbm_cyc_o <= 1'b0;
-		cbm_stb_o <= 1'b0;
-		case(tileWidth)
-		2'd0:	char_bmp <= cbm_dat_i >> {bmp_ndx[2:0],3'b0};
-		2'd1:	char_bmp <= cbm_dat_i >> {bmp_ndx[2:1],4'b0};
-		2'd2: char_bmp <= cbm_dat_i >> {bmp_ndx[2],5'b0};
-		2'd3:	char_bmp <= cbm_dat_i;
-		endcase
-	end
-end
-`endif
 
 /*
 syncRam4kx9 charRam0
@@ -582,7 +538,7 @@ always @*
 // Register write port
 //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-always @(posedge clk_i)
+always_ff @(posedge clk_i)
 	if (rst_i) begin
 	  por <= 1'b1;
 	  mcm <= 1'b0;
@@ -593,6 +549,7 @@ always @(posedge clk_i)
     bdrColor     <= 32'hFFBF2020;
     startAddress <= 16'h0000;
     fontAddress  <= 16'h0000;
+    font_locked  <= 1'b1;
     cursorStart  <= 5'd00;
     cursorEnd    <= 5'd31;
     cursorPos    <= 16'h0003;
@@ -712,6 +669,8 @@ always @(posedge clk_i)
 				begin
 					if (rsel_i[0]) fontAddress[7:0] <= rdat_i[7:0];
 					if (rsel_i[1]) fontAddress[15:8] <= rdat_i[15:8];
+					if (&rsel_i[7:4])
+						font_locked <= rdat_i[63:32]=="LOCK";
 				end
 			default: ;
 			endcase
@@ -792,44 +751,6 @@ edge_det edv1
 	.ne(),
 	.ee()
 );
-
-// Horizontal counter:
-//
-/*
-HVCounter uhv1
-(
-	.rst(rst_i),
-	.vclk(vclk),
-	.pixcce(1'b1),
-	.sync(hsync_i),
-	.cnt_offs(windowLeft),
-	.pixsz(pixelWidth),
-	.maxpix(maxScanpix),
-	.nxt_pix(nhp),
-	.pos(col),
-	.nxt_pos(nxt_col),
-	.ctr(hctr)
-);
-*/
-
-// Vertical counter:
-//
-/*
-HVCounter uhv2
-(
-	.rst(rst_i),
-	.vclk(vclk),
-	.pixcce(pe_hsync),
-	.sync(vsync_i),
-	.cnt_offs(windowTop),
-	.pixsz(pixelHeight),
-	.maxpix(maxRowScan),
-	.nxt_pix(),
-	.pos(row),
-	.nxt_pos(nxt_row),
-	.ctr(scanline)
-);
-*/
 
 // We generally don't care about the exact reset point, unless debugging in
 // simulation. The counters will eventually cycle to a proper state. A little
