@@ -939,11 +939,12 @@ else begin
 	end
 end
 */
+/*
 reg [1:0] pix1;
 always_ff @(posedge vclk)
 	if (nhp)	
     pix1 <= pix[1:0];
-
+*/
 // Pipelining Effect:
 // - character output is delayed by 2 or 3 character times relative to the video counters
 //   depending on the resolution selected
@@ -960,7 +961,7 @@ always_ff @(posedge vclk)
 // Note the ungated dot clock must be used here, or output from other
 // controllers would not be visible if the clock were gated off.
 always_ff @(posedge dot_clk_i)
-	casez({controller_enable&xonoff_i,blank_i,iblank,border_i,bpix,mcm,pix1})
+	casez({controller_enable&xonoff_i,blank_i,iblank,border_i,bpix,mcm,pix})
 	8'b01??????:	zrgb_o <= 40'h00000000;
 	8'b11??????:	zrgb_o <= 40'h00000000;
 	8'b1001????:	zrgb_o <= {bdrColor[30:27],bdrColor[26:18],3'b0,bdrColor[17:9],3'b0,bdrColor[8:0],3'b0};
