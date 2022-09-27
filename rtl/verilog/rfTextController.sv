@@ -141,8 +141,8 @@ output reg [39:0] zrgb_o;	// output pixel stream
 input xonoff_i;
 
 reg controller_enable;
-reg [39:0] bkColor40, bkColor40d;	// background color
-reg [39:0] fgColor40, fgColor40d;	// foreground color
+reg [39:0] bkColor40, bkColor40d, bkColor40d2;	// background color
+reg [39:0] fgColor40, fgColor40d, fgColor40d2;	// foreground color
 
 wire [1:0] pix;				// pixel value from character generator 1=on,0=off
 
@@ -206,7 +206,7 @@ wire [5:0] txtZorder;
 reg  [30:0] txtTcCode;	// transparent color code
 reg [30:0] tileColor1;
 reg [30:0] tileColor2;
-reg  bgt, bgtd;
+reg  bgt, bgtd, bgtd2;
 
 wire [63:0] tdat_o;
 wire [8:0] chdat_o;
@@ -890,11 +890,17 @@ always_ff @(posedge vclk)
 	if (ld_shft)
 		bkColor40d <= bkColor40;
 always_ff @(posedge vclk)
+	if (nhp)
+		bkColor40d2 <= bkColor40d;
+always_ff @(posedge vclk)
 	if (ld_shft)
 		fgColor40 <= {txtZorder1[5:2],txtFgCode1[20:14],5'b0,txtFgCode1[13:7],5'b0,txtFgCode1[6:0],5'b0};
 always_ff @(posedge vclk)
 	if (ld_shft)
 		fgColor40d <= fgColor40;
+always_ff @(posedge vclk)
+	if (nhp)
+		fgColor40d2 <= fgColor40d;
 
 always_ff @(posedge vclk)
 	if (ld_shft)
@@ -902,6 +908,9 @@ always_ff @(posedge vclk)
 always_ff @(posedge vclk)
 	if (ld_shft)
 		bgtd <= bgt;
+always_ff @(posedge vclk)
+	if (nhp)
+		bgtd2 <= bgtd;
 
 // Convert character bitmap to pixels
 reg [63:0] charout1;
@@ -967,11 +976,11 @@ always_ff @(posedge dot_clk_i)
 	8'b1001????:	zrgb_o <= {bdrColor[30:27],bdrColor[26:18],3'b0,bdrColor[17:9],3'b0,bdrColor[8:0],3'b0};
 	//6'b10010?:	zrgb_o <= 32'hFFBF2020;
 	//6'b10011?:	zrgb_o <= 32'hFFDFDFDF;
-	8'b1000?00?:	zrgb_o <= (zrgb_i[39:36] > bkColor40d[39:36]) ? zrgb_i : bkColor40d;
+	8'b1000?00?:	zrgb_o <= (zrgb_i[39:36] > bkColor40d2[39:36]) ? zrgb_i : bkColor40d2;
 //	8'b1000?0?0:	zrgb_o <= bkColor32d;
-	8'b1000?01?:	zrgb_o <= fgColor40d; // ToDo: compare z-order
-	8'b1000?100:	zrgb_o <= (zrgb_i[39:36] > bkColor40d[39:36]) ? zrgb_i : bkColor40d;
-	8'b1000?101:	zrgb_o <= fgColor40d;
+	8'b1000?01?:	zrgb_o <= fgColor40d2; // ToDo: compare z-order
+	8'b1000?100:	zrgb_o <= (zrgb_i[39:36] > bkColor40d2[39:36]) ? zrgb_i : bkColor40d2;
+	8'b1000?101:	zrgb_o <= fgColor40d2;
 	8'b1000?110:	zrgb_o <= {tileColor1[30:27],tileColor1[26:18],3'b0,tileColor1[17:9],3'b0,tileColor1[8:0],3'b0};
 	8'b1000?111:	zrgb_o <= {tileColor2[30:27],tileColor2[26:18],3'b0,tileColor2[17:9],3'b0,tileColor2[8:0],3'b0};
 //	6'b1010?0:	zrgb_o <= bgtd ? zrgb_i : bkColor32d;
