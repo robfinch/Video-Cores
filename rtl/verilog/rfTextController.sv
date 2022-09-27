@@ -67,9 +67,10 @@
 //	43-32       nnnn nnnnnnnn  window left       (horizontal sync position - reference for left edge of displayed)
 //	59-48       nnnn nnnnnnnn  window top        (vertical sync position - reference for the top edge of displayed)
 // 01h
-//	 4- 0               nnnnn  maximum scan line (char ROM max value is 7)
+//	 4- 0               nnnnn  char height in pixels, maximum scan line (char ROM max value is 7)
 //  11- 8							   wwww	 pixel size - width 
 //  15-12							   hhhh	 pixel size - height 
+//  20-16               nnnnn  char width in pixels
 //  24                      r  reset state bit
 //  32                      e  controller enable
 //  40                      m  multi-color mode
@@ -143,7 +144,7 @@ reg controller_enable;
 reg [39:0] bkColor40, bkColor40d;	// background color
 reg [39:0] fgColor40, fgColor40d;	// foreground color
 
-reg [63:0] pix;				// pixel value from character generator 1=on,0=off
+wire [1:0] pix;				// pixel value from character generator 1=on,0=off
 
 reg por;
 wire vclk;
@@ -248,14 +249,14 @@ always_ff @(posedge clk_i)
 always @(posedge clk_i)
 if (BUSWID==64)
 	casez({cs_rom,cs_reg,cs_text})
-	3'b1??:	dat_o <= {55'd0,chdat_o};
+	3'b1??:	dat_o <= {8{chdat_o}};
 	3'b01?:	dat_o <= rego;
 	3'b001:	dat_o <= tdat_o;
 	default:	dat_o <= 'h0;
 	endcase
 else if (BUSWID==32)
 	casez({cs_rom,cs_reg,cs_text})
-	3'b1??:	dat_o <= {23'd0,chdat_o};
+	3'b1??:	dat_o <= {4{chdat_o}};
 	3'b01?:	dat_o <= radr_i[2] ? rego[63:32] : rego[31:0];
 	3'b001:	dat_o <= radr_i[2] ? tdat_o[63:32] : tdat_o[31:0];
 	default:	dat_o <= 'd0;
@@ -463,7 +464,7 @@ char_ram charRam0
 	.clk_i(clk_i),
 	.cs_i(cs_rom),
 	.we_i(rwr_i & ~font_locked),
-	.adr_i(bram_adr[15:0]),
+	.adr_i(radr_i[15:0]),
 	.dat_i(rdat_i[7:0]),
 	.dat_o(chdat_o),
 	.dot_clk_i(vclk),
@@ -505,31 +506,12 @@ always @(posedge vclk)
 always @(posedge vclk)
 	if (ld_shft) txtZorder1 <= screen_ram_out[63:58];
 
-//--------------------------------------------------------------------
-// Light Pen
-//--------------------------------------------------------------------
-wire lpe;
-edge_det u1 (.rst(rst_i), .clk(clk_i), .ce(1'b1), .i(lp_i), .pe(lpe), .ne(), .ee() );
-
-always @(posedge clk_i)
-	if (rst_i)
-		penAddr <= 32'h0000_0000;
-	else begin
-		if (lpe)
-			penAddr <= txtAddr;
-	end
-
-
 //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // Register read port
 //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-always @*
-	if (cs_reg) begin
-		case(rrm_adr)
-		4'd7:		  rego <= penAddr;
-		default:	rego <= rrm_o;
-		endcase
-	end
+always_comb
+	if (cs_reg)
+		rego <= rrm_o;
 	else
 		rego <= 64'h0000;
 
@@ -577,7 +559,7 @@ always_ff @(posedge clk_i)
       pixelHeight  <= 4'd0;		// 600 pixels
       numCols      <= COLS;
       numRows      <= ROWS;
-      maxRowScan  <= 5'd17;
+      maxRowScan  <= 6'd17;
       maxScanpix   <= 6'd11;
       rBlink       <= 3'b111;		// 01 = non display
       charOutDelay <= 8'd7;
@@ -619,6 +601,7 @@ always_ff @(posedge clk_i)
 						pixelHeight <= rdat_i[15:12];
 						pixelWidth  <= rdat_i[11:8];	// horizontal pixel width
 					end
+					if (rsel_i[2]) maxScanpix <= rdat_i[20:16];
 					if (rsel_i[3]) por <= rdat_i[24];
 					if (rsel_i[4]) controller_enable <= rdat_i[32];
 					if (rsel_i[5]) mcm <= rdat_i[40];
@@ -868,7 +851,7 @@ end
 // Takes 3 clock for scanline to become stable, but should be stable before any
 // chars are displayed.
 reg [13:0] rxmslp1;
-always @(posedge vclk)
+always_ff @(posedge vclk)
 	maxScanlinePlusOne <= maxRowScan + 4'd1;
 //always @(posedge vclk)
 //	rxmslp1 <= row * maxScanlinePlusOne;
@@ -878,7 +861,7 @@ always @(posedge vclk)
 
 // Blink counter
 //
-always @(posedge vclk)
+always_ff @(posedge vclk)
 if (sym_rst)
 	bcnt <= 6'd0;
 else begin
@@ -887,7 +870,7 @@ else begin
 end
 
 reg blink_en;
-always @(posedge vclk)
+always_ff @(posedge vclk)
 	blink_en <= (cursorPos+3==txtAddr) && (rowscan[4:0] >= cursorStart) && (rowscan[4:0] <= cursorEnd);
 
 VT151 ub2
@@ -900,29 +883,29 @@ VT151 ub2
 	.z_n()
 );
 
-always @(posedge vclk)
+always_ff @(posedge vclk)
 	if (ld_shft)
 		bkColor40 <= {txtZorder1[5:2],txtBkCode1[20:14],5'b0,txtBkCode1[13:7],5'b0,txtBkCode1[6:0],5'b0};
-always @(posedge vclk)
-	if (nhp)
+always_ff @(posedge vclk)
+	if (ld_shft)
 		bkColor40d <= bkColor40;
-always @(posedge vclk)
+always_ff @(posedge vclk)
 	if (ld_shft)
 		fgColor40 <= {txtZorder1[5:2],txtFgCode1[20:14],5'b0,txtFgCode1[13:7],5'b0,txtFgCode1[6:0],5'b0};
-always @(posedge vclk)
-	if (nhp)
+always_ff @(posedge vclk)
+	if (ld_shft)
 		fgColor40d <= fgColor40;
 
-always @(posedge vclk)
+always_ff @(posedge vclk)
 	if (ld_shft)
 		bgt <= txtBkCode1=={txtTcCode[26:20],txtTcCode[17:11],txtTcCode[8:2]};
-always @(posedge vclk)
-	if (nhp)
+always_ff @(posedge vclk)
+	if (ld_shft)
 		bgtd <= bgt;
 
 // Convert character bitmap to pixels
 reg [63:0] charout1;
-always @(posedge vclk)
+always_ff @(posedge vclk)
 	charout1 <= blink ? (char_bmp ^ curout) : char_bmp;
 
 // Convert parallel to serial
@@ -933,7 +916,7 @@ ParallelToSerial ups1
 	.mcm(mcm),
 	.ce(nhp),
 	.ld(ld_shft),
-	.a(maxScanpix[5:3]),
+	.a(maxScanpix[5:0]),
 	.qin(2'b0),
 	.d(charout1),
 	.qh(pix)
