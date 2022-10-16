@@ -66,23 +66,24 @@
 //  19-16                dddd  character output delay
 //	43-32       nnnn nnnnnnnn  window left       (horizontal sync position - reference for left edge of displayed)
 //	59-48       nnnn nnnnnnnn  window top        (vertical sync position - reference for the top edge of displayed)
-// 01h
-//	 4- 0               nnnnn  char height in pixels, maximum scan line (char ROM max value is 7)
+// 08h
+//	 5- 0              nnnnnn  char height in pixels, maximum scan line
 //  11- 8							   wwww	 pixel size - width 
 //  15-12							   hhhh	 pixel size - height 
-//  20-16               nnnnn  char width in pixels
+//  21-16              nnnnnn  char width in pixels
 //  24                      r  reset state bit
 //  32                      e  controller enable
 //  40                      m  multi-color mode
+//  41                      a  anti-alias mode
 //  48-52               nnnnn  yscroll
 //  56-60               nnnnn  xscroll
-// 02h
-//	30- 0   cccccccc cccccccc  color code for transparent background RGB 9,9,9,4 (only RGB 7,7,7 used)
-//  63-32   cccc...cccc        border color ZRGB 9,9,9,4
-// 03h
+// 10h
+//	30- 0   cccccccc cccccccc  color code for transparent background RGB 4,9,9,9 (only RGB 7,7,7 used)
+//  63-32   cccc...cccc        border color ZRGB 4,9,9,9
+// 18h
 //	30- 0   cccccccc cccccccc  tile color code 1
 //  62-32   cccccccc cccccccc  tile color code 2
-// 04h
+// 20h
 //   4- 0               eeeee	 cursor end
 //   7- 5                 bbb  blink control
 //                             BP: 00=no blink
@@ -90,18 +91,20 @@
 //                             BP: 10=1/16 field rate blink
 //                             BP: 11=1/32 field rate blink
 //  12- 8               sssss  cursor start
-//  15-14									 tt	 cursor image type (box, underline, sidebar, asterisk
+//  15-13									ttt	 cursor image type (none, box, underline, sidebar, checker, solid
 //  47-32   aaaaaaaa aaaaaaaa	 cursor position
-// 05h
+// 28h
 //  15- 0   aaaaaaaa aaaaaaaa  start address (index into display memory)
-// 06h
+// 30h
 //  15- 0   aaaaaaaa aaaaaaaa  font address in char bitmap memory
+//  31-24              dddddd  font ascent
 //  63-32   nnnnnnnn nnnnnnnn  font ram lock "LOCK" or "UNLK"
 //--------------------------------------------------------------------
 //
 // ============================================================================
 
 //`define USE_CLOCK_GATE
+//`define SUPPORT_AAM	1
 
 module rfTextController(
 	rst_i, clk_i, cs_i,
@@ -148,15 +151,9 @@ wire [1:0] pix;				// pixel value from character generator 1=on,0=off
 
 reg por;
 wire vclk;
-assign txt_clk_o = vclk;
-assign txt_we_o = por;
-assign txt_sel_o = 8'hFF;
-assign cbm_clk_o = vclk;
-assign cbm_we_o = 1'b0;
-assign cbm_sel_o = 8'hFF;
 
 reg [63:0] rego;
-reg [4:0] yscroll;
+reg [5:0] yscroll;
 reg [5:0] xscroll;
 reg [11:0] windowTop;
 reg [11:0] windowLeft;
@@ -164,33 +161,35 @@ reg [ 7:0] numCols;
 reg [ 7:0] numRows;
 reg [ 7:0] charOutDelay;
 reg [ 1:0] mode;
-reg [ 4:0] maxRowScan;
+reg [ 5:0] maxRowScan;
 reg [ 5:0] maxScanpix;
 reg [1:0] tileWidth;		// width of tile in bytes (0=1,1=2,2=4,3=8)
-reg [ 4:0] cursorStart, cursorEnd;
+reg [ 5:0] cursorStart, cursorEnd;
 reg [15:0] cursorPos;
-reg [1:0] cursorType;
+reg [2:0] cursorType;
 reg [15:0] startAddress;
 reg [15:0] fontAddress;
 reg font_locked;
+reg [5:0] fontAscent;
 reg [ 2:0] rBlink;
 reg [31:0] bdrColor;		// Border color
 reg [ 3:0] pixelWidth;	// horizontal pixel width in clock cycles
 reg [ 3:0] pixelHeight;	// vertical pixel height in scan lines
 reg mcm;								// multi-color mode
+reg aam;								// anti-alias mode
 
 wire [11:0] hctr;		// horizontal reference counter (counts clocks since hSync)
 wire [11:0] scanline;	// scan line
 reg [ 7:0] row;		// vertical reference counter (counts rows since vSync)
 reg [ 7:0] col;		// horizontal column
-reg [ 4:0] rowscan;	// scan line within row
+reg [ 5:0] rowscan;	// scan line within row
 reg [ 5:0] colscan;	// pixel column number within cell
 wire nxt_row;			// when to increment the row counter
 wire nxt_col;			// when to increment the column counter
 reg [ 5:0] bcnt;		// blink timing counter
 wire blink;
 reg  iblank;
-reg [4:0] maxScanlinePlusOne;
+reg [5:0] maxScanlinePlusOne;
 
 wire nhp;				// next horizontal pixel
 wire ld_shft = nxt_col & nhp;
@@ -209,9 +208,7 @@ reg [30:0] tileColor2;
 reg  bgt, bgtd, bgtd2;
 
 wire [63:0] tdat_o;
-wire [8:0] chdat_o;
-
-wire [2:0] scanindex = rowscan[2:0];
+wire [63:0] chdat_o;
 
 //--------------------------------------------------------------------
 // bus interfacing
@@ -249,14 +246,14 @@ always_ff @(posedge clk_i)
 always @(posedge clk_i)
 if (BUSWID==64)
 	casez({cs_rom,cs_reg,cs_text})
-	3'b1??:	dat_o <= {8{chdat_o}};
+	3'b1??:	dat_o <= chdat_o;
 	3'b01?:	dat_o <= rego;
 	3'b001:	dat_o <= tdat_o;
 	default:	dat_o <= 'h0;
 	endcase
 else if (BUSWID==32)
 	casez({cs_rom,cs_reg,cs_text})
-	3'b1??:	dat_o <= {4{chdat_o}};
+	3'b1??:	dat_o <= radr_i[2] ? chdat_o[63:32] : chdat_o[31:0];
 	3'b01?:	dat_o <= radr_i[2] ? rego[63:32] : rego[31:0];
 	3'b001:	dat_o <= radr_i[2] ? tdat_o[63:32] : tdat_o[31:0];
 	default:	dat_o <= 'd0;
@@ -282,7 +279,7 @@ ack_gen #(
 uag1 (
 	.clk_i(clk_i),
 	.ce_i(1'b1),
-	.i(cs_any),
+	.i(cs_any & ~rwr_i),
 	.we_i(cs_any & rwr_i),
 	.o(ack_o),
 	.rid_i(0),
@@ -399,16 +396,15 @@ regReadbackMem #(.WID(8)) rrm3H
   .o(rrm_o[63:56])
 );
 
-wire [23:0] lfsr1_o;
-lfsr #(24) ulfsr1(rst_i, dot_clk_i, 1'b1, 1'b0, lfsr1_o);
+wire [26:0] lfsr1_o;
+lfsr27 #(.WID(27)) ulfsr1(rst_i, dot_clk_i, 1'b1, 1'b0, lfsr1_o);
 wire [63:0] lfsr_o = {6'h20,
-												lfsr1_o[23:21],4'b0,lfsr1_o[20:18],4'b0,lfsr1_o[17:16],5'b0,
-												lfsr1_o[15:13],4'b0,lfsr1_o[12:10],4'b0,lfsr1_o[9:8],5'b0,
-												8'h00,lfsr1_o[7:0]
+												lfsr1_o[26:24],4'b0,lfsr1_o[23:21],4'b0,lfsr1_o[20:18],4'b0,
+												lfsr1_o[17:15],4'b0,lfsr1_o[14:12],4'b0,lfsr1_o[11:9],4'b0,
+												7'h00,lfsr1_o[8:0]
 										};
-assign m_dat_o = lfsr_o;									
 
-/*
+/* This snippit of code for performing burst accesses, under construction.
 wire pe_cs;
 edge_det u1(.rst(rst_i), .clk(clk_i), .ce(1'b1), .i(cs_text), .pe(pe_cs), .ne(), .ee() );
 
@@ -430,42 +426,41 @@ reg [13:0] radr;
 always @(posedge clk_i)
 	radr <= pe_cs ? adr_i[16:3] : ctr;
 */
-// text screen RAM
-wire [13:0] bram_adr = radr_i[16:3];
 
-// Generated using block RAM generator tool from ip catalogue.
-// True dual-port RAM using independent clocks
-// 8192 deep by 64 bits wide, with 8 bit byte write enables.
-// Using primitives output register, so read latency is two.
-syncRam8kx64 screen_ram1
+//- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+// text screen RAM
+//- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+rfTextScreenRam screen_ram1
 (
-  .clka(clk_i),
-  .ena(cs_text),
-  .wea(wrs_i),
-  .addra(bram_adr),
-  .dina(rdat_i),
-  .douta(tdat_o),
-  .clkb(vclk),
-  .enb(ld_shft|por),
-  .web({8{por}}),
-  .addrb(txtAddr[13:0]),
-  .dinb(lfsr_o),
-  .doutb(screen_ram_out)
+	.clka_i(clk_i),
+	.csa_i(cs_text),
+	.wea_i(rwr_i),
+	.sela_i(rsel_i),
+	.adra_i(radr_i[15:3]),
+	.data_i(rdat_i),
+	.data_o(tdat_o),
+	.clkb_i(vclk),
+	.csb_i(ld_shft|por),
+	.web_i(por),
+	.selb_i(8'hFF),
+	.adrb_i(txtAddr[12:0]),
+	.datb_i(lfsr_o), 
+	.datb_o(screen_ram_out)
 );
 
 //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-// Character bitmap ROM
-// - room for 512 8x8 characters
-// - This core can be found in the Memory-Cores repository
+// Character bitmap RAM
+// - room for 8160 8x8 characters
 //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 wire [63:0] char_bmp;		// character ROM output
-char_ram charRam0
+rfTextCharRam charRam0
 (
 	.clk_i(clk_i),
 	.cs_i(cs_rom),
 	.we_i(rwr_i & ~font_locked),
-	.adr_i(radr_i[15:0]),
-	.dat_i(rdat_i[7:0]),
+	.sel_i(rsel_i),
+	.adr_i(radr_i[15:3]),
+	.dat_i(rdat_i[63:0]),
 	.dat_o(chdat_o),
 	.dot_clk_i(vclk),
 	.ce_i(ld_shft),
@@ -473,27 +468,9 @@ char_ram charRam0
 	.char_code_i(screen_ram_out[12:0]),
 	.maxScanpix_i(maxScanpix),
 	.maxscanline_i(maxScanlinePlusOne),
-	.scanline_i(rowscan[4:0]),
+	.scanline_i(rowscan[5:0]),
 	.bmp_o(char_bmp)
 );
-
-/*
-syncRam4kx9 charRam0
-(
-  .clka(clk_i),    // input wire clka
-  .ena(cs_rom),      // input wire ena
-  .wea(1'b0),//rwr_i),      // input wire [0 : 0] wea
-  .addra(bram_adr),  // input wire [11 : 0] addra
-  .dina(rdat_i[8:0]),    // input wire [8 : 0] dina
-  .douta(chdat_o),  // output wire [8 : 0] douta
-  .clkb(vclk),    // input wire clkb
-  .enb(ld_shft),      // input wire enb
-  .web(1'b0),      // input wire [0 : 0] web
-  .addrb({screen_ram_out[8:0],scanline[2:0]}),  // input wire [11 : 0] addrb
-  .dinb(9'h0),    // input wire [8 : 0] dinb
-  .doutb(char_bmp)  // output wire [8 : 0] doutb
-);
-*/
 
 // pipeline delay - sync color with character bitmap output
 reg [20:0] txtBkCode1;
@@ -524,18 +501,20 @@ always_ff @(posedge clk_i)
 	if (rst_i) begin
 	  por <= 1'b1;
 	  mcm <= 1'b0;
+	  aam <= 1'b0;
 	  controller_enable <= 1'b1;
     xscroll 		 <= 5'd0;
     yscroll 		 <= 5'd0;
     txtTcCode    <= 24'h1ff;
     bdrColor     <= 32'hFFBF2020;
     startAddress <= 16'h0000;
-    fontAddress  <= 16'h0000;
+    fontAddress  <= 16'h0008;
     font_locked  <= 1'b1;
+    fontAscent   <= 6'd12;
     cursorStart  <= 5'd00;
     cursorEnd    <= 5'd31;
     cursorPos    <= 16'h0003;
-    cursorType 	 <= 2'b00;
+    cursorType 	 <= 3'd4;	// checker
 // 104x63
 /*
 		windowTop    <= 12'd26;
@@ -551,7 +530,7 @@ always_ff @(posedge clk_i)
 		pixelWidth   <= 4'd1;		// 681 pixels
 		pixelHeight  <= 4'd1;		// 384 pixels
 */
-		// 48x29
+		// 64x32
 		if (num==4'd1) begin
       windowTop    <= 12'd4058;//12'd16;
       windowLeft   <= 12'd3956;//12'd86;
@@ -559,7 +538,7 @@ always_ff @(posedge clk_i)
       pixelHeight  <= 4'd0;		// 600 pixels
       numCols      <= COLS;
       numRows      <= ROWS;
-      maxRowScan  <= 6'd17;
+      maxRowScan   <= 6'd17;
       maxScanpix   <= 6'd11;
       rBlink       <= 3'b111;		// 01 = non display
       charOutDelay <= 8'd7;
@@ -571,7 +550,7 @@ always_ff @(posedge clk_i)
       pixelHeight  <= 4'd0;        // 600 pixels
       numCols      <= 40;
       numRows      <= 25;
-      maxRowScan  <= 5'd7;
+      maxRowScan   <= 5'd7;
       maxScanpix   <= 6'd7;
       rBlink       <= 3'b111;        // 01 = non display
       charOutDelay <= 8'd6;
@@ -604,7 +583,11 @@ always_ff @(posedge clk_i)
 					if (rsel_i[2]) maxScanpix <= rdat_i[20:16];
 					if (rsel_i[3]) por <= rdat_i[24];
 					if (rsel_i[4]) controller_enable <= rdat_i[32];
-					if (rsel_i[5]) mcm <= rdat_i[40];
+					if (rsel_i[5])
+						begin
+						 	mcm <= rdat_i[40];
+						 	aam <= rdat_i[41];
+						end
 					if (rsel_i[6]) yscroll <= rdat_i[52:48];
 					if (rsel_i[7]) xscroll <= rdat_i[60:56];
 				end
@@ -638,7 +621,7 @@ always_ff @(posedge clk_i)
 					end
 					if (rsel_i[1]) begin
 						cursorStart <= rdat_i[12:8];	// scan line cursor ends on
-						cursorType  <= rdat_i[15:14];
+						cursorType  <= rdat_i[15:13];
 					end
 					if (rsel_i[4]) cursorPos[7:0] <= rdat_i[39:32];
 					if (rsel_i[5]) cursorPos[15:8] <= rdat_i[47:40];
@@ -652,8 +635,13 @@ always_ff @(posedge clk_i)
 				begin
 					if (rsel_i[0]) fontAddress[7:0] <= rdat_i[7:0];
 					if (rsel_i[1]) fontAddress[15:8] <= rdat_i[15:8];
-					if (&rsel_i[7:4])
-						font_locked <= rdat_i[63:32]=="LOCK";
+					if (rsel_i[3]) fontAscent[5:0] <= rdat_i[5:0];
+					if (&rsel_i[7:4]) begin
+						if (rdat_i[63:32]=="LOCK")
+							font_locked <= 1'b1;
+						else if (rdat_i[63:32]=="UNLK")
+							font_locked <= 1'b0;
+					end
 				end
 			default: ;
 			endcase
@@ -662,50 +650,65 @@ always_ff @(posedge clk_i)
 
 
 //--------------------------------------------------------------------
+// Cursor image is computed based on the font size, so the available
+// hardware cursors are really simple. More sophisticated hardware
+// cursors can be had via the sprite controller.
 //--------------------------------------------------------------------
 
-// "Box" cursor bitmap
-reg [7:0] curout;
-always @*
-	case({cursorType,scanindex})
-	// Box cursor
-	5'b00_000:	curout = 8'b11111110;
-	5'b00_001:	curout = 8'b10000010;
-	5'b00_010:	curout = 8'b10000010;
-	5'b00_011:	curout = 8'b10000010;
-	5'b00_100:	curout = 8'b10000010;
-	5'b00_101:	curout = 8'b10000010;
-	5'b00_110:	curout = 8'b10010010;
-	5'b00_111:	curout = 8'b11111110;
-	// vertical bar cursor
-	5'b01_000:	curout = 8'b11000000;
-	5'b01_001:	curout = 8'b10000000;
-	5'b01_010:	curout = 8'b10000000;
-	5'b01_011:	curout = 8'b10000000;
-	5'b01_100:	curout = 8'b10000000;
-	5'b01_101:	curout = 8'b10000000;
-	5'b01_110:	curout = 8'b10000000;
-	5'b01_111:	curout = 8'b11000000;
-	// underline cursor
-	5'b10_000:	curout = 8'b00000000;
-	5'b10_001:	curout = 8'b00000000;
-	5'b10_010:	curout = 8'b00000000;
-	5'b10_011:	curout = 8'b00000000;
-	5'b10_100:	curout = 8'b00000000;
-	5'b10_101:	curout = 8'b00000000;
-	5'b10_110:	curout = 8'b00000000;
-	5'b10_111:	curout = 8'b11111111;
-	// Asterisk
-	5'b11_000:	curout = 8'b00000000;
-	5'b11_001:	curout = 8'b00000000;
-	5'b11_010:	curout = 8'b00100100;
-	5'b11_011:	curout = 8'b00011000;
-	5'b11_100:	curout = 8'b01111110;
-	5'b11_101:	curout = 8'b00011000;
-	5'b11_110:	curout = 8'b00100100;
-	5'b11_111:	curout = 8'b00000000;
+reg [31:0] curout;
+wire [31:0] curout1;
+integer n2;
+always_ff @(posedge vclk)
+if (ld_shft) begin
+	curout = 'd0;
+	case(cursorType)
+	// No cursor
+	3'd0:	;
+	// "Box" cursor
+	3'd1:
+		begin
+			case(rowscan)
+			maxRowScan,5'd0: curout = 32'hFFFFFFFF;
+			/*
+			maxRowScan-1:
+				if (rowscan==maxRowScan-1) begin
+					curout[maxScanpix[5:1]] = 1'b1;
+					curout[maxScanpix[5:1]+1] = 1'b1;
+				end
+			*/
+			default:
+				begin
+					curout[maxScanpix] = 1'b1;
+					curout[0] = 1'b1;
+				end
+			endcase
+		end
+	// Vertical Line cursor
+	3'd2:	curout[maxScanpix] = 1'b1;
+	// Underline cursor
+	3'd3:
+		if (rowscan==fontAscent)
+			curout = 32'hFFFFFFFF;
+	// Checker cursor
+	3'd4:	curout = rowscan[1] ? 32'h33333333 : 32'hCCCCCCCC;
+	// Solid cursor
+	3'd7:	curout = 32'hFFFFFFFF;
+	default:	curout = 32'hFFFFFFFF;
 	endcase
+end
 
+ft_delay
+#(
+	.WID(32),
+	.DEP(3)
+)
+uftd1
+(
+	.clk(vclk),
+	.ce(ld_shft),
+	.i(curout),
+	.o(curout1)
+);
 
 //-------------------------------------------------------------
 // Video Stuff
@@ -853,10 +856,6 @@ end
 reg [13:0] rxmslp1;
 always_ff @(posedge vclk)
 	maxScanlinePlusOne <= maxRowScan + 4'd1;
-//always @(posedge vclk)
-//	rxmslp1 <= row * maxScanlinePlusOne;
-//always @(posedge vclk)
-//	scanline <= scanline - rxmslp1;
 
 
 // Blink counter
@@ -871,7 +870,7 @@ end
 
 reg blink_en;
 always_ff @(posedge vclk)
-	blink_en <= (cursorPos+3==txtAddr) && (rowscan[4:0] >= cursorStart) && (rowscan[4:0] <= cursorEnd);
+	blink_en <= (cursorPos+charOutDelay-1==txtAddr);// && (rowscan[4:0] >= cursorStart) && (rowscan[4:0] <= cursorEnd);
 
 VT151 ub2
 (
@@ -915,14 +914,15 @@ always_ff @(posedge vclk)
 // Convert character bitmap to pixels
 reg [63:0] charout1;
 always_ff @(posedge vclk)
-	charout1 <= blink ? (char_bmp ^ curout) : char_bmp;
+	charout1 <= blink ? (char_bmp ^ curout1) : char_bmp;
 
 // Convert parallel to serial
-ParallelToSerial ups1
+rfTextShiftRegister ups1
 (
 	.rst(rst_i),
 	.clk(vclk),
 	.mcm(mcm),
+	.aam(aam),
 	.ce(nhp),
 	.ld(ld_shft),
 	.a(maxScanpix[5:0]),
@@ -930,30 +930,7 @@ ParallelToSerial ups1
 	.d(charout1),
 	.qh(pix)
 );
-/*
-always_ff @(posedge vclk)
-if (rst_i) begin
-	pix <= 64'd0;
-end
-else begin
-	if (nhp) begin
-		if (ld_shft)
-			pix <= charout1;
-		else begin
-			if (mcm)
-				pix <= {2'b00,pix[63:2]};
-			else
-				pix <= {1'b0,pix[63:1]};
-		end
-	end
-end
-*/
-/*
-reg [1:0] pix1;
-always_ff @(posedge vclk)
-	if (nhp)	
-    pix1 <= pix[1:0];
-*/
+
 // Pipelining Effect:
 // - character output is delayed by 2 or 3 character times relative to the video counters
 //   depending on the resolution selected
@@ -963,28 +940,52 @@ wire bpix = hctr[2] ^ rowscan[4];// ^ blink;
 always_ff @(posedge vclk)
 	if (nhp)	
 		iblank <= (row >= numRows) || (col >= numCols + charOutDelay) || (col < charOutDelay);
-	
+
+`ifdef SUPPORT_AAM
+function [11:0] fnBlendComponent;
+input [11:0] c1;
+input [11:0] c2;
+input [1:0] pix;
+case(pix)
+2'b00:	fnBlendComponent = c2;
+2'b01:	fnBlendComponent = ((c1 * 4'd5) + (c2 * 4'd11)) >> 4;
+2'b10:	fnBlendComponent = ((c1 * 4'd11) + (c2 * 4'd5)) >> 4;
+2'b11:	fnBlendComponent = c1;
+endcase
+endfunction
+
+function [39:0] fnBlend;
+input [39:0] c1;
+input [39:0] c2;
+input [1:0] pix;
+fnBlend = {
+	|pix ? c1[39:36] : c2[39:36],
+	fnBlendComponent(c1[35:24],c2[35:24]),
+	fnBlendComponent(c1[23:12],c2[23:12]),
+	fnBlendComponent(c1[11: 0],c2[11: 0])
+};
+endfunction
+`endif
 
 // Choose between input RGB and controller generated RGB
 // Select between foreground and background colours.
 // Note the ungated dot clock must be used here, or output from other
 // controllers would not be visible if the clock were gated off.
 always_ff @(posedge dot_clk_i)
-	casez({controller_enable&xonoff_i,blank_i,iblank,border_i,bpix,mcm,pix})
-	8'b01??????:	zrgb_o <= 40'h00000000;
-	8'b11??????:	zrgb_o <= 40'h00000000;
-	8'b1001????:	zrgb_o <= {bdrColor[30:27],bdrColor[26:18],3'b0,bdrColor[17:9],3'b0,bdrColor[8:0],3'b0};
-	//6'b10010?:	zrgb_o <= 32'hFFBF2020;
-	//6'b10011?:	zrgb_o <= 32'hFFDFDFDF;
-	8'b1000?00?:	zrgb_o <= (zrgb_i[39:36] > bkColor40d2[39:36]) ? zrgb_i : bkColor40d2;
-//	8'b1000?0?0:	zrgb_o <= bkColor32d;
-	8'b1000?01?:	zrgb_o <= fgColor40d2; // ToDo: compare z-order
-	8'b1000?100:	zrgb_o <= (zrgb_i[39:36] > bkColor40d2[39:36]) ? zrgb_i : bkColor40d2;
-	8'b1000?101:	zrgb_o <= fgColor40d2;
-	8'b1000?110:	zrgb_o <= {tileColor1[30:27],tileColor1[26:18],3'b0,tileColor1[17:9],3'b0,tileColor1[8:0],3'b0};
-	8'b1000?111:	zrgb_o <= {tileColor2[30:27],tileColor2[26:18],3'b0,tileColor2[17:9],3'b0,tileColor2[8:0],3'b0};
+	casez({controller_enable&xonoff_i,blank_i,iblank,border_i,bpix,mcm,aam,pix})
+	9'b01???????:	zrgb_o <= 40'h00000000;
+	9'b11???????:	zrgb_o <= 40'h00000000;
+	9'b1001?????:	zrgb_o <= {bdrColor[30:27],bdrColor[26:18],3'b0,bdrColor[17:9],3'b0,bdrColor[8:0],3'b0};
+`ifdef SUPPORT_AAM	
+	9'b1000?01??:	zrgb_o <= fnBlend(fgColor40d2,zrgb_i[39:36] > bkColor40d2[39:36]) ? zrgb_i : bkColor40d2, pix);
+`endif	
+	9'b1000?000?:	zrgb_o <= (zrgb_i[39:36] > bkColor40d2[39:36]) ? zrgb_i : bkColor40d2;
+	9'b1000?001?:	zrgb_o <= fgColor40d2; // ToDo: compare z-order
+	9'b1000?1000:	zrgb_o <= (zrgb_i[39:36] > bkColor40d2[39:36]) ? zrgb_i : bkColor40d2;
+	9'b1000?1001:	zrgb_o <= fgColor40d2;
+	9'b1000?1010:	zrgb_o <= {tileColor1[30:27],tileColor1[26:18],3'b0,tileColor1[17:9],3'b0,tileColor1[8:0],3'b0};
+	9'b1000?1011:	zrgb_o <= {tileColor2[30:27],tileColor2[26:18],3'b0,tileColor2[17:9],3'b0,tileColor2[8:0],3'b0};
 //	6'b1010?0:	zrgb_o <= bgtd ? zrgb_i : bkColor32d;
-//	6'b1010?1:	zrgb_o <= fgColor32d;
 	default:	zrgb_o <= zrgb_i;
 	endcase
 

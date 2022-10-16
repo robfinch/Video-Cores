@@ -39,14 +39,14 @@
 //	Sprite Controller
 //
 //	FEATURES
-//	- parameterized number of sprites 1,2,4,6,8,14 or 32
+//	- parameterized number of sprites 1,2,4,6,8,14,16 or 32
 //	- sprite image cache buffers
 //		- each image cache is capable of holding multiple
 //		  sprite images
 //		- an embedded DMA controller is used for sprite reload
 //	- programmable image offset within cache
 //	- programmable sprite width,height, and pixel size
-//		- sprite width and height may vary from 1 to 64 as long
+//		- sprite width and height may vary from 1 to 256 as long
 //		  as the product doesn't exceed 4096.
 //	    - pixels may be programmed to be 1,2,3 or 4 video clocks
 //	      both height and width are programmable
@@ -117,6 +117,15 @@
 //	...
 //	27C:		DMA burst reg sprite 31
 //
+//  280:	[ 7: 0] Frame size, multiples of 16 pixels
+//				[15: 8]	Number of frames of animation
+//        [25:16] Animation Rate
+//				[29:26] Frame size, LSBs 0 to 3
+//				[30]		Auto repeat
+//				[31]    Enable animation
+//  ...
+//	2FC:	Animation register sprite #31
+//
 //	Global status and control
 //	3C0: EN [31:0] sprite enable register
 //  3C4: IE	[31:0] sprite interrupt enable / status
@@ -130,7 +139,7 @@
 //
 //=============================================================================
 
-import finitron_pkg::*;
+import wishbone_pkg::*;
 
 module rfSpriteController(
 // Bus Slave interface
@@ -139,14 +148,13 @@ module rfSpriteController(
 input rst_i,			// reset
 input s_clk_i,		// clock
 input s_cs_i,
-input	fb_write_request32_t fbs_req,
-output fb_read_response32_t fbs_resp,
+input	wb_write_request32_t wbs_req,
+output wb_read_response32_t wbs_resp,
 //------------------------------
 // Bus Master Signals
 input m_clk_i,				// clock
-output fb_write_request128_t fbm_req,
-input fb_read_response128_t fbm_resp,
-input         m_err_i,	
+output wb_write_request128_t wbm_req,
+input wb_read_response128_t wbm_resp,
 output [4:0] m_spriteno_o,
 //--------------------------
 input dot_clk_i,		// video dot clock
@@ -156,16 +164,15 @@ input blank_i,			// blanking signal
 input [39:0] zrgb_i,			// input pixel stream
 output [39:0] zrgb_o,	// output pixel stream 12-12-12-4
 output irq,					// interrupt request
-input test
+input test,
+input xonoff_i
 );
 
 reg m_soc_o;
 wire vclk = dot_clk_i;
 wire hSync = hsync_i;
 wire vSync = vsync_i;
-wire [39:0] zrgbIn = zrgb_i;
-reg [39:0] zrgbOut;
-assign zrgb_o = zrgbOut;
+reg [39:0] zrgb_o;
 
 //--------------------------------------------------------------------
 // Core Parameters
@@ -180,9 +187,10 @@ localparam pnSprm = pnSpr-1;
 // Variable Declarations
 //--------------------------------------------------------------------
 
-fb_write_request32_t fbs_reqs;	// synchronized request
+reg ce;										// controller enable
+wb_write_request32_t wb_reqs;	// synchronized request
 
-wire [4:0] sprN = fbs_reqs.adr[8:4];
+wire [4:0] sprN = wb_reqs.adr[8:4];
 
 reg [phBits-1:0] hctr;		// horizontal reference counter (counts dots since hSync)
 reg [pvBits-1:0] vctr;		// vertical reference counter (counts scanlines since vSync)
@@ -245,13 +253,23 @@ reg [7:0] vSprCnt [pnSprm:0];	// vertical display counter
 reg [11:0] sprImageOffs [pnSprm:0];	// offset within sprite memory
 reg [12:0] sprAddr [pnSprm:0];	// index into sprite memory (pixel number)
 reg [9:0] sprAddr1 [pnSprm:0];	// index into sprite memory
-reg [9:0] sprAddr2 [pnSprm:0];	// index into sprite memory
-reg [9:0] sprAddr3 [pnSprm:0];	// index into sprite memory
-reg [9:0] sprAddr4 [pnSprm:0];	// index into sprite memory
+reg [2:0] sprAddr2 [pnSprm:0];	// index into sprite memory
+reg [2:0] sprAddr3 [pnSprm:0];	// index into sprite memory
+reg [2:0] sprAddr4 [pnSprm:0];	// index into sprite memory
+reg [2:0] sprAddr5 [pnSprm:0];	// index into sprite memory
 reg [11:0] sprAddrB [pnSprm:0];	// backup address cache for rescan
 wire [31:0] sprOut4 [pnSprm:0];	// sprite image data output
 reg [31:0] sprOut [pnSprm:0];	// sprite image data output
 reg [31:0] sprOut5 [pnSprm:0];	// sprite image data output
+
+// Animation
+reg [11:0] sprFrameSize [pnSprm:0];
+reg [7:0] sprFrames [pnSprm:0];
+reg [7:0] sprCurFrame [pnSprm:0];
+reg [9:0] sprRate [pnSprm:0];
+reg [9:0] sprCurRateCount [pnSprm:0];
+reg [pnSprm:0] sprEnableAnimation;
+reg [pnSprm:0] sprAutoRepeat;
 
 // DMA access
 reg [31:12] sprSysAddr [pnSprm:0];	// system memory address of sprite image (low bits)
@@ -266,10 +284,11 @@ genvar g;
 //--------------------------------------------------------------------
 reg cs_regs;
 always_ff @(posedge s_clk_i)
-	cs_regs <= fbs_req.cyc & fbs_req.stb & s_cs_i;
+	cs_regs <= wbs_req.cyc & wbs_req.stb & s_cs_i;
 always_ff @(posedge s_clk_i)
-	fb_reqs <= fbs_req;
+	wb_reqs <= wbs_req;
 
+wire s_ack_o;
 ack_gen #(
 	.READ_STAGES(3),
 	.WRITE_STAGES(1),
@@ -279,12 +298,17 @@ uag1 (
 	.clk_i(s_clk_i),
 	.ce_i(1'b1),
 	.i(cs_regs),
-	.we_i(cs_regs & fb_reqs.we),
-	.o(s_ack_o)
+	.we_i(cs_regs & wb_reqs.we),
+	.o(s_ack_o),
+	.rid_i(0),
+	.wid_i(0),
+	.rid_o(),
+	.wid_o()
 );
 always_comb
 begin
-	fb_resp.ack = s_ack_o & fbs_req.stb;
+	wbs_resp.ack = s_ack_o & wbs_req.cyc & wbs_req.stb;
+	wbs_resp.next = s_ack_o & wbs_req.cyc & wbs_req.stb;
 end
 
 assign irq = sprSprIRQ|sprBkIRQ;
@@ -296,10 +320,10 @@ assign irq = sprSprIRQ|sprBkIRQ;
 reg [5:0] dmaStart;
 reg [8:0] cob;	// count of burst cycles
 
-assign fbm_req.bte = LINEAR;
-assign fbm_req.cti = CLASSIC;
-assign fbm_req.stb = fbm_req.cyc;
-assign fbm_req.sel = {16{fbm_req.cyc}};
+assign wbm_req.bte = LINEAR;
+assign wbm_req.cti = CLASSIC;
+assign wbm_req.stb = wbm_req.cyc;
+assign wbm_req.sel = {16{wbm_req.cyc}};
 assign m_spriteno_o = dmaOwner;
 
 reg [2:0] mstate;
@@ -309,7 +333,7 @@ parameter ACK = 3'd2;
 parameter NACK = 3'd3;
 
 wire pe_m_ack_i;
-edge_det ued2 (.rst(rst_i), .clk(m_clk_i), .ce(1'b1), .i(fbm_resp.ack), .pe(pe_m_ack_i), .ne(), .ee());
+edge_det ued2 (.rst(rst_i), .clk(m_clk_i), .ce(1'b1), .i(wbm_resp.ack), .pe(pe_m_ack_i), .ne(), .ee());
 
 always_ff @(posedge m_clk_i)
 if (rst_i)
@@ -317,15 +341,15 @@ if (rst_i)
 else begin
 	case(mstate)
 	IDLE:
-		if (|sprDt)
+		if (|sprDt & ce)
 			mstate <= ACTIVE;
 	ACTIVE:
 		mstate <= ACK;
 	ACK:
-		if (fbm_resp.ack | fbm_resp.err)
+		if (wbm_resp.ack | wbm_resp.err)
 			mstate <= NACK;
 	NACK:
-		if (~(fbm_resp.ack|fbm_resp.err))
+		if (~(wbm_resp.ack|wbm_resp.err))
 			mstate <= cob==sprBurstEnd[dmaOwner] ? IDLE : ACTIVE;
 	default:
 		mstate <= IDLE;
@@ -354,7 +378,7 @@ else begin
 	dmaStart <= {dmaStart[4:0],1'b0};
 	case(mstate)
 	IDLE:
-		if (|sprDt)
+		if (|sprDt & ce)
 			dmaStart <= 6'h3F;
 	default:	;
 	endcase
@@ -376,26 +400,26 @@ end
 
 always_ff @(posedge m_clk_i)
 if (rst_i)
-	fb_m_nack();
+	wb_m_nack();
 else begin
 	case(mstate)
 	IDLE:
-		fb_m_nack();
+		wb_m_nack();
 	ACTIVE:
 		begin
-			fbm_req.cyc <= 1'b1;
-			fbm_req.adr <= {sprSysAddr[dmaOwner],cob[8:1],4'h0};
+			wbm_req.cyc <= 1'b1;
+			wbm_req.adr <= {sprSysAddr[dmaOwner],cob[8:1],4'h0};
 		end
 	ACK:
-		if (fbm_resp.ack|fbm_resp.err)
-			fb_m_nack();
+		if (wbm_resp.ack|wbm_resp.err)
+			wb_m_nack();
 	endcase
 end
 
-task fb_m_nack;
+task wb_m_nack;
 begin
-	fbm_req.cyc <= 1'b0;
-	fbm_req.adr <= 32'h0;
+	wbm_req.cyc <= 1'b0;
+	wbm_req.adr <= 32'h0;
 end
 endtask
 
@@ -408,19 +432,19 @@ reg ack1;
 
 always_ff @(posedge m_clk_i)
 for (n1 = 0; n1 < pnSpr; n1 = n1 + 1)
-	sprWe[n1] <= (dmaOwner==n1 && (fbm_resp.ack||ack1));
+	sprWe[n1] <= (dmaOwner==n1 && (wbm_resp.ack||ack1));
 
 always_ff @(posedge m_clk_i)
-	ack1 <= fbm_resp.ack;
+	ack1 <= wbm_resp.ack;
 always_ff @(posedge m_clk_i)
-if (fbm_resp.ack|ack1)
-	m_adr_or <= {fbm_req.adr[11:4],ack1};
+if (wbm_resp.ack|ack1)
+	m_adr_or <= {wbm_req.adr[11:4],ack1};
 always_ff @(posedge m_clk_i)
-if (fbm_resp.ack) begin
+if (wbm_resp.ack) begin
 	if (test)
 		m_dat_ir <= {8{1'b0,dmaOwner,10'b0}};
 	else
-		m_dat_ir <= fbm_resp.dat;
+		m_dat_ir <= wbm_resp.dat;
 end
 else if (ack1)
 	m_dat_ir <= {128'd0,m_dat_ir[127:64]};
@@ -433,28 +457,28 @@ reg [31:0] reg_shadow [0:255];
 reg [7:0] radr;
 always_ff @(posedge s_clk_i)
 begin
-    if (cs_regs & fb_reqs.we & fb_reqs.sel[0])  reg_shadow[fb_reqs.adr[9:2]][7:0] <= fb_reqs.dat[7:0];
-    if (cs_regs & fb_reqs.we & fb_reqs.sel[1])  reg_shadow[fb_reqs.adr[9:2]][15:8] <= fb_reqs.dat[15:8];
-    if (cs_regs & fb_reqs.we & fb_reqs.sel[2])  reg_shadow[fb_reqs.adr[9:2]][23:16] <= fb_reqs.dat[23:16];
-    if (cs_regs & fb_reqs.we & fb_reqs.sel[3])  reg_shadow[fb_reqs.adr[9:2]][31:24] <= fb_reqs.dat[31:24];
+    if (cs_regs & wb_reqs.we & wb_reqs.sel[0])  reg_shadow[wb_reqs.adr[9:2]][7:0] <= wb_reqs.dat[7:0];
+    if (cs_regs & wb_reqs.we & wb_reqs.sel[1])  reg_shadow[wb_reqs.adr[9:2]][15:8] <= wb_reqs.dat[15:8];
+    if (cs_regs & wb_reqs.we & wb_reqs.sel[2])  reg_shadow[wb_reqs.adr[9:2]][23:16] <= wb_reqs.dat[23:16];
+    if (cs_regs & wb_reqs.we & wb_reqs.sel[3])  reg_shadow[wb_reqs.adr[9:2]][31:24] <= wb_reqs.dat[31:24];
 end
 always @(posedge s_clk_i)
-    radr <= fb_reqs.adr[9:2];
+  radr <= wb_reqs.adr[9:2];
 wire [31:0] reg_shadow_o = reg_shadow[radr];
 
 // register/sprite memory output mux
 always_ff @(posedge s_clk_i)
 	if (cs_regs)
-		case (fb_reqs.adr[9:2])		// synopsys full_case parallel_case
-		8'b11110000:	fb_resp.dat <= sprEn;
-		8'b11110001:	fb_resp.dat <= {sprBkIRQPending|sprSprIRQPending,5'b0,sprBkIRQPending,sprSprIRQPending,6'b0,sprBkIe,sprSprIe};
-		8'b11110010:	fb_resp.dat <= sprSprCollision;
-		8'b11110011:	fb_resp.dat <= sprBkCollision;
-		8'b11110100:	fb_resp.dat <= sprDt;
-		default:	fb_resp.dat <= reg_shadow_o;
+		case (wb_reqs.adr[9:2])		// synopsys full_case parallel_case
+		8'b11110000:	wbs_resp.dat <= sprEn;
+		8'b11110001:	wbs_resp.dat <= {sprBkIRQPending|sprSprIRQPending,5'b0,sprBkIRQPending,sprSprIRQPending,6'b0,sprBkIe,sprSprIe};
+		8'b11110010:	wbs_resp.dat <= sprSprCollision;
+		8'b11110011:	wbs_resp.dat <= sprBkCollision;
+		8'b11110100:	wbs_resp.dat <= sprDt;
+		default:	wbs_resp.dat <= reg_shadow_o;
 		endcase
 	else
-		fb_resp.dat <= 32'h0;
+		wbs_resp.dat <= 32'h0;
 
 
 // vclk -> clk_i
@@ -475,7 +499,7 @@ reg vSync1;
 integer n33;
 always_ff @(posedge s_clk_i)
 if (rst_i) begin
-	vSyncT <= 32'hFFFFFFFF;
+	vSyncT <= 32'hFFFF0000;//FFFFFFFF;
 	sprEn <= 32'hFFFFFFFF;
 	sprDt <= 0;
   for (n33 = 0; n33 < pnSpr; n33 = n33 + 1) begin
@@ -489,16 +513,21 @@ if (rst_i) begin
   for (n33 = 0; n33 < pnSpr; n33 = n33 + 1) begin
     hSprPos[n33] <= 200 + (n33 & 7) * 70;
     vSprPos[n33] <= 100 + (n33 >> 3) * 100;
-    sprTc[n33] <= 24'h396739;
-		sprWidth[n33] <= 8'd56;  // 56x36 sprites
-		sprHeight[n33] <= 8'd36;
-		hSprRes[n33] <= 0;	// our standard display
-		vSprRes[n33] <= 0;
+    sprTc[n33] <= 24'h7FFF;		// White 16 bpp
+		sprWidth[n33] <= 8'd16;  	// 16x16 sprites
+		sprHeight[n33] <= 8'd16;
+		hSprRes[n33] <= 2;	// our standard display
+		vSprRes[n33] <= 2;
 		sprImageOffs[n33] <= 0;
 		sprPlane[n33] <= 4'hF;//n[3:0];
 		sprBurstStart[n33] <= 9'h000;
 		sprBurstEnd[n33] <= 9'h1FF;
 		sprColorDepth[n33] <= 2'b10;
+		sprFrameSize[n33] <= 12'd256;
+		sprFrames[n33] <= 8'd5;
+		sprRate[n33] <= 12'd10;
+		sprEnableAnimation[n33] <= 1'b1;
+		sprAutoRepeat[n33] <= 1'b1;
 	end
   hSprPos[0] <= 210;
   vSprPos[0] <= 72;
@@ -507,6 +536,7 @@ if (rst_i) begin
   bkColor <= 24'hFF_FF_60;
 end
 else begin
+	ce <= xonoff_i;
 	vSync1 <= vSync;
 	if (vSync & ~vSync1)
 		sprDt <= sprDt | vSyncT;
@@ -515,101 +545,121 @@ else begin
 	if (dmaStart[5])
 		sprDt[dmaOwner] <= 1'b0;
 
-	if (cs_regs & fb_reqs.we) begin
+	// Disable animation after frame count expired, if not auto-repeat.
+  for (n33 = 0; n33 < pnSpr; n33 = n33 + 1)
+		if (sprCurFrame[n33] >= sprFrames[n33] && !sprAutoRepeat[n33])
+			sprEnableAnimation[n33] <= 1'b0;
 
-		casez (fb_reqs.adr[9:2])
+	if (cs_regs & wb_reqs.we) begin
+
+		casez (wb_reqs.adr[9:2])
 		8'b100?????:
 			begin
-				if (&fb_reqs.sel[1:0]) sprBurstStart[fb_reqs.adr[6:2]] <= fb_reqs.dat[8:0];
-				if (&fb_reqs.sel[3:2]) sprBurstEnd[fb_reqs.adr[6:2]] <= fb_reqs.dat[24:16];
+				if (&wb_reqs.sel[1:0]) sprBurstStart[wb_reqs.adr[6:2]] <= wb_reqs.dat[8:0];
+				if (&wb_reqs.sel[3:2]) sprBurstEnd[wb_reqs.adr[6:2]] <= wb_reqs.dat[24:16];
+			end
+		8'b101?????:
+			begin
+				if (wb_reqs.sel[0]) sprFrameSize[wb_reqs.adr[6:2]][11:4] <= wb_reqs.dat[7:0];
+				if (wb_reqs.sel[1]) sprFrames[wb_reqs.adr[6:2]] <= wb_reqs.dat[15:8];
+				if (wb_reqs.sel[2]) sprRate[wb_reqs.adr[6:2]][7:0] <= wb_reqs.dat[23:16];
+				if (wb_reqs.sel[3]) 
+					begin
+						sprRate[wb_reqs.adr[6:2]][9:8] <= wb_reqs.dat[25:24];
+						sprFrameSize[wb_reqs.adr[6:2]][3:0] <= wb_reqs.dat[29:26];
+						sprAutoRepeat[wb_reqs.adr[6:2]] <= wb_reqs.dat[30];
+						sprEnableAnimation[wb_reqs.adr[6:2]] <= wb_reqs.dat[31];
+					end
 			end
 		8'b11110000:	// 3C0
 			begin
-				if (fb_reqs.sel[0]) sprEn[7:0] <= fb_reqs.dat[7:0];
-				if (fb_reqs.sel[1]) sprEn[15:8] <= fb_reqs.dat[15:8];
-				if (fb_reqs.sel[2]) sprEn[23:16] <= fb_reqs.dat[23:16];
-				if (fb_reqs.sel[3]) sprEn[31:24] <= fb_reqs.dat[31:24];
+				if (wb_reqs.sel[0]) sprEn[7:0] <= wb_reqs.dat[7:0];
+				if (wb_reqs.sel[1]) sprEn[15:8] <= wb_reqs.dat[15:8];
+				if (wb_reqs.sel[2]) sprEn[23:16] <= wb_reqs.dat[23:16];
+				if (wb_reqs.sel[3]) sprEn[31:24] <= wb_reqs.dat[31:24];
 			end
 		8'b11110001:	// 3C4
-			if (fb_reqs.sel[0]) begin
-				sprSprIe <= fb_reqs.dat[0];
-				sprBkIe <= fb_reqs.dat[1];
+			if (wb_reqs.sel[0]) begin
+				sprSprIe <= wb_reqs.dat[0];
+				sprBkIe <= wb_reqs.dat[1];
 			end
 		// update DMA trigger
-		// s_fb_reqs.dat[7:0] indicates which triggers to set  (1=set,0=ignore)
-		// s_fb_reqs.dat[7:0] indicates which triggers to clear (1=clear,0=ignore)
+		// s_wb_reqs.dat[7:0] indicates which triggers to set  (1=set,0=ignore)
+		// s_wb_reqs.dat[7:0] indicates which triggers to clear (1=clear,0=ignore)
 		8'b11110100:	// 3D0
 			begin
-				if (fb_reqs.sel[0])	sprDt[7:0] <= sprDt[7:0] | fb_reqs.dat[7:0];
-				if (fb_reqs.sel[1]) sprDt[15:8] <= sprDt[15:8] | fb_reqs.dat[15:8];
-				if (fb_reqs.sel[2]) sprDt[23:16] <= sprDt[23:16] | fb_reqs.dat[23:16];
-				if (fb_reqs.sel[3])	sprDt[31:24] <= sprDt[31:24] | fb_reqs.dat[31:24];
+				if (wb_reqs.sel[0])	sprDt[7:0] <= sprDt[7:0] | wb_reqs.dat[7:0];
+				if (wb_reqs.sel[1]) sprDt[15:8] <= sprDt[15:8] | wb_reqs.dat[15:8];
+				if (wb_reqs.sel[2]) sprDt[23:16] <= sprDt[23:16] | wb_reqs.dat[23:16];
+				if (wb_reqs.sel[3])	sprDt[31:24] <= sprDt[31:24] | wb_reqs.dat[31:24];
 			end
 		8'b11110101:	// 3D4
 			begin
-				if (fb_reqs.sel[0])	sprDt[7:0] <= sprDt[7:0] & ~fb_reqs.dat[7:0];
-				if (fb_reqs.sel[1]) sprDt[15:8] <= sprDt[15:8] & ~fb_reqs.dat[15:8];
-				if (fb_reqs.sel[2]) sprDt[23:16] <= sprDt[23:16] & ~fb_reqs.dat[23:16];
-				if (fb_reqs.sel[3])	sprDt[31:24] <= sprDt[31:24] & ~fb_reqs.dat[31:24];
+				if (wb_reqs.sel[0])	sprDt[7:0] <= sprDt[7:0] & ~wb_reqs.dat[7:0];
+				if (wb_reqs.sel[1]) sprDt[15:8] <= sprDt[15:8] & ~wb_reqs.dat[15:8];
+				if (wb_reqs.sel[2]) sprDt[23:16] <= sprDt[23:16] & ~wb_reqs.dat[23:16];
+				if (wb_reqs.sel[3])	sprDt[31:24] <= sprDt[31:24] & ~wb_reqs.dat[31:24];
 			end
 		8'b11110110:	// 3D8
 			begin
-				if (fb_reqs.sel[0])	vSyncT[7:0] <= fb_reqs.dat[7:0];
-				if (fb_reqs.sel[1]) vSyncT[15:8] <= fb_reqs.dat[15:8];
-				if (fb_reqs.sel[2]) vSyncT[23:16] <= fb_reqs.dat[23:16];
-				if (fb_reqs.sel[3])	vSyncT[31:24] <= fb_reqs.dat[31:24];
+				if (wb_reqs.sel[0])	vSyncT[7:0] <= wb_reqs.dat[7:0];
+				if (wb_reqs.sel[1]) vSyncT[15:8] <= wb_reqs.dat[15:8];
+				if (wb_reqs.sel[2]) vSyncT[23:16] <= wb_reqs.dat[23:16];
+				if (wb_reqs.sel[3])	vSyncT[31:24] <= wb_reqs.dat[31:24];
 			end
 		8'b11111010:	// 3E8
 			begin
-				if (fb_reqs.sel[0])	bgTc[7:0] <= fb_reqs.dat[7:0];
-				if (fb_reqs.sel[1])	bgTc[15:8] <= fb_reqs.dat[15:8];
-				if (fb_reqs.sel[2])	bgTc[23:16] <= fb_reqs.dat[23:16];
-				if (fb_reqs.sel[3])	bgTc[29:24] <= fb_reqs.dat[29:24];
+				if (wb_reqs.sel[0])	bgTc[7:0] <= wb_reqs.dat[7:0];
+				if (wb_reqs.sel[1])	bgTc[15:8] <= wb_reqs.dat[15:8];
+				if (wb_reqs.sel[2])	bgTc[23:16] <= wb_reqs.dat[23:16];
+				if (wb_reqs.sel[3])	bgTc[29:24] <= wb_reqs.dat[29:24];
 			end
 		8'b11111011:	// 3EC
 			begin
-				if (fb_reqs.sel[0]) bkColor[7:0] <= fb_reqs.dat[7:0];
-				if (fb_reqs.sel[1]) bkColor[15:8] <= fb_reqs.dat[15:8];
-				if (fb_reqs.sel[2]) bkColor[23:16] <= fb_reqs.dat[23:16];
-				if (fb_reqs.sel[3]) bkColor[29:24] <= fb_reqs.dat[29:24];
+				if (wb_reqs.sel[0]) bkColor[7:0] <= wb_reqs.dat[7:0];
+				if (wb_reqs.sel[1]) bkColor[15:8] <= wb_reqs.dat[15:8];
+				if (wb_reqs.sel[2]) bkColor[23:16] <= wb_reqs.dat[23:16];
+				if (wb_reqs.sel[3]) bkColor[29:24] <= wb_reqs.dat[29:24];
 			end
+//		8'b11111100:	// 3F0
+//			if (wb_reqs.sel[0]) ce <= wb_reqs[0];
 		8'b0?????00:
 			 begin
-	    		if (fb_reqs.sel[0]) hSprPos[sprN][ 7:0] <= fb_reqs.dat[ 7: 0];
-	    		if (fb_reqs.sel[1]) hSprPos[sprN][10:8] <= fb_reqs.dat[10: 8];
-	    		if (fb_reqs.sel[2]) vSprPos[sprN][ 7:0] <= fb_reqs.dat[23:16];
-	    		if (fb_reqs.sel[3]) vSprPos[sprN][10:8] <= fb_reqs.dat[26:24];
+	    		if (wb_reqs.sel[0]) hSprPos[sprN][ 7:0] <= wb_reqs.dat[ 7: 0];
+	    		if (wb_reqs.sel[1]) hSprPos[sprN][11:8] <= wb_reqs.dat[11: 8];
+	    		if (wb_reqs.sel[2]) vSprPos[sprN][ 7:0] <= wb_reqs.dat[23:16];
+	    		if (wb_reqs.sel[3]) vSprPos[sprN][11:8] <= wb_reqs.dat[27:24];
     		end
     8'b0?????01:
 			begin
-    		if (fb_reqs.sel[0]) begin
-					sprWidth[sprN] <= fb_reqs.dat[7:0];
+    		if (wb_reqs.sel[0]) begin
+					sprWidth[sprN] <= wb_reqs.dat[7:0];
         end
-    		if (fb_reqs.sel[1]) begin
-					sprHeight[sprN] <= fb_reqs.dat[15:8];
+    		if (wb_reqs.sel[1]) begin
+					sprHeight[sprN] <= wb_reqs.dat[15:8];
         end
-				if (fb_reqs.sel[2]) begin
-        	hSprRes[sprN] <= fb_reqs.dat[19:16];
-        	vSprRes[sprN] <= fb_reqs.dat[23:20];
+				if (wb_reqs.sel[2]) begin
+        	hSprRes[sprN] <= wb_reqs.dat[19:16];
+        	vSprRes[sprN] <= wb_reqs.dat[23:20];
 				end
-				if (fb_reqs.sel[3]) begin
-					sprPlane[sprN] <= fb_reqs.dat[27:24];
-					sprColorDepth[sprN] <= fb_reqs.dat[31:30];
+				if (wb_reqs.sel[3]) begin
+					sprPlane[sprN] <= wb_reqs.dat[27:24];
+					sprColorDepth[sprN] <= wb_reqs.dat[31:30];
 				end
 			end
 		8'b0?????10:
 			begin	// DMA address set on clk_i domain
-        if (fb_reqs.sel[0]) sprImageOffs[sprN][ 7:0] <= fb_reqs.dat[7:0];
-        if (fb_reqs.sel[1]) sprImageOffs[sprN][10:8] <= fb_reqs.dat[11:8];
-				if (fb_reqs.sel[1]) sprSysAddr[sprN][15:12] <= fb_reqs.dat[15:12];
-				if (fb_reqs.sel[2]) sprSysAddr[sprN][23:16] <= fb_reqs.dat[23:16];
-				if (fb_reqs.sel[3]) sprSysAddr[sprN][31:24] <= fb_reqs.dat[31:24];
+        if (wb_reqs.sel[0]) sprImageOffs[sprN][ 7:0] <= wb_reqs.dat[7:0];
+        if (wb_reqs.sel[1]) sprImageOffs[sprN][11:8] <= wb_reqs.dat[11:8];
+				if (wb_reqs.sel[1]) sprSysAddr[sprN][15:12] <= wb_reqs.dat[15:12];
+				if (wb_reqs.sel[2]) sprSysAddr[sprN][23:16] <= wb_reqs.dat[23:16];
+				if (wb_reqs.sel[3]) sprSysAddr[sprN][31:24] <= wb_reqs.dat[31:24];
 			end
 		8'b0?????11:
 			begin
-				if (fb_reqs.sel[0]) sprTc[sprN][ 7:0] <= fb_reqs.dat[ 7:0];
-				if (fb_reqs.sel[1]) sprTc[sprN][15:8] <= fb_reqs.dat[15:8];
-				if (fb_reqs.sel[2]) sprTc[sprN][23:16] <= fb_reqs.dat[23:16];
+				if (wb_reqs.sel[0]) sprTc[sprN][ 7:0] <= wb_reqs.dat[ 7:0];
+				if (wb_reqs.sel[1]) sprTc[sprN][15:8] <= wb_reqs.dat[15:8];
+				if (wb_reqs.sel[2]) sprTc[sprN][23:16] <= wb_reqs.dat[23:16];
 			end
 
 		default:	;
@@ -628,22 +678,28 @@ integer n2;
 always_ff @(posedge vclk)
 for (n2 = 0; n2 < pnSpr; n2 = n2 + 1)
 case(sprColorDepth[n2])
-2'd1:	sprAddr1[n2] <= sprAddr[n2][11:2];
-2'd2:	sprAddr1[n2] <= sprAddr[n2][10:1];
-2'd3:	sprAddr1[n2] <= sprAddr[n2][ 9:0];
+2'd1:	sprAddr1[n2] <= {sprAddr[n2][11:3],~sprAddr[n2][2]};
+2'd2:	sprAddr1[n2] <= {sprAddr[n2][10:2],~sprAddr[n2][1]};
+2'd3:	sprAddr1[n2] <= {sprAddr[n2][ 9:1],~sprAddr[n2][0]};
 default:	;
 endcase
 
-integer n4, n5, n27;
+// The three LSBs of the image index need to be pipelined so they may be used
+// to select the pixel. Output from the SRAM is always 32-bits wide so an
+// additional mux is needed.
+integer n4, n5, n27, n29;
 always_ff @(posedge vclk)
 for (n4 = 0; n4 < pnSpr; n4 = n4 + 1)
-	sprAddr2[n4] <= sprAddr1[n4];
+	sprAddr2[n4] <= ~sprAddr[n4][2:0];
 always_ff @(posedge vclk)
 for (n5 = 0; n5 < pnSpr; n5 = n5 + 1)
 	sprAddr3[n5] <= sprAddr2[n5];
 always_ff @(posedge vclk)
 for (n27 = 0; n27 < pnSpr; n27 = n27 + 1)
 	sprAddr4[n27] <= sprAddr3[n27];
+always_ff @(posedge vclk)
+for (n29 = 0; n29 < pnSpr; n29 = n29 + 1)
+	sprAddr5[n29] <= sprAddr4[n29];
 
 // The pixels are displayed from most signicant to least signicant bits of the 
 // word. Display order is opposite to memory storage. So, the least significant
@@ -653,14 +709,14 @@ always_ff @(posedge vclk)
 for (n3 = 0; n3 < pnSpr; n3 = n3 + 1)
 case(sprColorDepth[n3])
 2'd1:
-	case(~sprAddr4[n3][1:0])
+	case(sprAddr5[n3][1:0])
 	2'd3:	sprOut5[n3] <= sprOut4[n3][31:24];
 	2'd2:	sprOut5[n3] <= sprOut4[n3][23:16];
 	2'd1:	sprOut5[n3] <= sprOut4[n3][15:8];
 	2'd0:	sprOut5[n3] <= sprOut4[n3][7:0];
 	endcase
 2'd2:
-	case(~sprAddr4[n3][0])
+	case(sprAddr5[n3][0])
 	1'd0:	sprOut5[n3] <= {sprOut4[n3][15],16'h0000,sprOut4[n3][14:0]};
 	1'd1:	sprOut5[n3] <= {sprOut4[n3][31],16'h0000,sprOut4[n3][30:16]};
 	endcase
@@ -675,7 +731,7 @@ for (g = 0; g < pnSpr; g = g + 1) begin : sprRam
 	(
 		.clka(m_clk_i),
 		.addra(m_adr_or),
-		.dina(m_dat_ir),
+		.dina(m_dat_ir[63:0]),
 		.ena(sprWe[g]),
 		.wea(sprWe[g]),
 		// Core reg and output reg 3 clocks from read address
@@ -764,7 +820,25 @@ for (n7 = 0; n7 < pnSpr; n7 = n7 + 1)
       vSprPt[n7] <= vSprPt[n7] + 2'd1;
   end
 
-
+// Animation rate count and frame increment.
+integer n28;
+always_ff @(posedge vclk)
+	if (vSyncEdge) begin
+		for (n28 = 0; n28 < pnSpr; n28 = n28 + 1) begin
+			if (sprEnableAnimation[n28]) begin
+				sprCurRateCount[n28] <= sprCurRateCount[n28] + 2'd1;
+				if (sprCurRateCount[n28] >= sprRate[n28]) begin
+					sprCurRateCount[n28] <= 'd0;
+					sprCurFrame[n28] <= sprCurFrame[n28] + 2'd1;
+					if (sprCurFrame[n28] >= sprFrames[n28])
+						sprCurFrame[n28] <= 'd0;
+				end
+			end
+			else
+				sprCurFrame[n28] <= 'd0;
+		end
+	end
+		
 // clock sprite image address counters
 integer n8;
 always_ff @(posedge vclk)
@@ -772,8 +846,8 @@ for (n8 = 0; n8 < pnSpr; n8 = n8 + 1) begin
     // hReset and vReset - top left of sprite,
     // reset address to image offset
 	if (hSprReset[n8] & vSprReset[n8]) begin
-		sprAddr[n8]  <= sprImageOffs[n8];
-		sprAddrB[n8] <= sprImageOffs[n8];
+		sprAddr[n8]  <= sprImageOffs[n8] + sprCurFrame[n8] * sprFrameSize[n8];
+		sprAddrB[n8] <= sprImageOffs[n8] + sprCurFrame[n8] * sprFrameSize[n8];
 	end
 	// hReset:
 	//  If the next vertical pixel
@@ -856,10 +930,11 @@ end
 // 1 bit whole, 7 bits fraction
 function [11:0] fnBlend;
 input [7:0] alpha;
-input [11:0] colorbits;
+input [11:0] color1bits;
+input [11:0] color2bits;
 
 begin
-	fnBlend = (({8'b0,colorbits} * alpha) >> 7);
+	fnBlend = (({8'b0,color1bits} * alpha) >> 7) + (({8'h00,color2bits} * (9'h100 - alpha)) >> 7);
 end
 endfunction
 
@@ -910,7 +985,7 @@ for (n15 = 0; n15 < pnSpr; n15 = n15 + 1)
 // The image combiner uses this flag to know what to do with
 // the sprite output.
 always_ff @(posedge vclk)
-	outact <= |sproact;
+	outact <= |sproact & ce;
 
 // Display data comes from the active sprite with the
 // highest display priority.
@@ -933,34 +1008,44 @@ end
 
 // combine the text / graphics color output with sprite color output
 // blend color output
-wire [35:0] blendedColor = {
- 	fnBlend(out[7:0],zrgbIn[35:24]),		// R
- 	fnBlend(out[7:0],zrgbIn[23:12]),		// G
- 	fnBlend(out[7:0],zrgbIn[11: 0])};	// B
+wire [35:0] blendedColor32 = {
+ 	fnBlend(out[31:24],{out[23:16],4'h0},zrgb_i[35:24]),
+ 	fnBlend(out[31:24],{out[15:8],4'h0},zrgb_i[23:12]),
+ 	fnBlend(out[31:24],{out[7:0],4'h0},zrgb_i[11: 0])}
+ 	;
 
+wire [35:0] blendedColor16 = {
+ 	fnBlend(out[7:0],zrgb_i[35:24],12'h0),
+ 	fnBlend(out[7:0],zrgb_i[23:12],12'h0),
+ 	fnBlend(out[7:0],zrgb_i[11: 0],12'h0)}
+ 	;
 
 always_ff @(posedge vclk)
 if (blank_i)
-	zrgbOut <= 0;
+	zrgb_o <= 0;
 else begin
 	if (outact) begin
-		if (zrgbIn[39:36] > outplane) begin			// rgb input is in front of sprite
-			zrgbOut <= zrgbIn;
+		if (zrgb_i[39:36] > outplane) begin			// rgb input is in front of sprite
+			zrgb_o <= zrgb_i;
 		end
 		else 
 		if (!out[31]) begin			// a sprite is displayed without alpha blending
 			case(colorBits)
-			2'd0:	zrgbOut <= {outplane,out[7:5],9'b0,out[4:2],9'b0,out[1:0],10'b0};
-			2'd1:	zrgbOut <= {outplane,out[7:5],9'b0,out[4:2],9'b0,out[1:0],10'b0};
-			2'd2:	zrgbOut <= {outplane,out[14:10],7'b0,out[9:5],7'b0,out[4:0],7'b0};
-			2'd3:	zrgbOut <= {outplane,out[23:16],4'h0,out[15:8],4'h0,out[7:0],4'h0};
+			2'd0:	zrgb_o <= {outplane,out[7:5],9'b0,out[4:2],9'b0,out[1:0],10'b0};
+			2'd1:	zrgb_o <= {outplane,out[7:5],9'b0,out[4:2],9'b0,out[1:0],10'b0};
+			2'd2:	zrgb_o <= {outplane,out[14:10],7'b0,out[9:5],7'b0,out[4:0],7'b0};
+			2'd3:	zrgb_o <= zrgb_o <= {outplane,blendedColor32};	// combine colors {outplane,out[23:16],4'h0,out[15:8],4'h0,out[7:0],4'h0};
 			endcase
 		end
 		else
-			zrgbOut <= {outplane,blendedColor};
+			case(colorBits)
+			2'd2:	zrgb_o <= {outplane,blendedColor16};	// towards black/white
+			2'd3:	zrgb_o <= {outplane,blendedColor32};	// combine colors
+			default:	zrgb_o <= {outplane,out[7:5],9'b0,out[4:2],9'b0,out[1:0],10'b0};	// no blending
+			endcase
 	end
 	else
-		zrgbOut <= zrgbIn;
+		zrgb_o <= zrgb_i;
 end
 
 
@@ -1020,6 +1105,21 @@ else if (pnSpr==8)
 	8'b00100000,
 	8'b01000000,
 	8'b10000000:	sprCollision = 0;
+	default:		sprCollision = 1;
+	endcase
+else if (pnSpr==10)
+	case (sproact)
+	10'b0000000000,
+	10'b0000000001,
+	10'b0000000010,
+	10'b0000000100,
+	10'b0000001000,
+	10'b0000010000,
+	10'b0000100000,
+	10'b0001000000,
+	10'b0010000000,
+	10'b0100000000,
+	10'b1000000000:	sprCollision = 0;
 	default:		sprCollision = 1;
 	endcase
 else if (pnSpr==14)
@@ -1107,7 +1207,7 @@ integer n31;
 always_comb
 for (n31 = 0; n31 < pnSpr; n31 = n31 + 1)
 	bkCollision[n31] <=
-		sproact[n31] && zrgbIn[39:36]==sprPlane[n31];
+		sproact[n31] && zrgb_i[39:36]==sprPlane[n31];
 
 // Load the sprite collision register. This register continually
 // accumulates collision bits until reset by reading the register.
@@ -1121,7 +1221,7 @@ if (rst_i) begin
 end
 else if (sprCollision) begin
 	// isFirstCollision
-	if ((sprSprCollision1==0)||(cs_regs && sel_i[0] && fb_reqs.adr[9:2]==8'b11110010)) begin
+	if ((sprSprCollision1==0)||(cs_regs && wb_reqs.sel[0] && wb_reqs.adr[9:2]==8'b11110010)) begin
 		sprSprIRQPending1 <= 1;
 		sprSprIRQ1 <= sprSprIe;
 		sprSprCollision1 <= sproact;
@@ -1129,7 +1229,7 @@ else if (sprCollision) begin
 	else
 		sprSprCollision1 <= sprSprCollision1|sproact;
 end
-else if (cs_regs && sel_i[0] && fb_reqs.adr[9:2]==8'b11110010) begin
+else if (cs_regs && wb_reqs.sel[0] && wb_reqs.adr[9:2]==8'b11110010) begin
 	sprSprCollision1 <= 0;
 	sprSprIRQPending1 <= 0;
 	sprSprIRQ1 <= 0;
@@ -1153,7 +1253,7 @@ else if (|bkCollision) begin
 	// Is the register being cleared at the same time
 	// a collision occurss ?
 	// isFirstCollision
-	if ((sprBkCollision1==0) || (cs_regs && sel_i[0] && fb_reqs.adr[9:2]==8'b11110011)) begin	
+	if ((sprBkCollision1==0) || (cs_regs && wb_reqs.sel[0] && wb_reqs.adr[9:2]==8'b11110011)) begin	
 		sprBkIRQ1 <= sprBkIe;
 		sprBkCollision1 <= bkCollision;
 		sprBkIRQPending1 <= 1;
@@ -1161,7 +1261,7 @@ else if (|bkCollision) begin
 	else
 		sprBkCollision1 <= sprBkCollision1|bkCollision;
 end
-else if (cs_regs && sel_i[0] && fb_reqs.adr[9:2]==8'b11110011) begin
+else if (cs_regs && wb_reqs.sel[0] && wb_reqs.adr[9:2]==8'b11110011) begin
 	sprBkCollision1 <= 0;
 	sprBkIRQPending1 <= 0;
 	sprBkIRQ1 <= 0;

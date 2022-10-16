@@ -48,14 +48,13 @@
 
 //`define USE_CLOCK_GATE	1'b1
 `define INTERNAL_SYNC_GEN	1'b1
+`define WXGA800x600		1'b1
+//`define WXGA1366x768	1'b1
 
+import const_pkg::*;
 `define ABITS	31:0
-`define HIGH	1'b1
-`define LOW		1'b0
-`define TRUE	1'b1
-`define FALSE	1'b0
 
-import finitron_pkg::*;
+import wishbone_pkg::*;
 import gfx_pkg::*;
 
 module rfFrameBuffer(
@@ -63,7 +62,7 @@ module rfFrameBuffer(
 	s_clk_i, s_cs_i, s_cyc_i, s_stb_i, s_ack_o, s_we_i, s_sel_i, s_adr_i, s_dat_i, s_dat_o,
 	m_clk_i, m_fst_o, 
 //	m_cyc_o, m_stb_o, m_ack_i, m_we_o, m_sel_o, m_adr_o, m_dat_i, m_dat_o,
-	fbm_req, fbm_resp,
+	wbm_req, wbm_resp,
 	dot_clk_i, zrgb_o, xonoff_i, xal_o,
 `ifdef INTERNAL_SYNC_GEN
 	, hsync_o, vsync_o, blank_o, border_o, hctr_o, vctr_o, fctr_o, vblank_o
@@ -104,6 +103,8 @@ parameter OPORN = 4'd11;
 parameter OPWHITE = 4'd15;
 
 // Sync Generator defaults: 800x600 60Hz
+// Driven by a 40MHz clock
+`ifdef WXGA800x600
 parameter phSyncOn  = 40;		//   40 front porch
 parameter phSyncOff = 168;		//  128 sync
 parameter phBlankOff = 252;	//256	//   88 back porch
@@ -122,7 +123,25 @@ parameter pvBorderOn = 628;		//  600 display
 //parameter pvBorderOn = 584;		//  512 display
 parameter pvBlankOn = 628;  	//   44 border	0
 parameter pvTotal = 628;		//  628 total scan lines
-
+`endif
+`ifdef WXGA1366x768
+// Driven by an 85.86MHz clock
+parameter phSyncOn  = 72;		//   72 front porch
+parameter phSyncOff = 216;		//  144 sync
+parameter phBlankOff = 434;		//  212 back porch
+parameter phBorderOff = 434;	//    0 border
+parameter phBorderOn = 1800;	// 1366 display
+parameter phBlankOn = 1800;		//    0 border
+parameter phTotal = 1800;		// 1800 total clocks
+// 47.7 = 60 * 795 kHz
+parameter pvSyncOn  = 2;		//    1 front porch
+parameter pvSyncOff = 5;		//    3 vertical sync
+parameter pvBlankOff = 27;		//   23 back porch
+parameter pvBorderOff = 27;		//    2 border	0
+parameter pvBorderOn = 795;		//  768 display
+parameter pvBlankOn = 795;  	//    1 border	0
+parameter pvTotal = 795;		//  795 total scan lines
+`endif
 
 // SYSCON
 input rst_i;				// system reset
@@ -145,8 +164,8 @@ reg [63:0] s_dat_o;
 // Used to read memory via burst access
 input m_clk_i;				// system bus interface clock
 output reg m_fst_o;		// first access on scanline
-output fb_write_request128_t fbm_req;
-input fb_read_response128_t fbm_resp;
+output wb_write_request128_t wbm_req;
+input wb_read_response128_t wbm_resp;
 
 // Video
 input dot_clk_i;		// Video clock 80 MHz
@@ -244,7 +263,7 @@ reg [15:0] py;
 reg [7:0] pz;
 reg [1:0] pcmd,pcmd_o;
 reg [3:0] raster_op;
-reg [32:0] oob_color;
+reg [39:0] oob_color;
 reg [31:0] color;
 reg [31:0] color_o;
 reg rstcmd,rstcmd1;
@@ -326,12 +345,12 @@ VT163 #(6) ub1
 reg rst_irq;
 always_ff @(posedge vclk)
 if (rst_i)
-	irq_o <= `LOW;
+	irq_o <= LOW;
 else begin
 	if (hctr_o==12'd02 && rastcmp==vctr_o)
-		irq_o <= `HIGH;
+		irq_o <= HIGH;
 	else if (rst_irq)
-		irq_o <= `LOW;
+		irq_o <= LOW;
 end
 
 always @(page or bm_base_addr1 or bm_base_addr2)
@@ -382,7 +401,7 @@ if (rst_i) begin
 	rstcmd1 <= 1'b0;
 	rst_irq <= 1'b0;
 	rastcmp <= 12'hFFF;
-	oob_color <= 32'h00003C00;
+	oob_color <= 40'h00003C00;
 end
 else begin
 	rstcmd1 <= rstcmd;
@@ -440,7 +459,10 @@ else begin
 					if (|sel[5:4]) bmpHeight <= dat[47:32];
 				end
 			REG_OOB_COLOR:
-				if (|sel[3:0]) oob_color <= dat[31:0];
+				begin
+					if (|sel[3:0]) oob_color[31:0] <= dat[31:0];
+					if (sel[4]) oob_color[39:32] <= dat[39:32];
+				end
 			REG_WINDOW:
 				begin
 					if (|sel[1:0])	windowWidth <= dat[11:0];
@@ -780,8 +802,8 @@ always @(posedge m_clk_i)
 	else if (blankEdge)
 		do_loads <= 1'b0;
 */
-always_comb fbm_req.read.stb = fbm_req.read.cyc;
-always_comb fbm_req.read.sel = MDW==128 ? 16'hFFFF : MDW==64 ? 8'hFF : 4'hF;
+always_comb wbm_req.stb = wbm_req.cyc;
+always_comb wbm_req.sel = MDW==128 ? 16'hFFFF : MDW==64 ? 8'hFF : 4'hF;
 
 reg [31:0] adr;
 typedef enum logic [3:0] {
@@ -826,7 +848,7 @@ always_ff @(posedge m_clk_i)
 	if (fifo_wrst)
 		adr <= grAddr;
   else begin
-    if ((state==WAITLOAD && fbm_resp.ack) || state==LOAD_OOB)
+    if ((state==WAITLOAD && wbm_resp.ack) || state==LOAD_OOB)
     	case(MDW)
     	32:		adr <= adr + 32'd4;
     	64:		adr <= adr + 32'd8;
@@ -838,7 +860,7 @@ always_ff @(posedge m_clk_i)
 	if (fifo_wrst)
 		fetchCol <= 12'd0;
   else begin
-    if ((state==WAITLOAD && fbm_resp.ack) || state==LOAD_OOB)
+    if ((state==WAITLOAD && wbm_resp.ack) || state==LOAD_OOB)
       fetchCol <= fetchCol + shifts;
   end
 
@@ -852,23 +874,25 @@ always_comb legal_y = ~&pixelRow[15:12] && pixelRow < bmpHeight;
 reg modd;
 always_comb
 	case(MDW)
-	32:	modd <= fbm_req.adr[5:2]==4'hF;
-	64:	modd <= fbm_req.adr[5:3]==3'h7;
-	default:	modd <= fbm_req.adr[5:4]==2'h3;
+	32:	modd <= wbm_req.adr[5:2]==4'hF;
+	64:	modd <= wbm_req.adr[5:3]==3'h7;
+	default:	modd <= wbm_req.adr[5:4]==2'h3;
 	endcase
 
 always @(posedge m_clk_i)
 if (rst_i) begin
-	fbm_req <= 'd0;
+	wbm_req.cyc <= LOW;
+	wbm_req.we <= LOW;
+	wbm_req.adr <= 'd0;
   rstcmd <= 1'b0;
   state <= IDLE;
 end
 else begin
 	if (fifo_wrst)
-		m_fst_o <= `HIGH;
+		m_fst_o <= HIGH;
 	case(state)
   WAITRST:
-    if (pcmd==2'b00 && ~fbm_resp.ack) begin
+    if (pcmd==2'b00 && ~wbm_resp.ack) begin
       rstcmd <= 1'b0;
       state <= IDLE;
     end
@@ -877,9 +901,9 @@ else begin
   IDLE:
   	if (load_fifo && !(legal_x && legal_y))
  			state <= LOAD_OOB;
-    else if (load_fifo & ~fbm_resp.ack) begin
-      fbm_req.cyc  <= `HIGH;
-      fbm_req.adr <= adr;
+    else if (load_fifo & ~wbm_resp.ack) begin
+      wbm_req.cyc  <= HIGH;
+      wbm_req.adr <= adr;
       state <= WAITLOAD;
     end
     // The adr_o[5:3]==3'b111 causes the controller to wait until all eight
@@ -889,14 +913,14 @@ else begin
     // allowed when loads are not active or all strips for the current scan-
     // line have been fetched.
     else if (pcmd!=2'b00 && (modd || !(vFetch && onoff && xonoff_i && fetchCol < windowWidth))) begin
-      fbm_req.cyc <= `HIGH;
-      fbm_req.adr <= xyAddr;
+      wbm_req.cyc <= HIGH;
+      wbm_req.adr <= xyAddr;
       state <= LOADSTRIP;
     end
   LOADSTRIP:
-    if (fbm_resp.ack) begin
-      fb_nack();
-      mem_strip <= fbm_resp.dat;
+    if (wbm_resp.ack) begin
+      wb_nack();
+      mem_strip <= wbm_resp.dat;
       icolor1 <= {96'b0,color} << mb;
       rstcmd <= 1'b1;
       if (pcmd==2'b01)
@@ -917,7 +941,7 @@ else begin
     begin
       for (n = 0; n < 32; n = n + 1)
         color_o[n] <= (n <= bpp) ? color_o[n] : 1'b0;
-      state <= pcmd == 2'b0 ? (~fbm_resp.ack ? IDLE : WAITRST) : WAITRST;
+      state <= pcmd == 2'b0 ? (~wbm_resp.ack ? IDLE : WAITRST) : WAITRST;
       if (pcmd==2'b00)
         rstcmd <= 1'b0;
     end
@@ -925,28 +949,28 @@ else begin
   ICOLOR2:
     begin
       for (n = 0; n < MDW; n = n + 1)
-        fbm_req.dat[n] <= (n >= mb && n <= me)
+        wbm_req.dat[n] <= (n >= mb && n <= me)
         	? ((n <= ce) ?	rastop(raster_op, mem_strip[n], icolor1[n]) : icolor1[n])
         	: mem_strip[n];
       state <= STORESTRIP;
     end
   STORESTRIP:
-    if (~fbm_resp.write.ack) begin
-      fbm_req.cyc <= `HIGH;
-      fbm_req.we <= `HIGH;
-      fbm_req.adr <= xyAddr;
+    if (~wbm_resp.ack) begin
+      wbm_req.cyc <= HIGH;
+      wbm_req.we <= HIGH;
+      wbm_req.adr <= xyAddr;
       state <= ACKSTRIP;
     end
   ACKSTRIP:
-    if (fbm_resp.ack) begin
-      fb_nack();
+    if (wbm_resp.ack) begin
+      wb_nack();
       state <= pcmd == 2'b0 ? IDLE : WAITRST;
       if (pcmd==2'b00)
         rstcmd <= 1'b0;
     end
   WAITLOAD:
-    if (fbm_resp.ack) begin
-      fb_nack();
+    if (wbm_resp.ack) begin
+      wb_nack();
       state <= IDLE;
     end
   LOAD_OOB:
@@ -955,11 +979,11 @@ else begin
   endcase
 end
 
-task fb_nack;
+task wb_nack;
 begin
-	m_fst_o <= `LOW;
-	fbm_req.cyc <= `LOW;
-	fbm_req.we <= `LOW;
+	m_fst_o <= LOW;
+	wbm_req.cyc <= LOW;
+	wbm_req.we <= LOW;
 end
 endtask
 
@@ -1092,8 +1116,8 @@ rfVideoFifo #(MDW) uf1
 (
 	.wrst(fifo_wrst),
 	.wclk(m_clk_i),
-	.wr(((fbm_resp.ack && state==WAITLOAD) || state==LOAD_OOB) && lef),
-	.di((state==LOAD_OOB) ? oob_dat : fbm_resp.dat),
+	.wr(((wbm_resp.ack && state==WAITLOAD) || state==LOAD_OOB) && lef),
+	.di((state==LOAD_OOB) ? oob_dat : wbm_resp.dat),
 	.rrst(fifo_rrst),
 	.rclk(vclk),
 	.rd(rd_fifo & lof),
@@ -1105,8 +1129,8 @@ rfVideoFifo #(MDW) uf2
 (
 	.wrst(fifo_wrst),
 	.wclk(m_clk_i),
-	.wr(((fbm_resp.ack && state==WAITLOAD) || state==LOAD_OOB) && lof),
-	.di((state==LOAD_OOB) ? oob_dat : fbm_resp.dat),
+	.wr(((wbm_resp.ack && state==WAITLOAD) || state==LOAD_OOB) && lof),
+	.di((state==LOAD_OOB) ? oob_dat : wbm_resp.dat),
 	.rrst(fifo_rrst),
 	.rclk(vclk),
 	.rd(rd_fifo & lef),
