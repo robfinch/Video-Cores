@@ -398,9 +398,18 @@ regReadbackMem #(.WID(8)) rrm3H
 
 wire [26:0] lfsr1_o;
 lfsr27 #(.WID(27)) ulfsr1(rst_i, dot_clk_i, 1'b1, 1'b0, lfsr1_o);
-wire [63:0] lfsr_o = {6'h20,
-												lfsr1_o[26:24],4'b0,lfsr1_o[23:21],4'b0,lfsr1_o[20:18],4'b0,
-												lfsr1_o[17:15],4'b0,lfsr1_o[14:12],4'b0,lfsr1_o[11:9],4'b0,
+wire [63:0] lfsr_o = {6'h10,
+//												lfsr1_o[26:24],4'b0,lfsr1_o[23:21],4'b0,lfsr1_o[20:18],4'b0,
+//												lfsr1_o[17:15],4'b0,lfsr1_o[14:12],4'b0,lfsr1_o[11:9],4'b0,
+												4'b0,lfsr1_o[26:24],4'b0,lfsr1_o[23:21],lfsr1_o[20:18],4'b0,
+												4'b0,lfsr1_o[17:15],4'b0,lfsr1_o[14:12],lfsr1_o[11:9],4'b0,
+												7'h00,lfsr1_o[8:0]
+										};
+wire [63:0] lfsr_o1 = {lfsr1_o[3:0],2'b00,
+//												lfsr1_o[26:24],4'b0,lfsr1_o[23:21],4'b0,lfsr1_o[20:18],4'b0,
+//												lfsr1_o[17:15],4'b0,lfsr1_o[14:12],4'b0,lfsr1_o[11:9],4'b0,
+												4'b0,lfsr1_o[26:24],4'b0,lfsr1_o[23:21],lfsr1_o[20:18],4'b0,
+												4'b0,lfsr1_o[17:15],lfsr1_o[14:12],4'b0,4'b0,lfsr1_o[11:9],
 												7'h00,lfsr1_o[8:0]
 										};
 
@@ -444,7 +453,7 @@ rfTextScreenRam screen_ram1
 	.web_i(por),
 	.selb_i(8'hFF),
 	.adrb_i(txtAddr[12:0]),
-	.datb_i(lfsr_o), 
+	.datb_i(txtAddr[12:0] > 13'd1664 ? lfsr_o1 : lfsr_o), 
 	.datb_o(screen_ram_out)
 );
 

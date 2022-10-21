@@ -72,8 +72,8 @@ module rfFrameBuffer(
 );
 parameter MDW = 128;		// Bus master data width
 parameter MAP = 12'd0;
-parameter BM_BASE_ADDR1 = 32'h0020_0000;
-parameter BM_BASE_ADDR2 = 32'h0028_0000;
+parameter BM_BASE_ADDR1 = 32'h00200000;
+parameter BM_BASE_ADDR2 = 32'h00280000;
 parameter REG_CTRL = 11'd0;
 parameter REG_REFDELAY = 11'd1;
 parameter REG_PAGE1ADDR = 11'd2;
@@ -278,6 +278,7 @@ reg [11:0] vBorderOn = pvBorderOn, vBorderOff = pvBorderOff;
 reg sgLock;
 wire pe_hsync, pe_hsync2;
 wire pe_vsync;
+reg [11:0] tocnt;		// bus timeout counter
 
 `ifdef INTERNAL_SYNC_GEN
 wire hsync_i, vsync_i, blank_i;
@@ -353,7 +354,7 @@ else begin
 		irq_o <= LOW;
 end
 
-always @(page or bm_base_addr1 or bm_base_addr2)
+always_comb
 	baseAddr = page ? bm_base_addr2 : bm_base_addr1;
 
 // Color palette RAM for 8bpp modes
@@ -383,12 +384,12 @@ if (rst_i) begin
 	vres <= 3'd2;
 	windowWidth <= 12'd400;
 	windowHeight <= 12'd300;
-	onoff <= 1'b0;
+	onoff <= 1'b1;
 	color_depth <= BPP16;
 	greyscale <= 1'b0;
 	bm_base_addr1 <= BM_BASE_ADDR1;
 	bm_base_addr2 <= BM_BASE_ADDR2;
-	hrefdelay = 16'hFF99;//12'd103;
+	hrefdelay = 16'd3964;//16'hFF99;//12'd103;
 	vrefdelay = 16'hFFF3;//12'd13;
 	windowLeft <= 16'h0;
 	windowTop <= 16'h0;
@@ -516,7 +517,7 @@ else begin
 	  REG_CTRL:
 	      begin
 	          s_dat_o[0] <= onoff;
-	          s_dat_o[10:8] <= color_depth;
+	          s_dat_o[11:8] <= color_depth;
 	          s_dat_o[12] <= greyscale;
 	          s_dat_o[18:16] <= hres;
 	          s_dat_o[22:20] <= vres;
@@ -571,7 +572,7 @@ edge_det edh1
 
 edge_det edh2
 (
-	.rst(1'b0),
+	.rst(rst_i),
 	.clk(m_clk_i),
 	.ce(1'b1),
 	.i(hsync_i),
@@ -701,7 +702,7 @@ case(MDW)
 	endcase
 default:
 	begin
-	$display("rtfBitmapController5: Bad master bus width");
+	$display("rfBitmapController: Bad master bus width");
 	$finish;
 	end
 endcase
@@ -718,7 +719,6 @@ localparam CMS = MDW==128 ? 6 : MDW==64 ? 5 : 4;
 wire [CMS:0] mb,me,ce;
 reg [MDW-1:0] mem_strip;
 wire [MDW-1:0] mem_strip_o;
-wire [31:0] mem_color;
 
 // Compute fetch address
 gfx_calc_address #(.SW(MDW)) u1
@@ -802,8 +802,12 @@ always @(posedge m_clk_i)
 	else if (blankEdge)
 		do_loads <= 1'b0;
 */
+always_comb wbm_req.bte = LINEAR;
+always_comb wbm_req.cti = CLASSIC;
+always_comb wbm_req.blen = 6'd63;
 always_comb wbm_req.stb = wbm_req.cyc;
 always_comb wbm_req.sel = MDW==128 ? 16'hFFFF : MDW==64 ? 8'hFF : 4'hF;
+always_comb wbm_req.cid = 4'd0;
 
 reg [31:0] adr;
 typedef enum logic [3:0] {
@@ -848,7 +852,7 @@ always_ff @(posedge m_clk_i)
 	if (fifo_wrst)
 		adr <= grAddr;
   else begin
-    if ((state==WAITLOAD && wbm_resp.ack) || state==LOAD_OOB)
+    if ((state==WAITLOAD && (wbm_resp.ack|tocnt[10])) || state==LOAD_OOB)
     	case(MDW)
     	32:		adr <= adr + 32'd4;
     	64:		adr <= adr + 32'd8;
@@ -860,7 +864,7 @@ always_ff @(posedge m_clk_i)
 	if (fifo_wrst)
 		fetchCol <= 12'd0;
   else begin
-    if ((state==WAITLOAD && wbm_resp.ack) || state==LOAD_OOB)
+    if ((state==WAITLOAD && (wbm_resp.ack|tocnt[10])) || state==LOAD_OOB)
       fetchCol <= fetchCol + shifts;
   end
 
@@ -878,6 +882,16 @@ always_comb
 	64:	modd <= wbm_req.adr[5:3]==3'h7;
 	default:	modd <= wbm_req.adr[5:4]==2'h3;
 	endcase
+
+always @(posedge m_clk_i)
+if (rst_i)
+	tocnt <= 'd0;
+else begin
+	if (wbm_req.cyc)
+		tocnt <= tocnt + 2'd1;
+	else
+		tocnt <= 'd0;
+end
 
 always @(posedge m_clk_i)
 if (rst_i) begin
@@ -902,7 +916,7 @@ else begin
   	if (load_fifo && !(legal_x && legal_y))
  			state <= LOAD_OOB;
     else if (load_fifo & ~wbm_resp.ack) begin
-      wbm_req.cyc  <= HIGH;
+      wbm_req.cyc <= HIGH;
       wbm_req.adr <= adr;
       state <= WAITLOAD;
     end
@@ -918,7 +932,7 @@ else begin
       state <= LOADSTRIP;
     end
   LOADSTRIP:
-    if (wbm_resp.ack) begin
+    if (wbm_resp.ack|tocnt[10]) begin
       wb_nack();
       mem_strip <= wbm_resp.dat;
       icolor1 <= {96'b0,color} << mb;
@@ -962,14 +976,14 @@ else begin
       state <= ACKSTRIP;
     end
   ACKSTRIP:
-    if (wbm_resp.ack) begin
+    if (wbm_resp.ack|tocnt[10]) begin
       wb_nack();
       state <= pcmd == 2'b0 ? IDLE : WAITRST;
       if (pcmd==2'b00)
         rstcmd <= 1'b0;
     end
   WAITLOAD:
-    if (wbm_resp.ack) begin
+    if (wbm_resp.ack|tocnt[10]) begin
       wb_nack();
       state <= IDLE;
     end
@@ -1116,7 +1130,7 @@ rfVideoFifo #(MDW) uf1
 (
 	.wrst(fifo_wrst),
 	.wclk(m_clk_i),
-	.wr(((wbm_resp.ack && state==WAITLOAD) || state==LOAD_OOB) && lef),
+	.wr((((wbm_resp.ack|tocnt[10]) && state==WAITLOAD) || state==LOAD_OOB) && lef),
 	.di((state==LOAD_OOB) ? oob_dat : wbm_resp.dat),
 	.rrst(fifo_rrst),
 	.rclk(vclk),
@@ -1129,7 +1143,7 @@ rfVideoFifo #(MDW) uf2
 (
 	.wrst(fifo_wrst),
 	.wclk(m_clk_i),
-	.wr(((wbm_resp.ack && state==WAITLOAD) || state==LOAD_OOB) && lof),
+	.wr((((wbm_resp.ack|tocnt[10]) && state==WAITLOAD) || state==LOAD_OOB) && lof),
 	.di((state==LOAD_OOB) ? oob_dat : wbm_resp.dat),
 	.rrst(fifo_rrst),
 	.rclk(vclk),

@@ -137,6 +137,7 @@
 //	3EC: BC	  [29:0] background color
 //  3FC: ADDR	[31:0] sprite DMA address bits [63:32]
 //
+// 7200
 //=============================================================================
 
 import wishbone_pkg::*;
@@ -261,6 +262,7 @@ reg [11:0] sprAddrB [pnSprm:0];	// backup address cache for rescan
 wire [31:0] sprOut4 [pnSprm:0];	// sprite image data output
 reg [31:0] sprOut [pnSprm:0];	// sprite image data output
 reg [31:0] sprOut5 [pnSprm:0];	// sprite image data output
+wire [5:0] actcnt;	// count of sprites active at a given pixel location of the screen
 
 // Animation
 reg [11:0] sprFrameSize [pnSprm:0];
@@ -270,6 +272,7 @@ reg [9:0] sprRate [pnSprm:0];
 reg [9:0] sprCurRateCount [pnSprm:0];
 reg [pnSprm:0] sprEnableAnimation;
 reg [pnSprm:0] sprAutoRepeat;
+reg [11:0] sprFrameProd [pnSprm:0];
 
 // DMA access
 reg [31:12] sprSysAddr [pnSprm:0];	// system memory address of sprite image (low bits)
@@ -322,8 +325,10 @@ reg [8:0] cob;	// count of burst cycles
 
 assign wbm_req.bte = LINEAR;
 assign wbm_req.cti = CLASSIC;
+assign wbm_req.blen = 6'd63;
 assign wbm_req.stb = wbm_req.cyc;
-assign wbm_req.sel = {16{wbm_req.cyc}};
+assign wbm_req.sel = 16'hFFFF;
+assign wbm_req.cid = 4'd5;
 assign m_spriteno_o = dmaOwner;
 
 reg [2:0] mstate;
@@ -334,6 +339,17 @@ parameter NACK = 3'd3;
 
 wire pe_m_ack_i;
 edge_det ued2 (.rst(rst_i), .clk(m_clk_i), .ce(1'b1), .i(wbm_resp.ack), .pe(pe_m_ack_i), .ne(), .ee());
+
+reg [11:0] tocnt;
+always_ff @(posedge m_clk_i)
+if (rst_i)
+	tocnt <= 'd0;
+else begin
+	if (wbm_req.cyc)
+		tocnt <= tocnt + 2'd1;
+	else
+		tocnt <= 'd0;
+end
 
 always_ff @(posedge m_clk_i)
 if (rst_i)
@@ -346,7 +362,7 @@ else begin
 	ACTIVE:
 		mstate <= ACK;
 	ACK:
-		if (wbm_resp.ack | wbm_resp.err)
+		if (wbm_resp.ack | wbm_resp.err | tocnt[10])
 			mstate <= NACK;
 	NACK:
 		if (~(wbm_resp.ack|wbm_resp.err))
@@ -390,7 +406,7 @@ begin
 	case(mstate)
 	IDLE:
 		for (n32 = pnSprm; n32 >= 0; n32 = n32 - 1)
-			if (sprDt[n32])
+			if (sprDt[n32] & ce)
 				cob <= sprBurstStart[n32];
 	ACTIVE:
 		cob <= cob + 2'd2;
@@ -411,7 +427,7 @@ else begin
 			wbm_req.adr <= {sprSysAddr[dmaOwner],cob[8:1],4'h0};
 		end
 	ACK:
-		if (wbm_resp.ack|wbm_resp.err)
+		if (wbm_resp.ack|wbm_resp.err|tocnt[10])
 			wb_m_nack();
 	endcase
 end
@@ -419,35 +435,34 @@ end
 task wb_m_nack;
 begin
 	wbm_req.cyc <= 1'b0;
-	wbm_req.adr <= 32'h0;
 end
 endtask
 
 
 // generate a write enable strobe for the sprite image memory
 integer n1;
-reg [8:0] m_adr_or;
+reg [8:0] m_adr_or;		// 64-bit value address
 reg [127:0] m_dat_ir;
 reg ack1;
 
 always_ff @(posedge m_clk_i)
 for (n1 = 0; n1 < pnSpr; n1 = n1 + 1)
-	sprWe[n1] <= (dmaOwner==n1 && (wbm_resp.ack||ack1));
+	sprWe[n1] <= (dmaOwner==n1 && (pe_m_ack_i||ack1));
 
 always_ff @(posedge m_clk_i)
-	ack1 <= wbm_resp.ack;
+	ack1 <= pe_m_ack_i;
 always_ff @(posedge m_clk_i)
-if (wbm_resp.ack|ack1)
+if (pe_m_ack_i|ack1)
 	m_adr_or <= {wbm_req.adr[11:4],ack1};
 always_ff @(posedge m_clk_i)
-if (wbm_resp.ack) begin
+if (pe_m_ack_i) begin
 	if (test)
 		m_dat_ir <= {8{1'b0,dmaOwner,10'b0}};
 	else
-		m_dat_ir <= wbm_resp.dat;
+		m_dat_ir <= {wbm_resp.dat[63:0],wbm_resp.dat[127:64]};
 end
 else if (ack1)
-	m_dat_ir <= {128'd0,m_dat_ir[127:64]};
+	m_dat_ir <= {64'd0,m_dat_ir[127:64]};
 
 
 //--------------------------------------------------------------------
@@ -499,7 +514,7 @@ reg vSync1;
 integer n33;
 always_ff @(posedge s_clk_i)
 if (rst_i) begin
-	vSyncT <= 32'hFFFF0000;//FFFFFFFF;
+	vSyncT <= 32'hFFFFFFFF;//FFFFFFFF;
 	sprEn <= 32'hFFFFFFFF;
 	sprDt <= 0;
   for (n33 = 0; n33 < pnSpr; n33 = n33 + 1) begin
@@ -514,19 +529,25 @@ if (rst_i) begin
     hSprPos[n33] <= 200 + (n33 & 7) * 70;
     vSprPos[n33] <= 100 + (n33 >> 3) * 100;
     sprTc[n33] <= 24'h7FFF;		// White 16 bpp
-		sprWidth[n33] <= 8'd16;  	// 16x16 sprites
-		sprHeight[n33] <= 8'd16;
-		hSprRes[n33] <= 2;	// our standard display
-		vSprRes[n33] <= 2;
-		sprImageOffs[n33] <= 0;
-		sprPlane[n33] <= 4'hF;//n[3:0];
+		sprWidth[n33] <= 8'd24;  	// 16x16 sprites
+		sprHeight[n33] <= 8'd21;
+		hSprRes[n33] <= 2'd2;	// our standard display
+		vSprRes[n33] <= 2'd2;
+		sprImageOffs[n33] <= 12'h0;
+		sprPlane[n33] <= 4'h7;//n[3:0];
 		sprBurstStart[n33] <= 9'h000;
-		sprBurstEnd[n33] <= 9'h1FF;
+		sprBurstEnd[n33] <= 9'h1FE;
 		sprColorDepth[n33] <= 2'b10;
-		sprFrameSize[n33] <= 12'd256;
-		sprFrames[n33] <= 8'd5;
+		if (n33 >= 5'd29) begin
+			sprFrameSize[n33] <= 12'd1936;
+			sprFrames[n33] <= 8'd0;
+		end
+		else begin
+			sprFrameSize[n33] <= 12'd504;
+			sprFrames[n33] <= 8'd3;
+		end
 		sprRate[n33] <= 12'd10;
-		sprEnableAnimation[n33] <= 1'b1;
+		sprEnableAnimation[n33] <= n33 < 5'd29;
 		sprAutoRepeat[n33] <= 1'b1;
 	end
   hSprPos[0] <= 210;
@@ -555,8 +576,8 @@ else begin
 		casez (wb_reqs.adr[9:2])
 		8'b100?????:
 			begin
-				if (&wb_reqs.sel[1:0]) sprBurstStart[wb_reqs.adr[6:2]] <= wb_reqs.dat[8:0];
-				if (&wb_reqs.sel[3:2]) sprBurstEnd[wb_reqs.adr[6:2]] <= wb_reqs.dat[24:16];
+				if (&wb_reqs.sel[1:0]) sprBurstStart[wb_reqs.adr[6:2]] <= {wb_reqs.dat[8:1],1'b0};
+				if (&wb_reqs.sel[3:2]) sprBurstEnd[wb_reqs.adr[6:2]] <= {wb_reqs.dat[24:17],1'b0};
 			end
 		8'b101?????:
 			begin
@@ -830,15 +851,20 @@ always_ff @(posedge vclk)
 				if (sprCurRateCount[n28] >= sprRate[n28]) begin
 					sprCurRateCount[n28] <= 'd0;
 					sprCurFrame[n28] <= sprCurFrame[n28] + 2'd1;
-					if (sprCurFrame[n28] >= sprFrames[n28])
+					sprFrameProd[n28] <= sprFrameProd[n28] + sprFrameSize[n28];
+					if (sprCurFrame[n28] >= sprFrames[n28]) begin
 						sprCurFrame[n28] <= 'd0;
+						sprFrameProd[n28] <= 'd0;
+					end
 				end
 			end
-			else
+			else begin
 				sprCurFrame[n28] <= 'd0;
+				sprFrameProd[n28] <= 'd0;
+			end
 		end
 	end
-		
+
 // clock sprite image address counters
 integer n8;
 always_ff @(posedge vclk)
@@ -846,8 +872,8 @@ for (n8 = 0; n8 < pnSpr; n8 = n8 + 1) begin
     // hReset and vReset - top left of sprite,
     // reset address to image offset
 	if (hSprReset[n8] & vSprReset[n8]) begin
-		sprAddr[n8]  <= sprImageOffs[n8] + sprCurFrame[n8] * sprFrameSize[n8];
-		sprAddrB[n8] <= sprImageOffs[n8] + sprCurFrame[n8] * sprFrameSize[n8];
+		sprAddr[n8]  <= sprImageOffs[n8] + sprFrameProd[n8];
+		sprAddrB[n8] <= sprImageOffs[n8] + sprFrameProd[n8];
 	end
 	// hReset:
 	//  If the next vertical pixel
@@ -1059,148 +1085,13 @@ end
 // same time.
 
 //--------------------------------------------------------------------
-// Note this case has to be modified for the number of sprites
 // ToDo: make collision also depend on plane
 //--------------------------------------------------------------------
-generate
-begin : gSprsColliding
-always @(pnSpr or sproact)
-if (pnSpr==1)
-	sprCollision = 0;
-else if (pnSpr==2)
-	case (sproact)
-	2'b00,
-	2'b01,
-	2'b10:	sprCollision = 0;
-	2'b11:	sprCollision = 1;
-	endcase
-else if (pnSpr==4)
-	case (sproact)
-	4'b0000,
-	4'b0001,
-	4'b0010,
-	4'b0100,
-	4'b1000:	sprCollision = 0;
-	default:	sprCollision = 1;
-	endcase
-else if (pnSpr==6)
-	case (sproact)
-	6'b000000,
-	6'b000001,
-	6'b000010,
-	6'b000100,
-	6'b001000,
-	6'b010000,
-	8'b100000:	sprCollision = 0;
-	default:	sprCollision = 1;
-	endcase
-else if (pnSpr==8)
-	case (sproact)
-	8'b00000000,
-	8'b00000001,
-	8'b00000010,
-	8'b00000100,
-	8'b00001000,
-	8'b00010000,
-	8'b00100000,
-	8'b01000000,
-	8'b10000000:	sprCollision = 0;
-	default:		sprCollision = 1;
-	endcase
-else if (pnSpr==10)
-	case (sproact)
-	10'b0000000000,
-	10'b0000000001,
-	10'b0000000010,
-	10'b0000000100,
-	10'b0000001000,
-	10'b0000010000,
-	10'b0000100000,
-	10'b0001000000,
-	10'b0010000000,
-	10'b0100000000,
-	10'b1000000000:	sprCollision = 0;
-	default:		sprCollision = 1;
-	endcase
-else if (pnSpr==14)
-	case (sproact)
-	14'b00000000000000,
-	14'b00000000000001,
-	14'b00000000000010,
-	14'b00000000000100,
-	14'b00000000001000,
-	14'b00000000010000,
-	14'b00000000100000,
-	14'b00000001000000,
-	14'b00000010000000,
-	14'b00000100000000,
-	14'b00001000000000,
-	14'b00010000000000,
-	14'b00100000000000,
-	14'b01000000000000,
-	14'b10000000000000:	sprCollision = 0;
-	default:			sprCollision = 1;
-	endcase
-else if (pnSpr==16)
-	case (sproact)
-	16'h0000,
-	16'h0001,
-	16'h0002,
-	16'h0004,
-	16'h0008,
-	16'h0010,
-	16'h0020,
-	16'h0040,
-	16'h0080,
-	16'h0100,
-	16'h0200,
-	16'h0400,
-	16'h0800,
-	16'h1000,
-	16'h2000,
-	16'h4000,
-	16'h8000:	sprCollision = 0;
-	default:	sprCollision = 1;
-	endcase
-else if (pnSpr==32)
-	case (sproact)
-	32'h00000000,
-	32'h00000001,
-	32'h00000002,
-	32'h00000004,
-	32'h00000008,
-	32'h00000010,
-	32'h00000020,
-	32'h00000040,
-	32'h00000080,
-	32'h00000100,
-	32'h00000200,
-	32'h00000400,
-	32'h00000800,
-	32'h00001000,
-	32'h00002000,
-	32'h00004000,
-	32'h00008000,
-	32'h00010000,
-	32'h00020000,
-	32'h00040000,
-	32'h00080000,
-	32'h00100000,
-	32'h00200000,
-	32'h00400000,
-	32'h00800000,
-	32'h01000000,
-	32'h02000000,
-	32'h04000000,
-	32'h08000000,
-	32'h10000000,
-	32'h20000000,
-	32'h40000000,
-	32'h80000000:		sprCollision = 0;
-	default:			sprCollision = 1;
-	endcase
-end
-endgenerate
+
+cntpop32 ucntp1 (
+	.i(sproact),
+	.o(actcnt)
+);
 
 // Detect when a sprite-background collision has occurred
 integer n31;
@@ -1219,7 +1110,7 @@ if (rst_i) begin
 	sprSprCollision1 <= 0;
 	sprSprIRQ1 <= 0;
 end
-else if (sprCollision) begin
+else if (actcnt > 6'd1) begin
 	// isFirstCollision
 	if ((sprSprCollision1==0)||(cs_regs && wb_reqs.sel[0] && wb_reqs.adr[9:2]==8'b11110010)) begin
 		sprSprIRQPending1 <= 1;

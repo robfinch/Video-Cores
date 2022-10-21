@@ -1,3 +1,4 @@
+`timescale 1ns / 1ps
 // ============================================================================
 //        __
 //   \\__/ o\    (C) 2015-2022  Robert Finch, Waterloo
@@ -69,6 +70,8 @@ always_comb
 	BPP27:	coeff = 65536*27/SW;
 	BPP32:	coeff = 65536*32/SW;
 	BPP33:	coeff = 65536*33/SW;
+	BPP36:	coeff = 65536*36/SW;
+	BPP40:	coeff = 65536*40/SW;
 	default:	coeff = 65536*16/SW;
 	endcase
 
@@ -86,6 +89,8 @@ always_comb
 	BPP27:	bpp = 26;
 	BPP32:	bpp = 31;
 	BPP33:	bpp = 32;
+	BPP36:	bpp = 35;
+	BPP40:	bpp = 39;
 	default:	bpp = 15;
 	endcase
 
@@ -103,6 +108,8 @@ always_comb
 	BPP27:	cbpp = 23;
 	BPP32:	cbpp = 26;
 	BPP33:	cbpp = 29;
+	BPP36:	cbpp = 32;
+	BPP40:	cbpp = 35;
 	default:	cbpp = 11;
 	endcase
 
@@ -121,6 +128,8 @@ always_comb
 	BPP27:	coeff2 = SW-(SW % 27);
 	BPP32:	coeff2 = SW-(SW % 32);
 	BPP33:	coeff2 = SW-(SW % 33);
+	BPP36:	coeff2 = SW-(SW % 36);
+	BPP40:	coeff2 = SW-(SW % 40);
 	default:	coeff2 = SW-(SW % 16);
 	endcase
 
@@ -142,7 +151,7 @@ assign ce_o = mb_o + cbpp;
 // Gain performance here by regstering the multiply so that there aren't two
 // cascaded multiplies when calculating the offset.
 reg [31:0] num_strips65k;
-always @(posedge clk)
+always_ff @(posedge clk)
 	num_strips65k <= bmp_width_i * coeff;
 wire [15:0] num_strips = num_strips65k[31:16];
 

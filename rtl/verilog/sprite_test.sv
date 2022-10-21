@@ -59,7 +59,9 @@ typedef enum logic [3:0] {
 	RUN1 = 4'd4,
 	RUN2 = 4'd5,
 	RUN3 = 4'd6,
-	RUN4 = 4'd7
+	RUN4 = 4'd7,
+	RUN5 = 4'd8,
+	RUN6 = 4'd9
 } state_t;
 state_t state;
 assign state_o = state;
@@ -84,6 +86,8 @@ if (rst) begin
 	cs <= 'd0;
 	wb_req.bte <= LINEAR;
 	wb_req.cti <= CLASSIC;
+	wb_req.blen <= 6'd0;
+	wb_req.cid <= 4'd7;
 	wb_req.cyc <= 'd0;
 	wb_req.stb <= 'd0;
 	wb_req.we <= 'd0;
@@ -99,14 +103,13 @@ else begin
 		end
 	INIT1:
 		if (~wb_resp.ack) begin
-			/*
 			cs <= 1'b1;
 			wb_req.cyc <= 1'b1;
 			wb_req.stb <= 1'b1;
 			wb_req.we <= 1'b1;
 			wb_req.sel <= 4'b1111;
-			wb_req.adr <= {1'b0,sprite_no,2'b00,2'b00};	// POS
-			*/
+			wb_req.adr <= {1'b0,sprite_no,2'b01,2'b00};	// SIZE register
+			wb_req.dat <= {4'h8,4'd10,2'b00,lfsr_o[1:0],2'b00,lfsr_o[1:0],8'd21,8'd24};
 //			wb_req.dat[15:0] <= lfsr_o[11:0];
 		  hpos[sprite_no] <= 200 + (sprite_no & 7) * 70;
     	vpos[sprite_no] <= 100 + (sprite_no >> 3) * 100;
@@ -137,7 +140,6 @@ else begin
 			wb_req.cyc <= 1'b1;
 			wb_req.stb <= 1'b1;
 			wb_req.we <= 1'b1;
-			wb_req.sel <= 4'b1111;
 			wb_req.adr <= {23'b0,sprite_no,2'b00,2'b00};	// POS register
 			wb_req.dat[15: 0] <= hpos[sprite_no];
 			wb_req.dat[31:16] <= vpos[sprite_no];
@@ -149,9 +151,6 @@ else begin
 			wb_req.cyc <= 1'b0;
 			wb_req.stb <= 1'b0;
 			wb_req.we <= 1'b0;
-			sprite_no <= sprite_no + 2'd1;
-//			if (sprite_no > 5'd15)
-//				sprite_no <= 5'd0;
 			state <= RUN3;
 		end
 	RUN3:
@@ -160,11 +159,11 @@ else begin
 				hcnt[sprite_no] <= hcnt[sprite_no] + 2'd1;
 			if (vcnt[sprite_no] != 4'd0)
 				vcnt[sprite_no] <= vcnt[sprite_no] + 2'd1;
-			if ((hpos[sprite_no] < 12'd280 || hpos[sprite_no] > 12'd1000) && hcnt[sprite_no]==4'd0) begin
+			if ((hpos[sprite_no] < 12'd260 || hpos[sprite_no] > 12'd980) && hcnt[sprite_no]==4'd0) begin
 				hdelta[sprite_no] <= -hdelta[sprite_no];
 				hcnt[sprite_no] <= 4'd1;
 			end
-			if ((vpos[sprite_no] < 12'd50 || vpos[sprite_no] > 12'd600) && vcnt[sprite_no]==4'd0) begin
+			if ((vpos[sprite_no] < 12'd50 || vpos[sprite_no] > 12'd580) && vcnt[sprite_no]==4'd0) begin
 				vdelta[sprite_no] <= -vdelta[sprite_no];
 				vcnt[sprite_no] <= 4'd1;
 			end
@@ -173,9 +172,34 @@ else begin
 			state <= RUN4;
 		end
 	RUN4:
+		if (~wb_resp.ack) begin
+			cs <= 1'b1;
+			wb_req.cyc <= 1'b1;
+			wb_req.stb <= 1'b1;
+			wb_req.we <= 1'b1;
+			wb_req.adr <= {23'b0,sprite_no,2'b10,2'b00};	// addr register
+			if (hdelta[sprite_no][11])
+				wb_req.dat <= 32'h00300000 + {sprite_no[4:0],13'h0000};
+			else
+				wb_req.dat <= 32'h00300000 + {sprite_no[4:0],13'h1000};
+			state <= RUN5;
+		end
+	RUN5:
+		if (wb_resp.ack) begin
+			cs <= 1'b0;
+			wb_req.cyc <= 1'b0;
+			wb_req.stb <= 1'b0;
+			wb_req.we <= 1'b0;
+			sprite_no <= sprite_no + 2'd1;
+			if (sprite_no==5'd31)
+				state <= RUN6;
+			else
+				state <= RUN1;
+		end
+	RUN6:
 		begin
 			count <= count + 2'd1;
-			if (count > 24'd100000) begin
+			if (count > 24'd1500000) begin
 				state <= RUN1;
 				count <= 'd0;
 			end
