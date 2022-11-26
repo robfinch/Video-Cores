@@ -50,12 +50,12 @@
 //	The core includes an embedded dual port RAM to hold the screen
 //	characters.
 //
-//  The controller expects a 128kB memory region to be reserved.
+//  The controller expects a 256kB memory region to be reserved.
 //
 //  Memory Map:
-//  00000-0FFFF   display ram
-//  10000-1FEFF   character bitmap ram
-//  1FF00-1FFFF   controller registers
+//  00000-2FFFF   display ram
+//  30000-3FEFF   character bitmap ram
+//  3FF00-3FFFF   controller registers
 //
 //--------------------------------------------------------------------
 // Registers
@@ -114,7 +114,7 @@ module rfTextController(
 parameter num = 4'd1;
 parameter COLS = 8'd64;
 parameter ROWS = 8'd32;
-parameter BUSWID = 64;
+parameter BUSWID = 32;
 
 
 // Syscon
@@ -129,7 +129,7 @@ input  stb_i;       // data strobe
 output ack_o;				// data acknowledge
 input  wr_i;				// write
 input  [BUSWID/8-1:0] sel_i;	// byte lane select
-input  [16:0] adr_i;	// address
+input  [17:0] adr_i;	// address
 input  [BUSWID-1:0] dat_i;			// data input
 output reg [BUSWID-1:0] dat_o;	// data output
 
@@ -210,6 +210,12 @@ reg  bgt, bgtd, bgtd2;
 wire [63:0] tdat_o;
 wire [63:0] chdat_o;
 
+function [63:0] fnRbo;
+input n;
+input [63:0] i;
+	fnRbo = n ? {i[7:0],i[15:8],i[23:16],i[31:24],i[39:32],i[47:40],i[55:48],i[63:56]} : i;
+endfunction
+
 //--------------------------------------------------------------------
 // bus interfacing
 // Address Decoding
@@ -217,30 +223,30 @@ wire [63:0] chdat_o;
 //--------------------------------------------------------------------
 // Register the inputs
 reg cs_rom, cs_reg, cs_text, cs_any;
-reg [16:0] radr_i;
+reg [17:0] radr_i;
 reg [63:0] rdat_i;
 reg rwr_i;
 reg [7:0] rsel_i;
 reg [7:0] wrs_i;
 always_ff @(posedge clk_i)
-	cs_rom <= cs_i && cyc_i && stb_i && (adr_i[16:8] >= 9'h100 && adr_i[16:8] < 9'h1FF);
+	cs_rom <= cs_i && cyc_i && stb_i && (adr_i[17:8] >= 10'h300 && adr_i[17:8] < 10'h3FF);
 always_ff @(posedge clk_i)
-	cs_reg <= cs_i && cyc_i && stb_i && (adr_i[16:8] == 9'h1FF);
+	cs_reg <= cs_i && cyc_i && stb_i && (adr_i[17:8] == 10'h3FF);
 always_ff @(posedge clk_i)
-	cs_text <= cs_i && cyc_i && stb_i && (adr_i[16:8] < 9'h100);
+	cs_text <= cs_i && cyc_i && stb_i && (adr_i[17:8] < 10'h300);
 always_ff @(posedge clk_i)
 	cs_any <= cs_i && cyc_i && stb_i;
 always_ff @(posedge clk_i)
-	wrs_i <= BUSWID==64 ? {8{wr_i}} & sel_i :
+	wrs_i <= (BUSWID==64) ? {8{wr_i}} & sel_i :
 		adr_i[2] ? {{4{wr_i}} & sel_i,4'h0} : {4'h0,{4{wr_i}} & sel_i};
 always_ff @(posedge clk_i)
 	rwr_i <= wr_i;
 always_ff @(posedge clk_i)
-	rsel_i <= BUSWID==64 ? sel_i : adr_i[2] ? {sel_i,4'h0} : {4'h0,sel_i};
+	rsel_i <= (BUSWID==64) ? sel_i : adr_i[2] ? {sel_i,4'h0} : {4'h0,sel_i};
 always_ff @(posedge clk_i)
 	radr_i <= adr_i;
 always_ff @(posedge clk_i)
-	rdat_i <= BUSWID==64 ? dat_i : {2{dat_i}};
+	rdat_i <= (BUSWID==64) ? dat_i : (BUSWID==32) ? {2{dat_i}} : {4{dat_i}};
 
 // Register outputs
 always @(posedge clk_i)
@@ -399,6 +405,11 @@ regReadbackMem #(.WID(8)) rrm3H
 wire [26:0] lfsr1_o;
 lfsr27 #(.WID(27)) ulfsr1(rst_i, dot_clk_i, 1'b1, 1'b0, lfsr1_o);
 wire [63:0] lfsr_o = {6'h10,
+												lfsr1_o[26:24],4'b0,lfsr1_o[23:21],4'b0,lfsr1_o[20:18],4'b0,
+												lfsr1_o[17:15],4'b0,lfsr1_o[14:12],4'b0,lfsr1_o[11:9],4'b0,
+												7'h00,lfsr1_o[8:0]
+										};
+wire [63:0] lfsr_o2 = {6'h10,
 //												lfsr1_o[26:24],4'b0,lfsr1_o[23:21],4'b0,lfsr1_o[20:18],4'b0,
 //												lfsr1_o[17:15],4'b0,lfsr1_o[14:12],4'b0,lfsr1_o[11:9],4'b0,
 												4'b0,lfsr1_o[26:24],4'b0,lfsr1_o[23:21],lfsr1_o[20:18],4'b0,
@@ -445,15 +456,15 @@ rfTextScreenRam screen_ram1
 	.csa_i(cs_text),
 	.wea_i(rwr_i),
 	.sela_i(rsel_i),
-	.adra_i(radr_i[15:3]),
+	.adra_i(radr_i[16:3]),
 	.data_i(rdat_i),
 	.data_o(tdat_o),
 	.clkb_i(vclk),
 	.csb_i(ld_shft|por),
 	.web_i(por),
 	.selb_i(8'hFF),
-	.adrb_i(txtAddr[12:0]),
-	.datb_i(txtAddr[12:0] > 13'd1664 ? lfsr_o1 : lfsr_o), 
+	.adrb_i(txtAddr[13:0]),
+	.datb_i(lfsr_o),//txtAddr[12:0] > 13'd1664 ? lfsr_o1 : lfsr_o), 
 	.datb_o(screen_ram_out)
 );
 
@@ -542,7 +553,7 @@ always_ff @(posedge clk_i)
 		// 64x32
 		if (num==4'd1) begin
       windowTop    <= 12'd4058;//12'd16;
-      windowLeft   <= 12'd3956;//12'd86;
+      windowLeft   <= 12'd3918;//12'd3956;//12'd86;
       pixelWidth   <= 4'd0;		// 800 pixels
       pixelHeight  <= 4'd0;		// 600 pixels
       numCols      <= COLS;
@@ -550,7 +561,7 @@ always_ff @(posedge clk_i)
       maxRowScan   <= 6'd17;
       maxScanpix   <= 6'd11;
       rBlink       <= 3'b111;		// 01 = non display
-      charOutDelay <= 8'd7;
+      charOutDelay <= 8'd5;
 		end
 		else if (num==4'd2) begin
       windowTop    <= 12'd4032;//12'd16;
@@ -606,10 +617,10 @@ always_ff @(posedge clk_i)
 					if (rsel_i[1]) txtTcCode[15:8] <= rdat_i[15:8];
 					if (rsel_i[2]) txtTcCode[23:16] <= rdat_i[23:16];
 					if (rsel_i[3]) txtTcCode[30:24] <= rdat_i[30:24];
-					if (rsel_i[4]) bdrColor[7:0] <= dat_i[39:32];
-					if (rsel_i[5]) bdrColor[15:8] <= dat_i[47:40];
-					if (rsel_i[6]) bdrColor[23:16] <= dat_i[55:48];
-					if (rsel_i[7]) bdrColor[31:24] <= dat_i[63:56];
+					if (rsel_i[4]) bdrColor[7:0] <= rdat_i[39:32];
+					if (rsel_i[5]) bdrColor[15:8] <= rdat_i[47:40];
+					if (rsel_i[6]) bdrColor[23:16] <= rdat_i[55:48];
+					if (rsel_i[7]) bdrColor[31:24] <= rdat_i[63:56];
 				end
 			4'd3:	// Color Control 2
 				begin
@@ -879,7 +890,7 @@ end
 
 reg blink_en;
 always_ff @(posedge vclk)
-	blink_en <= (cursorPos+charOutDelay-1==txtAddr);// && (rowscan[4:0] >= cursorStart) && (rowscan[4:0] <= cursorEnd);
+	blink_en <= (cursorPos+charOutDelay-2'd1==txtAddr);// && (rowscan[4:0] >= cursorStart) && (rowscan[4:0] <= cursorEnd);
 
 VT151 ub2
 (
@@ -931,7 +942,7 @@ rfTextShiftRegister ups1
 	.rst(rst_i),
 	.clk(vclk),
 	.mcm(mcm),
-	.aam(aam),
+//	.aam(aam),
 	.ce(nhp),
 	.ld(ld_shft),
 	.a(maxScanpix[5:0]),
