@@ -5,7 +5,7 @@
 //
 //
 //        __
-//   \\__/ o\    (C) 2008-2022  Robert Finch, Waterloo
+//   \\__/ o\    (C) 2008-2023  Robert Finch, Waterloo
 //    \  __ /    All rights reserved.
 //     \/_//     robfinch<remove>@finitron.ca
 //       ||
@@ -50,26 +50,48 @@
 `define INTERNAL_SYNC_GEN	1'b1
 `define WXGA800x600		1'b1
 //`define WXGA1366x768	1'b1
+`define FBC_ADDR		32'hFD040001
 
 import const_pkg::*;
 `define ABITS	31:0
 
 import wishbone_pkg::*;
 import gfx_pkg::*;
+import Thor2023Pkg::*;
+import Thor2023Mmupkg::*;
 
 module rfFrameBuffer(
-	rst_i, irq_o,
-	s_clk_i, s_cs_i, s_cyc_i, s_stb_i, s_ack_o, s_we_i, s_sel_i, s_adr_i, s_dat_i, s_dat_o,
+	rst_i,
+	cs_config_i,
+	cs_io_i,
+	s_clk_i, s_cyc_i, s_stb_i, s_ack_o, s_we_i, s_sel_i, s_adr_i, s_dat_i, s_dat_o,
 	m_clk_i, m_fst_o, 
 //	m_cyc_o, m_stb_o, m_ack_i, m_we_o, m_sel_o, m_adr_o, m_dat_i, m_dat_o,
 	wbm_req, wbm_resp,
-	dot_clk_i, zrgb_o, xonoff_i, xal_o,
+	dot_clk_i, zrgb_o, xonoff_i, xal_o
 `ifdef INTERNAL_SYNC_GEN
 	, hsync_o, vsync_o, blank_o, border_o, hctr_o, vctr_o, fctr_o, vblank_o
 `else
 	, hsync_i, vsync_i, blank_i
 `endif
 );
+parameter BUSWID = 32;
+
+parameter CFG_BUS = 8'd0;
+parameter CFG_DEVICE = 5'd0;
+parameter CFG_FUNC = 3'd0;
+parameter CFG_VENDOR_ID	=	16'h0;
+parameter CFG_DEVICE_ID	=	16'h0;
+parameter CFG_SUBSYSTEM_VENDOR_ID	= 16'h0;
+parameter CFG_SUBSYSTEM_ID = 16'h0;
+parameter CFG_ROM_ADDR = 32'hFFFFFFF0;
+
+parameter IRQ_MSGADR = 64'h0FFD900C1;
+parameter IRQ_MSGDAT = 64'h1;
+
+parameter PHYS_ADDR_BITS = 32;
+localparam BITS_IN_ADDR_MAP = PHYS_ADDR_BITS - 16;
+
 parameter MDW = 128;		// Bus master data width
 parameter MAP = 12'd0;
 parameter BM_BASE_ADDR1 = 32'h00200000;
@@ -88,6 +110,8 @@ parameter REG_RASTCMP = 11'd12;
 parameter REG_BMPSIZE = 11'd13;
 parameter REG_OOB_COLOR = 11'd14;
 parameter REG_WINDOW = 11'd15;
+parameter REG_IRQ_MSGADR = 11'd16;
+parameter REG_IRQ_MSGDC = 11'd17;
 
 parameter OPBLACK = 4'd0;
 parameter OPCOPY = 4'd1;
@@ -145,27 +169,27 @@ parameter pvTotal = 795;		//  795 total scan lines
 
 // SYSCON
 input rst_i;				// system reset
-output irq_o;
+
+input cs_config_i;
+input cs_io_i;
 
 // Peripheral IO slave port
 input s_clk_i;
-input s_cs_i;
 input s_cyc_i;
 input s_stb_i;
 output s_ack_o;
 input s_we_i;
-input [7:0] s_sel_i;
-input [13:0] s_adr_i;
-input [63:0] s_dat_i;
-output [63:0] s_dat_o;
-reg [63:0] s_dat_o;
+input [BUSWID/8-1:0] s_sel_i;
+input [31:0] s_adr_i;
+input [BUSWID-1:0] s_dat_i;
+output reg [BUSWID-1:0] s_dat_o;
 
 // Video Memory Master Port
 // Used to read memory via burst access
 input m_clk_i;				// system bus interface clock
 output reg m_fst_o;		// first access on scanline
-output wb_write_request128_t wbm_req;
-input wb_read_response128_t wbm_resp;
+output wb_cmd_request128_t wbm_req;
+input wb_cmd_response128_t wbm_resp;
 
 // Video
 input dot_clk_i;		// Video clock 80 MHz
@@ -192,38 +216,50 @@ output reg xal_o;		// external access line (sprite access)
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // IO registers
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-reg irq_o;
+reg irq;
+reg rst_irq;
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 wire vclk;
-reg cs;
+reg cs,cs2;
+reg cs_config;
+reg cs_map;
+reg cs_reg;
 reg we;
 reg [7:0] sel;
-reg [13:0] adri;
+reg [31:0] adri;
 reg [63:0] dat;
 
-always @(posedge s_clk_i)
-	cs <= s_cyc_i & s_stb_i & s_cs_i;
-always @(posedge s_clk_i)
+always_ff @(posedge s_clk_i)
+	cs <= s_cyc_i & s_stb_i & cs_io_i;
+always_ff @(posedge s_clk_i)
 	we <= s_we_i;
-always @(posedge s_clk_i)
-	sel <= s_sel_i;
-always @(posedge s_clk_i)
-	adri <= s_adr_i;
-always @(posedge s_clk_i)
-	dat <= s_dat_i;
+always_ff @(posedge s_clk_i)
+	sel <= BUSWID==64 ? s_sel_i : s_sel_i << {s_adr_i[3],2'b00};
+always_ff @(posedge s_clk_i)
+	adri <= BUSWID==64 ? s_adr_i : s_adr_i;
+always_ff @(posedge s_clk_i)
+	dat <= BUSWID==64 ? s_dat_i : s_dat_i << {s_adr_i[3],5'd0};
 
+always_ff @(posedge s_clk_i)
+	cs_config <= s_cyc_i & s_stb_i & cs_config_i && adri[27:20]==CFG_BUS && adri[19:15]==CFG_DEVICE && adri[14:12]==CFG_FUNC;
+always_comb
+	cs_map = cs && adri[31:16]==fbc_addr[31:16] && adri[15:14]==3'd1;
+always_comb
+	cs_reg = cs && adri[31:16]==fbc_addr[31:16] && adri[15:14]==3'd0;
+	
 ack_gen #(
-	.READ_STAGES(2),
+	.READ_STAGES(3),
 	.WRITE_STAGES(0),
 	.REGISTER_OUTPUT(1)
 ) uag1
 (
+	.rst_i(rst_i),
 	.clk_i(s_clk_i),
 	.ce_i(1'b1),
-	.i(cs),
-	.we_i(s_cyc_i & s_stb_i & s_cs_i & s_we_i),
+	.i(cs_map|cs_reg|cs_config),
+	.we_i(s_cyc_i & s_stb_i & (cs_map|cs_reg|cs_config) & s_we_i),
 	.o(s_ack_o),
 	.rid_i(0),
 	.wid_i(0),
@@ -233,10 +269,11 @@ ack_gen #(
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-integer n;
+integer n, n1;
+reg [31:0] fbc_addr;
 reg [11:0] rastcmp;
 reg [`ABITS] bm_base_addr1,bm_base_addr2;
-color_depth_t color_depth;
+color_depth_t color_depth, color_depth2;
 wire [7:0] fifo_cnt;
 reg onoff;
 reg [2:0] hres,vres;
@@ -257,14 +294,14 @@ wire [MDW-1:0] rgbo1, rgbo1e, rgbo1o, rgbo1m;
 reg [15:0] pixelRow;
 reg [15:0] pixelCol;
 wire [63:0] pal_wo;
-wire [63:0] pal_o;
+wire [31:0] pal_o;
 reg [15:0] px;
 reg [15:0] py;
 reg [7:0] pz;
 reg [1:0] pcmd,pcmd_o;
 reg [3:0] raster_op;
 reg [39:0] oob_color;
-reg [31:0] color;
+reg [39:0] color;
 reg [31:0] color_o;
 reg rstcmd,rstcmd1;
 reg [11:0] hTotal = phTotal;
@@ -279,6 +316,189 @@ reg sgLock;
 wire pe_hsync, pe_hsync2;
 wire pe_vsync;
 reg [11:0] tocnt;		// bus timeout counter
+reg vm_cyc_o;
+reg [31:0] vm_adr_o;
+
+// PCI config
+
+reg [63:0] pci_dat [0:31];
+reg [63:0] pci_out;
+wire [31:0] map_out;
+reg [63:0] irq_msgadr;
+reg [63:0] irq_msgdat;
+
+initial begin
+	for (n1 = 0; n1 < 32; n1 = n1 + 1)
+		pci_dat[n1] = 'd0;
+end
+
+always_ff @(posedge s_clk_i)
+if (rst_i) begin
+	fbc_addr <= `FBC_ADDR;
+end
+else begin
+	if (cs_config) begin
+		if (we)
+			case(adri[7:3])
+			5'h00:	;
+			5'h02:
+				begin
+					if (&sel[3:0] && dat[31:0]==32'hFFFFFFFF)
+						fcb_addr <= 32'hFFC00000;	// reserve 4MB
+					else begin
+						if (sel[0])	fbc_addr[7:0] <= dat[7:0];
+						if (sel[1])	fbc_addr[15:8] <= dat[15:8];
+						if (sel[2])	fbc_addr[23:16] <= dat[23:16];
+						if (sel[3])	fbc_addr[31:24] <= dat[31:24];
+					end
+				end
+			default:
+				pci_dat[adri[7:3]] <= dat;
+			endcase
+		else
+			case(adri[7:3])
+			5'h00:	pci_out <= {32'h0,CFG_DEVICE_ID,CFG_VENDOR_ID};
+			5'h01:	pci_out <= {8'h00,8'h00,8'h00,8'd32,24'h0,8'h0};
+			5'h02:	pci_out <= {32'hFFFFFFFF,fbc_addr};
+			5'h03:	pci_out <= 64'hFFFFFFFFFFFFFFFF;
+			5'h04:	pci_out <= 64'hFFFFFFFFFFFFFFFF;
+			5'h05:	pci_out <= {CFG_SUBSYSTEM_ID,CFG_SUBSYSTEM_VENDOR_ID,32'h0};
+			5'h06:	pci_out <= {24'h00,8'h00,CFG_ROM_ADDR};
+			5'h07: 	pci_out <= {8'd8,8'd0,8'd0,8'd0,32'h0};
+			5'h08:	pci_out <= {18'h0,REG_IRQ_MSGADR,3'b0,16'h8000,8'h4C,8'h11};
+			5'h09:	pci_out <= 64'd0;
+			default:	pci_out <= pci_dat[adri[7:3]];
+			endcase
+	end
+end
+
+
+wire [15:0] map_page;
+
+   // xpm_memory_tdpram: True Dual Port RAM
+   // Xilinx Parameterized Macro, version 2022.2
+
+   xpm_memory_tdpram #(
+      .ADDR_WIDTH_A(11),               // DECIMAL
+      .ADDR_WIDTH_B(11),               // DECIMAL
+      .AUTO_SLEEP_TIME(0),            // DECIMAL
+      .BYTE_WRITE_WIDTH_A(BITS_IN_ADDR_MAP),
+      .BYTE_WRITE_WIDTH_B(BITS_IN_ADDR_MAP),
+      .CASCADE_HEIGHT(0),             // DECIMAL
+      .CLOCKING_MODE("common_clock"), // String
+      .ECC_MODE("no_ecc"),            // String
+      .MEMORY_INIT_FILE("fb_map.mem"),      // String
+      .MEMORY_INIT_PARAM(""),        // String
+      .MEMORY_OPTIMIZATION("true"),   // String
+      .MEMORY_PRIMITIVE("auto"),      // String
+      .MEMORY_SIZE(2048*BITS_IN_ADDR_MAP),
+      .MESSAGE_CONTROL(0),            // DECIMAL
+      .READ_DATA_WIDTH_A(BITS_IN_ADDR_MAP),
+      .READ_DATA_WIDTH_B(BITS_IN_ADDR_MAP),
+      .READ_LATENCY_A(2),             // DECIMAL
+      .READ_LATENCY_B(2),             // DECIMAL
+      .READ_RESET_VALUE_A("0"),       // String
+      .READ_RESET_VALUE_B("0"),       // String
+      .RST_MODE_A("SYNC"),            // String
+      .RST_MODE_B("SYNC"),            // String
+      .SIM_ASSERT_CHK(0),             // DECIMAL; 0=disable simulation messages, 1=enable simulation messages
+      .USE_EMBEDDED_CONSTRAINT(0),    // DECIMAL
+      .USE_MEM_INIT(1),               // DECIMAL
+      .USE_MEM_INIT_MMI(0),           // DECIMAL
+      .WAKEUP_TIME("disable_sleep"),  // String
+      .WRITE_DATA_WIDTH_A(16),        // DECIMAL
+      .WRITE_DATA_WIDTH_B(16),        // DECIMAL
+      .WRITE_MODE_A("no_change"),     // String
+      .WRITE_MODE_B("no_change"),     // String
+      .WRITE_PROTECT(1)               // DECIMAL
+   )
+   umap (
+      .dbiterra(),             // 1-bit output: Status signal to indicate double bit error occurrence
+                                       // on the data output of port A.
+
+      .dbiterrb(),             // 1-bit output: Status signal to indicate double bit error occurrence
+                                       // on the data output of port A.
+
+      .douta(map_out), 		             // READ_DATA_WIDTH_A-bit output: Data output for port A read operations.
+      .doutb(map_page),      // READ_DATA_WIDTH_B-bit output: Data output for port B read operations.
+      .sbiterra(),             // 1-bit output: Status signal to indicate single bit error occurrence
+                                       // on the data output of port A.
+
+      .sbiterrb(),             // 1-bit output: Status signal to indicate single bit error occurrence
+                                       // on the data output of port B.
+
+      .addra(adri[13:3]),              // ADDR_WIDTH_A-bit input: Address for port A write and read operations.
+      .addrb(vm_adr_o[26:16]),         // ADDR_WIDTH_B-bit input: Address for port B write and read operations.
+      .clka(s_clk_i),                  // 1-bit input: Clock signal for port A. Also clocks port B when
+                                       // parameter CLOCKING_MODE is "common_clock".
+
+      .clkb(m_clk_i),                  // 1-bit input: Clock signal for port B when parameter CLOCKING_MODE is
+                                       // "independent_clock". Unused when parameter CLOCKING_MODE is
+                                       // "common_clock".
+
+      .dina(dat[15:0]),                // WRITE_DATA_WIDTH_A-bit input: Data input for port A write operations.
+      .dinb(16'd0),                    // WRITE_DATA_WIDTH_B-bit input: Data input for port B write operations.
+      .ena(cs_map),                    // 1-bit input: Memory enable signal for port A. Must be high on clock
+                                       // cycles when read or write operations are initiated. Pipelined
+                                       // internally.
+
+      .enb(onoff),                     // 1-bit input: Memory enable signal for port B. Must be high on clock
+                                       // cycles when read or write operations are initiated. Pipelined
+                                       // internally.
+
+      .injectdbiterra(1'b0), // 1-bit input: Controls double bit error injection on input data when
+                                       // ECC enabled (Error injection capability is not available in
+                                       // "decode_only" mode).
+
+      .injectdbiterrb(1'b0), // 1-bit input: Controls double bit error injection on input data when
+                                       // ECC enabled (Error injection capability is not available in
+                                       // "decode_only" mode).
+
+      .injectsbiterra(1'b0), // 1-bit input: Controls single bit error injection on input data when
+                                       // ECC enabled (Error injection capability is not available in
+                                       // "decode_only" mode).
+
+      .injectsbiterrb(1'b0), // 1-bit input: Controls single bit error injection on input data when
+                                       // ECC enabled (Error injection capability is not available in
+                                       // "decode_only" mode).
+
+      .regcea(cs_map),                 // 1-bit input: Clock Enable for the last register stage on the output
+                                       // data path.
+
+      .regceb(onoff),                 // 1-bit input: Clock Enable for the last register stage on the output
+                                       // data path.
+
+      .rsta(1'b0),                     // 1-bit input: Reset signal for the final port A output register stage.
+                                       // Synchronously resets output port douta to the value specified by
+                                       // parameter READ_RESET_VALUE_A.
+
+      .rstb(1'b0),                     // 1-bit input: Reset signal for the final port B output register stage.
+                                       // Synchronously resets output port doutb to the value specified by
+                                       // parameter READ_RESET_VALUE_B.
+
+      .sleep(~onoff),                  // 1-bit input: sleep signal to enable the dynamic power saving feature.
+      .wea(we),                        // WRITE_DATA_WIDTH_A/BYTE_WRITE_WIDTH_A-bit input: Write enable vector
+                                       // for port A input data port dina. 1 bit wide when word-wide writes are
+                                       // used. In byte-wide write configurations, each bit controls the
+                                       // writing one byte of dina to address addra. For example, to
+                                       // synchronously write only bits [15-8] of dina when WRITE_DATA_WIDTH_A
+                                       // is 32, wea would be 4'b0010.
+
+      .web(1'b0)                       // WRITE_DATA_WIDTH_B/BYTE_WRITE_WIDTH_B-bit input: Write enable vector
+                                       // for port B input data port dinb. 1 bit wide when word-wide writes are
+                                       // used. In byte-wide write configurations, each bit controls the
+                                       // writing one byte of dinb to address addrb. For example, to
+                                       // synchronously write only bits [15-8] of dinb when WRITE_DATA_WIDTH_B
+                                       // is 32, web would be 4'b0010.
+
+   );
+
+always_comb
+	wbm_req.adr <= {map_page,vm_adr_o[15:0]};
+	
+   // End of xpm_memory_tdpram_inst instantiation
+				
+delay3 #(1) udly1 (.clk(m_clk_i), .i(vm_cyc_o), .o(wbm_req.cyc));
 
 `ifdef INTERNAL_SYNC_GEN
 wire hsync_i, vsync_i, blank_i;
@@ -323,7 +543,7 @@ edge_det edcs1
 	.rst(rst_i),
 	.clk(s_clk_i),
 	.ce(1'b1),
-	.i(cs),
+	.i(cs_reg),
 	.pe(cs_edge),
 	.ne(),
 	.ee()
@@ -343,22 +563,23 @@ VT163 #(6) ub1
 	.rco()
 );
 
-reg rst_irq;
 always_ff @(posedge vclk)
 if (rst_i)
-	irq_o <= LOW;
+	irq <= LOW;
 else begin
 	if (hctr_o==12'd02 && rastcmp==vctr_o)
-		irq_o <= HIGH;
+		irq <= HIGH;
 	else if (rst_irq)
-		irq_o <= LOW;
+		irq <= LOW;
 end
 
 always_comb
 	baseAddr = page ? bm_base_addr2 : bm_base_addr1;
 
 // Color palette RAM for 8bpp modes
-syncRam512x64_1rw1r upal1	// Actually 1024x64
+// 64x1024 A side, 32x2048 B side
+// 3 cycle latency
+fb_palram upal1	// Actually 1024x64
 (
   .clka(s_clk_i),    // input wire clka
   .ena(cs & adri[13]),      // input wire ena
@@ -370,7 +591,7 @@ syncRam512x64_1rw1r upal1	// Actually 1024x64
   .enb(1'b1),      // input wire enb
   .web(1'b0),      // input wire [3 : 0] web
   .addrb({pals,rgbo4[5:0]}),  // input wire [8 : 0] addrb
-  .dinb(64'h0),    // input wire [31 : 0] dinb
+  .dinb(32'h0),    // input wire [31 : 0] dinb
   .doutb(pal_o)  // output wire [31 : 0] doutb
 );
 
@@ -386,6 +607,7 @@ if (rst_i) begin
 	windowHeight <= 12'd300;
 	onoff <= 1'b1;
 	color_depth <= BPP16;
+	color_depth2 <= BPP16;
 	greyscale <= 1'b0;
 	bm_base_addr1 <= BM_BASE_ADDR1;
 	bm_base_addr2 <= BM_BASE_ADDR2;
@@ -403,8 +625,11 @@ if (rst_i) begin
 	rst_irq <= 1'b0;
 	rastcmp <= 12'hFFF;
 	oob_color <= 40'h00003C00;
+	irq_msgadr <= IRQ_MSGADR;
+	irq_msgdat <= IRQ_MSGDAT;
 end
 else begin
+	color_depth2 <= color_depth;
 	rstcmd1 <= rstcmd;
 	rst_irq <= 1'b0;
   if (rstcmd & ~rstcmd1)
@@ -432,7 +657,7 @@ else begin
 			REG_REFDELAY:
 				begin
 					if (|sel[1:0])	hrefdelay <= dat[15:0];
-					if (|sel[3:2])  vrefdelay <= dat[32:16];
+					if (|sel[3:2])  vrefdelay <= dat[31:16];
 				end
 			REG_PAGE1ADDR:	bm_base_addr1 <= dat;
 			REG_PAGE2ADDR:	bm_base_addr2 <= dat;
@@ -445,8 +670,8 @@ else begin
 			REG_PCOLCMD:
 				begin
 					if (sel[0]) pcmd <= dat[1:0];
-			    if (sel[2]) raster_op <= dat[19:16];
-			    if (|sel[7:4]) color <= dat[63:32];
+			    if (sel[1]) raster_op <= dat[11:8];
+			    if (|sel[7:2]) color <= dat[63:16];
 			  end
 			REG_RASTCMP:	
 				begin
@@ -470,6 +695,28 @@ else begin
 					if (|sel[3:2])  windowHeight <= dat[27:16];
 					if (|sel[5:4])	windowLeft <= dat[47:32];
 					if (|sel[7:6])  windowTop <= dat[63:48];
+				end
+			REG_IRQ_MSGADR:
+				begin
+					if (sel[0]) irq_msgadr <= dat[7:0];
+					if (sel[1]) irq_msgadr <= dat[15:8];
+					if (sel[2]) irq_msgadr <= dat[23:16];
+					if (sel[3]) irq_msgadr <= dat[31:24];
+					if (sel[4]) irq_msgadr <= dat[39:32];
+					if (sel[5]) irq_msgadr <= dat[47:40];
+					if (sel[6]) irq_msgadr <= dat[55:48];
+					if (sel[7]) irq_msgadr <= dat[63:56];
+				end
+			REG_IRQ_MSGDAT:
+				begin
+					if (sel[0]) irq_msgdat <= dat[7:0];
+					if (sel[1]) irq_msgdat <= dat[15:8];
+					if (sel[2]) irq_msgdat <= dat[23:16];
+					if (sel[3]) irq_msgdat <= dat[31:24];
+					if (sel[4]) irq_msgdat <= dat[39:32];
+					if (sel[5]) irq_msgdat <= dat[47:40];
+					if (sel[6]) irq_msgdat <= dat[55:48];
+					if (sel[7]) irq_msgdat <= dat[63:56];
 				end
 
 `ifdef INTERNAL_SYNC_GEN
@@ -512,32 +759,74 @@ else begin
 			endcase
 		end
 	end
-	if (s_cs_i)
-	  casez(adri[13:3])
-	  REG_CTRL:
-	      begin
-	          s_dat_o[0] <= onoff;
-	          s_dat_o[11:8] <= color_depth;
-	          s_dat_o[12] <= greyscale;
-	          s_dat_o[18:16] <= hres;
-	          s_dat_o[22:20] <= vres;
-	          s_dat_o[24] <= page;
-	          s_dat_o[28:25] <= pals;
-	          s_dat_o[47:32] <= bmpWidth;
-	          s_dat_o[59:48] <= map;
-	      end
-	  REG_REFDELAY:		s_dat_o <= {32'h0,vrefdelay,hrefdelay};
-	  REG_PAGE1ADDR:	s_dat_o <= bm_base_addr1;
-	  REG_PAGE2ADDR:	s_dat_o <= bm_base_addr2;
-	  REG_PXYZ:		    s_dat_o <= {20'h0,pz,py,px};
-	  REG_PCOLCMD:    s_dat_o <= {color_o,12'd0,raster_op,14'd0,pcmd};
-	  REG_OOB_COLOR:	s_dat_o <= {32'h0,oob_color};
-	  REG_WINDOW:			s_dat_o <= {windowTop,windowLeft,4'h0,windowHeight,4'h0,windowWidth};
-	  11'b1?_????_????_?:	s_dat_o <= pal_wo;
-	  default:        s_dat_o <= 64'd0;
-	  endcase
+	if (cs_reg) begin
+		if (BUSWID==64)
+		  casez(adri[13:3])
+		  REG_CTRL:
+		      begin
+		          s_dat_o[0] <= onoff;
+		          s_dat_o[11:8] <= color_depth2;
+		          s_dat_o[12] <= greyscale;
+		          s_dat_o[18:16] <= hres;
+		          s_dat_o[22:20] <= vres;
+		          s_dat_o[24] <= page;
+		          s_dat_o[28:25] <= pals;
+		          s_dat_o[47:32] <= bmpWidth;
+		          s_dat_o[59:48] <= map;
+		      end
+		  REG_REFDELAY:		s_dat_o <= {32'h0,vrefdelay,hrefdelay};
+		  REG_PAGE1ADDR:	s_dat_o <= bm_base_addr1;
+		  REG_PAGE2ADDR:	s_dat_o <= bm_base_addr2;
+		  REG_PXYZ:		    s_dat_o <= {20'h0,pz,py,px};
+		  REG_PCOLCMD:    s_dat_o <= {color_o,12'd0,raster_op,14'd0,pcmd};
+		  REG_OOB_COLOR:	s_dat_o <= {32'h0,oob_color};
+		  REG_WINDOW:			s_dat_o <= {windowTop,windowLeft,4'h0,windowHeight,4'h0,windowWidth};
+		  REG_IRQ_MSGADR:	s_dat_o <= irq_msgadr;
+		  REG_IRQ_MSGDAT:	s_dat_o <= irq_msgdat;
+		  11'b1?_????_????_?:	s_dat_o <= pal_wo;
+		  default:        s_dat_o <= 'd0;
+		  endcase
+		else
+		  casez(adri[13:2])
+		  {REG_CTRL,1'b0}:
+		      begin
+		          s_dat_o[0] <= onoff;
+		          s_dat_o[11:8] <= color_depth2;
+		          s_dat_o[12] <= greyscale;
+		          s_dat_o[18:16] <= hres;
+		          s_dat_o[22:20] <= vres;
+		          s_dat_o[24] <= page;
+		          s_dat_o[28:25] <= pals;
+		      end
+		  {REG_CTRL,1'b1}:
+		      begin
+		          s_dat_o[15: 0] <= bmpWidth;
+		          s_dat_o[27:16] <= map;
+		      end
+		  {REG_REFDELAY,1'b0}:	s_dat_o <= {vrefdelay,hrefdelay};
+		  {REG_PAGE1ADDR,1'b0}:	s_dat_o <= bm_base_addr1;
+		  {REG_PAGE2ADDR,1'b0}:	s_dat_o <= bm_base_addr2;
+		  {REG_PXYZ,1'b0}:		  s_dat_o <= {py,px};
+		  {REG_PXYZ,1'b1}:		  s_dat_o <= {16'h0,pz};
+		  {REG_PCOLCMD,1'b0}:   s_dat_o <= {12'd0,raster_op,14'd0,pcmd};
+		  {REG_PCOLCMD,1'b1}:   s_dat_o <= color_o;
+		  {REG_OOB_COLOR,1'b0}:	s_dat_o <= oob_color;
+		  {REG_WINDOW,1'b0}:		s_dat_o <= {4'h0,windowHeight,4'h0,windowWidth};
+		  {REG_WINDOW,1'b1}:		s_dat_o <= {windowTop,windowLeft};
+		  {REG_IRQ_MSGADR,1'b0}:	s_dat_o <= irq_msgadr[31:0];
+		  {REG_IRQ_MSGADR,1'b1}:	s_dat_o <= irq_msgadr[63:32];
+		  {REG_IRQ_MSGDAT,1'b0}:	s_dat_o <= irq_msgdat[31:0];
+		  {REG_IRQ_MSGDAT,1'b1}:	s_dat_o <= irq_msgdat[63:32];
+		  11'b1?_????_????_?0:	s_dat_o <= pal_wo;
+		  default:        s_dat_o <= 'd0;
+		  endcase
+	end
+	else if (cs_map)
+		s_dat_o <= {40'h0,map_out};
+	else if (cs_config)
+		s_dat_o <= pci_out;
 	else
-		s_dat_o <= 64'h0;
+		s_dat_o <= 'h0;
 end
 
 //`ifdef USE_CLOCK_GATE
@@ -633,7 +922,7 @@ always_ff @(posedge vclk)
 // Bits per pixel minus one.
 reg [4:0] bpp;
 always_comb
-case(color_depth)
+case(color_depth2)
 BPP6: bpp = 5;
 BPP8:	bpp = 7;
 BPP12: bpp = 11;
@@ -653,7 +942,7 @@ reg [5:0] shifts;
 always_comb
 case(MDW)
 128:
-	case(color_depth)
+	case(color_depth2)
 	BPP6:   shifts = 6'd21;
 	BPP8: 	shifts = 6'd16;
 	BPP12:	shifts = 6'd10;
@@ -669,7 +958,7 @@ case(MDW)
 	default:  shifts = 6'd8;
 	endcase
 64:
-	case(color_depth)
+	case(color_depth2)
 	BPP6:   shifts = 6'd10;
 	BPP8: 	shifts = 6'd8;
 	BPP12:	shifts = 6'd5;
@@ -685,7 +974,7 @@ case(MDW)
 	default:  shifts = 6'd4;
 	endcase
 32:
-	case(color_depth)
+	case(color_depth2)
 	BPP6:   shifts = 6'd5;
 	BPP8: 	shifts = 6'd4;
 	BPP12:	shifts = 6'd2;
@@ -725,7 +1014,7 @@ gfx_calc_address #(.SW(MDW)) u1
 (
   .clk(m_clk_i),
 	.base_address_i(baseAddr),
-	.color_depth_i(color_depth),
+	.color_depth_i(color_depth2),
 	.bmp_width_i(bmpWidth),
 	.x_coord_i(windowLeft),
 	.y_coord_i(windowTop + pixelRow),
@@ -740,7 +1029,7 @@ gfx_calc_address #(.SW(MDW)) u2
 (
   .clk(m_clk_i),
 	.base_address_i(baseAddr),
-	.color_depth_i(color_depth),
+	.color_depth_i(color_depth2),
 	.bmp_width_i(bmpWidth),
 	.x_coord_i(px),
 	.y_coord_i(py),
@@ -776,7 +1065,7 @@ always_ff @(posedge m_clk_i)
 // video fifo. 
 reg [11:0] hCmp;
 always_comb
-case(color_depth)
+case(color_depth2)
 BPP6: hCmp = 12'd2688;    // must be 12 bits
 BPP8:	hCmp = 12'd2048;
 BPP12: hCmp = 12'd1536;
@@ -895,13 +1184,15 @@ end
 
 always @(posedge m_clk_i)
 if (rst_i) begin
-	wbm_req.cyc <= LOW;
+	vm_cyc_o <= LOW;
 	wbm_req.we <= LOW;
-	wbm_req.adr <= 'd0;
+	vm_adr_o <= 'd0;
   rstcmd <= 1'b0;
   state <= IDLE;
+  rst_irq <= 1'b0;
 end
 else begin
+  rst_irq <= 1'b0;
 	if (fifo_wrst)
 		m_fst_o <= HIGH;
 	case(state)
@@ -916,9 +1207,19 @@ else begin
   	if (load_fifo && !(legal_x && legal_y))
  			state <= LOAD_OOB;
     else if (load_fifo & ~wbm_resp.ack) begin
-      wbm_req.cyc <= HIGH;
-      wbm_req.adr <= adr;
+      vm_cyc_o <= HIGH;
+      vm_adr_o <= adr;
+      wbm_req.sel <= 16'hFFFF;
       state <= WAITLOAD;
+    end
+    // Send an IRQ message if needed.
+    else if (irq & ~wbm_resp.ack) begin
+    	vm_cyc_o <= HIGH;
+    	vm_adr_o <= irq_msgadr;
+    	wbm_req.we <= HIGH;
+    	wbm_req.sel <= irq_msgadr[3] ? 16'hFF00 : 16'h00FF;
+    	wbm_req.data1 <= {2{irq_msgdat}};
+    	rst_irq <= 1'b1;
     end
     // The adr_o[5:3]==3'b111 causes the controller to wait until all eight
     // 64 bit strips from the memory controller have been processed. Otherwise
@@ -927,8 +1228,9 @@ else begin
     // allowed when loads are not active or all strips for the current scan-
     // line have been fetched.
     else if (pcmd!=2'b00 && (modd || !(vFetch && onoff && xonoff_i && fetchCol < windowWidth))) begin
-      wbm_req.cyc <= HIGH;
-      wbm_req.adr <= xyAddr;
+      vm_cyc_o <= HIGH;
+      vm_adr_o <= xyAddr;
+      wbm_req.sel <= 16'hFFFF;
       state <= LOADSTRIP;
     end
   LOADSTRIP:
@@ -963,16 +1265,17 @@ else begin
   ICOLOR2:
     begin
       for (n = 0; n < MDW; n = n + 1)
-        wbm_req.dat[n] <= (n >= mb && n <= me)
+        wbm_req.data1[n] <= (n >= mb && n <= me)
         	? ((n <= ce) ?	rastop(raster_op, mem_strip[n], icolor1[n]) : icolor1[n])
         	: mem_strip[n];
       state <= STORESTRIP;
     end
   STORESTRIP:
     if (~wbm_resp.ack) begin
-      wbm_req.cyc <= HIGH;
+      vm_cyc_o <= HIGH;
       wbm_req.we <= HIGH;
-      wbm_req.adr <= xyAddr;
+      wbm_req.sel <= 16'hFFFF;
+      vm_adr_o <= xyAddr;
       state <= ACKSTRIP;
     end
   ACKSTRIP:
@@ -996,15 +1299,16 @@ end
 task wb_nack;
 begin
 	m_fst_o <= LOW;
-	wbm_req.cyc <= LOW;
+	vm_cyc_o <= LOW;
 	wbm_req.we <= LOW;
+	wbm_req.sel <= 16'h0000;
 end
 endtask
 
 reg [40:0] rgbo2,rgbo4;
 reg [MDW-1:0] rgbo3;
 always_ff @(posedge vclk)
-case(color_depth)
+case(color_depth2)
 BPP6:	rgbo4 <= {rgbo3[5:3],1'b0,33'd0,rgbo3[2:0]};	// feeds into palette
 BPP8:	rgbo4 <= {rgbo3[7:5],1'b0,31'h0,rgbo3[4:0]};		// feeds into palette
 BPP12:	rgbo4 <= {rgbo3[11:9],1'b0,rgbo3[8:6],9'd0,rgbo3[5:3],9'd0,rgbo3[2:0],9'd0};
@@ -1028,7 +1332,7 @@ always_ff @(posedge vclk)
 
 always_ff @(posedge vclk)
 	if (onoff && xonoff_i && !blank_i) begin
-		if (color_depth==BPP6||color_depth==BPP8) begin
+		if (color_depth2==BPP6||color_depth2==BPP8) begin
 			if (!greyscale)
 				zrgb_o <= {pal_o[30:27],pal_o[26:18],3'b0,pal_o[17:9],3'b0,pal_o[8:0],3'b0};
 			else
@@ -1076,7 +1380,7 @@ always_ff @(posedge vclk)
 	if (rd_fifo)
 		rgbo3 <= lef ? rgbo1o : rgbo1e;
 	else if (shift) begin
-		case(color_depth)
+		case(color_depth2)
 		BPP6:	rgbo3 <= {4'h0,rgbo3[MDW-1:6]};
 		BPP8:	rgbo3 <= {8'h0,rgbo3[MDW-1:8]};
 		BPP12: rgbo3 <= {12'h0,rgbo3[MDW-1:12]};
@@ -1110,7 +1414,7 @@ assign dat[119:108] = pixelRow[9] ? 12'hEA4 : 12'h000;
 
 reg [MDW-1:0] oob_dat;
 always_comb
-case(color_depth)
+case(color_depth2)
 BPP6:	oob_dat <= {MDW/6{oob_color[5:0]}};
 BPP8:	oob_dat <= {MDW/8{oob_color[7:0]}};
 BPP12:	oob_dat <= {MDW/12{oob_color[11:0]}};
