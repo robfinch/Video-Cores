@@ -143,12 +143,16 @@
 import wishbone_pkg::*;
 
 module rfSpriteController(
+// Globals
+//------------------------------
+input cs_config_i,
+input cs_io_i,
+
 // Bus Slave interface
 //------------------------------
 // Slave signals
 input rst_i,			// reset
 input s_clk_i,		// clock
-input s_cs_i,
 input	wb_write_request32_t wbs_req,
 output wb_read_response32_t wbs_resp,
 //------------------------------
@@ -164,7 +168,6 @@ input vsync_i,			// vertical sync pulse
 input blank_i,			// blanking signal
 input [39:0] zrgb_i,			// input pixel stream
 output [39:0] zrgb_o,	// output pixel stream 12-12-12-4
-output irq,					// interrupt request
 input test,
 input xonoff_i
 );
@@ -182,7 +185,25 @@ parameter pnSpr = 32;		// number of sprites
 parameter phBits = 12;		// number of bits in horizontal timing counter
 parameter pvBits = 12;		// number of bits in vertical timing counter
 localparam pnSprm = pnSpr-1;
+parameter SPR_ADDR = 32'hEDA00000;
 
+parameter CFG_BUS = 8'd0;
+parameter CFG_DEVICE = 5'd2;
+parameter CFG_FUNC = 3'd0;
+parameter CFG_VENDOR_ID	=	16'h0;
+parameter CFG_DEVICE_ID	=	16'h0;
+parameter CFG_SUBSYSTEM_VENDOR_ID	= 16'h0;
+parameter CFG_SUBSYSTEM_ID = 16'h0;
+parameter CFG_ROM_ADDR = 32'hFFFFFFF0;
+
+parameter IRQ_MSGADR = 64'h0EDA900E1;
+parameter IRQ_MSGDAT = 64'h1;
+
+always_comb
+	if (pnSpr < 1 || pnSpr > 32) begin
+		$display("Number of sprites must be between 1 and 32.");
+		$finish;
+	end
 
 //--------------------------------------------------------------------
 // Variable Declarations
@@ -190,6 +211,7 @@ localparam pnSprm = pnSpr-1;
 
 reg ce;										// controller enable
 wb_write_request32_t wb_reqs;	// synchronized request
+reg [31:0] spr_addr;
 
 wire [4:0] sprN = wb_reqs.adr[8:4];
 
@@ -283,11 +305,76 @@ reg dmaActive;				// this flag indicates that a block DMA transfer is active
 genvar g;
 
 //--------------------------------------------------------------------
+// config
+//--------------------------------------------------------------------
+
+reg cs_config;
+reg cs_io;
+
+reg [63:0] cfg_dat [0:31];
+reg [63:0] cfg_out;
+reg [63:0] irq_msgadr;
+reg [63:0] irq_msgdat;
+
+initial begin
+	for (n1 = 0; n1 < 32; n1 = n1 + 1)
+		cfg_dat[n1] = 'd0;
+end
+
+always_ff @(posedge s_clk_i)
+	cs_config <= wbm_req.cyc && wbm_req.stb && cs_config_i && 
+							wbm_req.adr[27:20]==CFG_BUS &&
+							wbm_req.adr[19:15]==CFG_DEVICE &&
+							wbm_req.adr[14:12]==CFG_FUNC;
+
+always_ff @(posedge s_clk_i)
+	cs_io <= wbm_req.cyc && wbm_req.stb && cs_io_i &&
+						wbm_req.adr[27:16]==spr_addr[27:16];
+
+always_ff @(posedge s_clk_i)
+if (rst_i) begin
+	spr_addr <= SPR_ADDR;
+end
+else begin
+	if (cs_config) begin
+		if (wbm_reqs.we)
+			case(wbm_reqs.adr[7:3])
+			5'h00:	;
+			5'h02:
+				begin
+					if (&wbm_reqs.sel[3:0] && wbm_reqs.data1[31:0]==32'hFFFFFFFF)
+						spr_addr <= 32'hFFFFFFFF;	// reserve 0MB
+					else begin
+						if (wbm_reqs.sel[0])	spr_addr[7:0] <= wbm_reqs.data1[7:0];
+						if (wbm_reqs.sel[1])	spr_addr[15:8] <= wbm_reqs.data1[15:8];
+						if (wbm_reqs.sel[2])	spr_addr[23:16] <= wbm_reqs.data1[23:16];
+						if (wbm_reqs.sel[3])	spr_addr[31:24] <= wbm_reqs.data1[31:24];
+					end
+				end
+			default:
+				cfg_dat[wbm_reqs.adr[7:3]] <= dat;
+			endcase
+		else
+			case(wbm_reqs.adr[7:3])
+			5'h00:	cfg_out <= {32'h0,CFG_DEVICE_ID,CFG_VENDOR_ID};
+			5'h01:	cfg_out <= {8'h00,8'h00,8'h00,8'd32,24'h0,8'h0};
+			5'h02:	cfg_out <= {32'hFFFFFFFF,spr_addr};
+			5'h03:	cfg_out <= 64'hFFFFFFFFFFFFFFFF;
+			5'h04:	cfg_out <= 64'hFFFFFFFFFFFFFFFF;
+			5'h05:	cfg_out <= {CFG_SUBSYSTEM_ID,CFG_SUBSYSTEM_VENDOR_ID,32'h0};
+			5'h06:	cfg_out <= {24'h00,8'h00,CFG_ROM_ADDR};
+			5'h07: 	cfg_out <= {8'd8,8'd0,8'd0,8'd0,32'h0};
+			5'h08:	cfg_out <= {18'h0,REG_IRQ_MSGADR,3'b0,16'h8000,8'h4C,8'h11};
+			5'h09:	cfg_out <= 64'd0;
+			default:	cfg_out <= cfg_dat[wbm_reqs.adr[7:3]];
+			endcase
+	end
+end
+
+
+//--------------------------------------------------------------------
 // DMA control / bus interfacing
 //--------------------------------------------------------------------
-reg cs_regs;
-always_ff @(posedge s_clk_i)
-	cs_regs <= wbs_req.cyc & wbs_req.stb & s_cs_i;
 always_ff @(posedge s_clk_i)
 	wb_reqs <= wbs_req;
 
@@ -300,8 +387,8 @@ ack_gen #(
 uag1 (
 	.clk_i(s_clk_i),
 	.ce_i(1'b1),
-	.i(cs_regs),
-	.we_i(cs_regs & wb_reqs.we),
+	.i((cs_io|cs_config) & ~wb_reqs.we),
+	.we_i((cs_io|cs_config) & wb_reqs.we),
 	.o(s_ack_o),
 	.rid_i(0),
 	.wid_i(0),
@@ -314,14 +401,14 @@ begin
 	wbs_resp.next = s_ack_o & wbs_req.cyc & wbs_req.stb;
 end
 
-assign irq = sprSprIRQ|sprBkIRQ;
-
 //--------------------------------------------------------------------
 // DMA control / bus interfacing
 //--------------------------------------------------------------------
 
 reg [5:0] dmaStart;
 reg [8:0] cob;	// count of burst cycles
+reg irq;
+reg rst_irq;
 
 assign wbm_req.bte = LINEAR;
 assign wbm_req.cti = CLASSIC;
@@ -340,6 +427,16 @@ parameter NACK = 3'd3;
 wire pe_m_ack_i;
 edge_det ued2 (.rst(rst_i), .clk(m_clk_i), .ce(1'b1), .i(wbm_resp.ack), .pe(pe_m_ack_i), .ne(), .ee());
 
+always_ff @(posedge m_clk_i)
+if (rst_i)
+	irq <= 1'b0;
+else begin
+	if (rst_irq)
+		irq <= 1'b0;
+	else if (sprSprIRQ|sprBkIRQ)
+		irq <= 1'b1;
+end
+
 reg [11:0] tocnt;
 always_ff @(posedge m_clk_i)
 if (rst_i)
@@ -357,8 +454,12 @@ if (rst_i)
 else begin
 	case(mstate)
 	IDLE:
-		if (|sprDt & ce)
+		if (irq)
+			mstate <= IRQ;
+		else if (|sprDt & ce)
 			mstate <= ACTIVE;
+	IRQ:
+		mstate <= ACK;
 	ACTIVE:
 		mstate <= ACK;
 	ACK:
@@ -394,7 +495,9 @@ else begin
 	dmaStart <= {dmaStart[4:0],1'b0};
 	case(mstate)
 	IDLE:
-		if (|sprDt & ce)
+		if (irq)
+			;
+		else if (|sprDt & ce)
 			dmaStart <= 6'h3F;
 	default:	;
 	endcase
@@ -421,9 +524,18 @@ else begin
 	case(mstate)
 	IDLE:
 		wb_m_nack();
+	IRQ:
+		begin
+			wbm_req.cyc <= 1'b1;
+			wbm_req.we <= 1'b1;
+			wbm_req.sel <= irq_msgadr[3] ? 16'hFF00 : 16'h00FF;
+			wbm_req.adr <= irq_msg_adr;
+			wbm_req.data1 <= {48'h0,irq_msg_data};
+		end
 	ACTIVE:
 		begin
 			wbm_req.cyc <= 1'b1;
+			wbm_req.sel <= 16'hFFFF;
 			wbm_req.adr <= {sprSysAddr[dmaOwner],cob[8:1],4'h0};
 		end
 	ACK:
@@ -432,9 +544,20 @@ else begin
 	endcase
 end
 
+always_ff @(posedge m_clk_i)
+if (rst_i)
+	rst_irq <= 1'b1;
+else begin
+	rst_irq <= 1'b0;
+	if (mstate==IRQ)
+		rst_irq <= 1'b1;
+end
+
 task wb_m_nack;
 begin
 	wbm_req.cyc <= 1'b0;
+	wbm_req.we <= 1'b0;
+	wbm_req.sel <= 16'h0000;
 end
 endtask
 
@@ -472,10 +595,10 @@ reg [31:0] reg_shadow [0:255];
 reg [7:0] radr;
 always_ff @(posedge s_clk_i)
 begin
-    if (cs_regs & wb_reqs.we & wb_reqs.sel[0])  reg_shadow[wb_reqs.adr[9:2]][7:0] <= wb_reqs.dat[7:0];
-    if (cs_regs & wb_reqs.we & wb_reqs.sel[1])  reg_shadow[wb_reqs.adr[9:2]][15:8] <= wb_reqs.dat[15:8];
-    if (cs_regs & wb_reqs.we & wb_reqs.sel[2])  reg_shadow[wb_reqs.adr[9:2]][23:16] <= wb_reqs.dat[23:16];
-    if (cs_regs & wb_reqs.we & wb_reqs.sel[3])  reg_shadow[wb_reqs.adr[9:2]][31:24] <= wb_reqs.dat[31:24];
+    if (cs_io & wb_reqs.we & wb_reqs.sel[0])  reg_shadow[wb_reqs.adr[9:2]][7:0] <= wb_reqs.dat[7:0];
+    if (cs_io & wb_reqs.we & wb_reqs.sel[1])  reg_shadow[wb_reqs.adr[9:2]][15:8] <= wb_reqs.dat[15:8];
+    if (cs_io & wb_reqs.we & wb_reqs.sel[2])  reg_shadow[wb_reqs.adr[9:2]][23:16] <= wb_reqs.dat[23:16];
+    if (cs_io & wb_reqs.we & wb_reqs.sel[3])  reg_shadow[wb_reqs.adr[9:2]][31:24] <= wb_reqs.dat[31:24];
 end
 always @(posedge s_clk_i)
   radr <= wb_reqs.adr[9:2];
@@ -483,7 +606,7 @@ wire [31:0] reg_shadow_o = reg_shadow[radr];
 
 // register/sprite memory output mux
 always_ff @(posedge s_clk_i)
-	if (cs_regs)
+	if (cs_io)
 		case (wb_reqs.adr[9:2])		// synopsys full_case parallel_case
 		8'b11110000:	wbs_resp.dat <= sprEn;
 		8'b11110001:	wbs_resp.dat <= {sprBkIRQPending|sprSprIRQPending,5'b0,sprBkIRQPending,sprSprIRQPending,6'b0,sprBkIe,sprSprIe};
@@ -497,7 +620,7 @@ always_ff @(posedge s_clk_i)
 
 
 // vclk -> clk_i
-always @(posedge s_clk_i)
+always_ff @(posedge s_clk_i)
 begin
 	sprSprIRQ <= sprSprIRQ1;
 	sprBkIRQ <= sprBkIRQ1;
@@ -571,7 +694,7 @@ else begin
 		if (sprCurFrame[n33] >= sprFrames[n33] && !sprAutoRepeat[n33])
 			sprEnableAnimation[n33] <= 1'b0;
 
-	if (cs_regs & wb_reqs.we) begin
+	if (cs_io & wb_reqs.we) begin
 
 		casez (wb_reqs.adr[9:2])
 		8'b100?????:
@@ -1035,15 +1158,21 @@ end
 // combine the text / graphics color output with sprite color output
 // blend color output
 wire [35:0] blendedColor32 = {
- 	fnBlend(out[31:24],{out[23:16],4'h0},zrgb_i[35:24]),
- 	fnBlend(out[31:24],{out[15:8],4'h0},zrgb_i[23:12]),
- 	fnBlend(out[31:24],{out[7:0],4'h0},zrgb_i[11: 0])}
+ 	fnBlend({out[31:27],3'd0},{out[26:18],4'h0},zrgb_i[35:24]),
+ 	fnBlend({out[31:27],3'd0},{out[17:9],4'h0},zrgb_i[23:12]),
+ 	fnBlend({out[31:27],3'd0},{out[8:0],4'h0},zrgb_i[11: 0])}
  	;
 
 wire [35:0] blendedColor16 = {
- 	fnBlend(out[7:0],zrgb_i[35:24],12'h0),
- 	fnBlend(out[7:0],zrgb_i[23:12],12'h0),
- 	fnBlend(out[7:0],zrgb_i[11: 0],12'h0)}
+ 	fnBlend({out[15:12],4'd0},{out[11:8],8'h0},zrgb_i[35:24]),
+ 	fnBlend({out[15:12],4'd0},{out[7:4],8'h0},zrgb_i[23:12]),
+ 	fnBlend({out[15:12],4'd0},{out[3:0],8'h0},zrgb_i[11: 0])}
+ 	;
+
+wire [35:0] blendedColor8 = {
+ 	fnBlend({out[7:6],6'd0},{out[5:4],10'h0},zrgb_i[35:24]),
+ 	fnBlend({out[7:6],6'd0},{out[3:2],10'h0},zrgb_i[23:12]),
+ 	fnBlend({out[7:6],6'd0},{out[1:0],10'h0},zrgb_i[11: 0])}
  	;
 
 always_ff @(posedge vclk)
@@ -1055,19 +1184,10 @@ else begin
 			zrgb_o <= zrgb_i;
 		end
 		else 
-		if (!out[31]) begin			// a sprite is displayed without alpha blending
 			case(colorBits)
-			2'd0:	zrgb_o <= {outplane,out[7:5],9'b0,out[4:2],9'b0,out[1:0],10'b0};
-			2'd1:	zrgb_o <= {outplane,out[7:5],9'b0,out[4:2],9'b0,out[1:0],10'b0};
-			2'd2:	zrgb_o <= {outplane,out[14:10],7'b0,out[9:5],7'b0,out[4:0],7'b0};
-			2'd3:	zrgb_o <= zrgb_o <= {outplane,blendedColor32};	// combine colors {outplane,out[23:16],4'h0,out[15:8],4'h0,out[7:0],4'h0};
-			endcase
-		end
-		else
-			case(colorBits)
-			2'd2:	zrgb_o <= {outplane,blendedColor16};	// towards black/white
-			2'd3:	zrgb_o <= {outplane,blendedColor32};	// combine colors
-			default:	zrgb_o <= {outplane,out[7:5],9'b0,out[4:2],9'b0,out[1:0],10'b0};	// no blending
+			2'd2:	zrgb_o <= {outplane,blendedColor16};
+			2'd3:	zrgb_o <= {outplane,blendedColor32};
+			default:	zrgb_o <= {outplane,blendedColor8};
 			endcase
 	end
 	else
@@ -1104,7 +1224,7 @@ for (n31 = 0; n31 < pnSpr; n31 = n31 + 1)
 // accumulates collision bits until reset by reading the register.
 // Set the collision IRQ on the first collision and don't set it
 // again until after the collision register has been read.
-always @(posedge vclk)
+always_ff @(posedge vclk)
 if (rst_i) begin
 	sprSprIRQPending1 <= 0;
 	sprSprCollision1 <= 0;
@@ -1112,7 +1232,7 @@ if (rst_i) begin
 end
 else if (actcnt > 6'd1) begin
 	// isFirstCollision
-	if ((sprSprCollision1==0)||(cs_regs && wb_reqs.sel[0] && wb_reqs.adr[9:2]==8'b11110010)) begin
+	if ((sprSprCollision1==0)||(cs_io && wb_reqs.sel[0] && wb_reqs.adr[9:2]==8'b11110010)) begin
 		sprSprIRQPending1 <= 1;
 		sprSprIRQ1 <= sprSprIe;
 		sprSprCollision1 <= sproact;
@@ -1120,7 +1240,7 @@ else if (actcnt > 6'd1) begin
 	else
 		sprSprCollision1 <= sprSprCollision1|sproact;
 end
-else if (cs_regs && wb_reqs.sel[0] && wb_reqs.adr[9:2]==8'b11110010) begin
+else if (cs_io && wb_reqs.sel[0] && wb_reqs.adr[9:2]==8'b11110010) begin
 	sprSprCollision1 <= 0;
 	sprSprIRQPending1 <= 0;
 	sprSprIRQ1 <= 0;
@@ -1134,7 +1254,7 @@ end
 // again until after the collision register has been read.
 // Note the background collision indicator is externally supplied,
 // it will come from the color processing logic.
-always @(posedge vclk)
+always_ff @(posedge vclk)
 if (rst_i) begin
 	sprBkIRQPending1 <= 0;
 	sprBkCollision1 <= 0;
@@ -1144,7 +1264,7 @@ else if (|bkCollision) begin
 	// Is the register being cleared at the same time
 	// a collision occurss ?
 	// isFirstCollision
-	if ((sprBkCollision1==0) || (cs_regs && wb_reqs.sel[0] && wb_reqs.adr[9:2]==8'b11110011)) begin	
+	if ((sprBkCollision1==0) || (cs_io && wb_reqs.sel[0] && wb_reqs.adr[9:2]==8'b11110011)) begin	
 		sprBkIRQ1 <= sprBkIe;
 		sprBkCollision1 <= bkCollision;
 		sprBkIRQPending1 <= 1;
@@ -1152,7 +1272,7 @@ else if (|bkCollision) begin
 	else
 		sprBkCollision1 <= sprBkCollision1|bkCollision;
 end
-else if (cs_regs && wb_reqs.sel[0] && wb_reqs.adr[9:2]==8'b11110011) begin
+else if (cs_io && wb_reqs.sel[0] && wb_reqs.adr[9:2]==8'b11110011) begin
 	sprBkCollision1 <= 0;
 	sprBkIRQPending1 <= 0;
 	sprBkIRQ1 <= 0;

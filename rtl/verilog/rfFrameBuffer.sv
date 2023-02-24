@@ -44,13 +44,14 @@
 //
 //	Verilog 1995
 //
+//	3367 LUTs / 155 FFs / 5 BRAMs / 7 DSP
 // ============================================================================
 
 //`define USE_CLOCK_GATE	1'b1
 `define INTERNAL_SYNC_GEN	1'b1
 `define WXGA800x600		1'b1
 //`define WXGA1366x768	1'b1
-`define FBC_ADDR		32'hFD040001
+`define FBC_ADDR		32'hFD0400001
 
 import const_pkg::*;
 `define ABITS	31:0
@@ -86,7 +87,7 @@ parameter CFG_SUBSYSTEM_VENDOR_ID	= 16'h0;
 parameter CFG_SUBSYSTEM_ID = 16'h0;
 parameter CFG_ROM_ADDR = 32'hFFFFFFF0;
 
-parameter IRQ_MSGADR = 64'h0FFD900C1;
+parameter IRQ_MSGADR = 64'h0FD0900C1;
 parameter IRQ_MSGDAT = 64'h1;
 
 parameter PHYS_ADDR_BITS = 32;
@@ -111,7 +112,7 @@ parameter REG_BMPSIZE = 11'd13;
 parameter REG_OOB_COLOR = 11'd14;
 parameter REG_WINDOW = 11'd15;
 parameter REG_IRQ_MSGADR = 11'd16;
-parameter REG_IRQ_MSGDC = 11'd17;
+parameter REG_IRQ_MSGDAT = 11'd17;
 
 parameter OPBLACK = 4'd0;
 parameter OPCOPY = 4'd1;
@@ -319,17 +320,17 @@ reg [11:0] tocnt;		// bus timeout counter
 reg vm_cyc_o;
 reg [31:0] vm_adr_o;
 
-// PCI config
+// config
 
-reg [63:0] pci_dat [0:31];
-reg [63:0] pci_out;
+reg [63:0] cfg_dat [0:31];
+reg [63:0] cfg_out;
 wire [31:0] map_out;
 reg [63:0] irq_msgadr;
 reg [63:0] irq_msgdat;
 
 initial begin
 	for (n1 = 0; n1 < 32; n1 = n1 + 1)
-		pci_dat[n1] = 'd0;
+		cfg_dat[n1] = 'd0;
 end
 
 always_ff @(posedge s_clk_i)
@@ -344,7 +345,7 @@ else begin
 			5'h02:
 				begin
 					if (&sel[3:0] && dat[31:0]==32'hFFFFFFFF)
-						fcb_addr <= 32'hFFC00000;	// reserve 4MB
+						fbc_addr <= 32'hFFC00000;	// reserve 4MB
 					else begin
 						if (sel[0])	fbc_addr[7:0] <= dat[7:0];
 						if (sel[1])	fbc_addr[15:8] <= dat[15:8];
@@ -353,21 +354,21 @@ else begin
 					end
 				end
 			default:
-				pci_dat[adri[7:3]] <= dat;
+				cfg_dat[adri[7:3]] <= dat;
 			endcase
 		else
 			case(adri[7:3])
-			5'h00:	pci_out <= {32'h0,CFG_DEVICE_ID,CFG_VENDOR_ID};
-			5'h01:	pci_out <= {8'h00,8'h00,8'h00,8'd32,24'h0,8'h0};
-			5'h02:	pci_out <= {32'hFFFFFFFF,fbc_addr};
-			5'h03:	pci_out <= 64'hFFFFFFFFFFFFFFFF;
-			5'h04:	pci_out <= 64'hFFFFFFFFFFFFFFFF;
-			5'h05:	pci_out <= {CFG_SUBSYSTEM_ID,CFG_SUBSYSTEM_VENDOR_ID,32'h0};
-			5'h06:	pci_out <= {24'h00,8'h00,CFG_ROM_ADDR};
-			5'h07: 	pci_out <= {8'd8,8'd0,8'd0,8'd0,32'h0};
-			5'h08:	pci_out <= {18'h0,REG_IRQ_MSGADR,3'b0,16'h8000,8'h4C,8'h11};
-			5'h09:	pci_out <= 64'd0;
-			default:	pci_out <= pci_dat[adri[7:3]];
+			5'h00:	cfg_out <= {32'h0,CFG_DEVICE_ID,CFG_VENDOR_ID};
+			5'h01:	cfg_out <= {8'h00,8'h00,8'h00,8'd32,24'h0,8'h0};
+			5'h02:	cfg_out <= {32'hFFFFFFFF,fbc_addr};
+			5'h03:	cfg_out <= 64'hFFFFFFFFFFFFFFFF;
+			5'h04:	cfg_out <= 64'hFFFFFFFFFFFFFFFF;
+			5'h05:	cfg_out <= {CFG_SUBSYSTEM_ID,CFG_SUBSYSTEM_VENDOR_ID,32'h0};
+			5'h06:	cfg_out <= {24'h00,8'h00,CFG_ROM_ADDR};
+			5'h07: 	cfg_out <= {8'd8,8'd0,8'd0,8'd0,32'h0};
+			5'h08:	cfg_out <= {18'h0,REG_IRQ_MSGADR,3'b0,16'h8000,8'h4C,8'h11};
+			5'h09:	cfg_out <= 64'd0;
+			default:	cfg_out <= cfg_dat[adri[7:3]];
 			endcase
 	end
 end
@@ -824,7 +825,7 @@ else begin
 	else if (cs_map)
 		s_dat_o <= {40'h0,map_out};
 	else if (cs_config)
-		s_dat_o <= pci_out;
+		s_dat_o <= cfg_out;
 	else
 		s_dat_o <= 'h0;
 end

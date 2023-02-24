@@ -1,6 +1,6 @@
 // ============================================================================
 //        __
-//   \\__/ o\    (C) 2006-2022  Robert Finch, Waterloo
+//   \\__/ o\    (C) 2006-2023  Robert Finch, Waterloo
 //    \  __ /    All rights reserved.
 //     \/_//     robfinch<remove>@finitron.ca
 //       ||
@@ -53,9 +53,9 @@
 //  The controller expects a 256kB memory region to be reserved.
 //
 //  Memory Map:
-//  00000-2FFFF   display ram
-//  30000-3FEFF   character bitmap ram
-//  3FF00-3FFFF   controller registers
+//  00000-3FFFF   display ram
+//  40000-7FFFF   character bitmap ram
+//  80000-800FF   controller registers
 //
 //--------------------------------------------------------------------
 // Registers
@@ -101,13 +101,17 @@
 //  63-32   nnnnnnnn nnnnnnnn  font ram lock "LOCK" or "UNLK"
 //--------------------------------------------------------------------
 //
+// 1209 LUTs / 1003 FFs / 48 BRAMs / 1 DSP
 // ============================================================================
 
 //`define USE_CLOCK_GATE
 //`define SUPPORT_AAM	1
+`define TC_RAM_ADDR	32'hEC000001
+`define TC_CBM_ADDR	32'hEC040001
+`define TC_REG_ADDR	32'hEC080001
 
 module rfTextController(
-	rst_i, clk_i, cs_i,
+	rst_i, clk_i, cs_config_i, cs_io_i,
 	cti_i, cyc_i, stb_i, ack_o, wr_i, sel_i, adr_i, dat_i, dat_o,
 	dot_clk_i, hsync_i, vsync_i, blank_i, border_i, zrgb_i, zrgb_o, xonoff_i
 );
@@ -115,21 +119,31 @@ parameter num = 4'd1;
 parameter COLS = 8'd64;
 parameter ROWS = 8'd32;
 parameter BUSWID = 32;
-
+parameter TEXT_CELL_COUNT = 8192;
+parameter CFG_BUS = 8'd0;
+parameter CFG_DEVICE = 5'd1;
+parameter CFG_FUNC = 3'd0;
+parameter CFG_VENDOR_ID	=	16'h0;
+parameter CFG_DEVICE_ID	=	16'h0;
+parameter CFG_SUBSYSTEM_VENDOR_ID	= 16'h0;
+parameter CFG_SUBSYSTEM_ID = 16'h0;
+parameter CFG_ROM_ADDR = 32'hFFFFFFF0;
 
 // Syscon
 input  rst_i;			// reset
 input  clk_i;			// clock
 
+input cs_config_i;
+input cs_io_i;
+
 // Slave signals
-input  cs_i;            // circuit select
 input  [2:0] cti_i;
 input  cyc_i;				// valid bus cycle
 input  stb_i;       // data strobe
 output ack_o;				// data acknowledge
 input  wr_i;				// write
 input  [BUSWID/8-1:0] sel_i;	// byte lane select
-input  [17:0] adr_i;	// address
+input  [31:0] adr_i;	// address
 input  [BUSWID-1:0] dat_i;			// data input
 output reg [BUSWID-1:0] dat_o;	// data output
 
@@ -143,9 +157,10 @@ input [39:0] zrgb_i;		// input pixel stream
 output reg [39:0] zrgb_o;	// output pixel stream
 input xonoff_i;
 
+integer n2,n3;
 reg controller_enable;
-reg [39:0] bkColor40, bkColor40d, bkColor40d2;	// background color
-reg [39:0] fgColor40, fgColor40d, fgColor40d2;	// foreground color
+reg [39:0] bkColor40, bkColor40d, bkColor40d2, bkColor40d3;	// background color
+reg [39:0] fgColor40, fgColor40d, fgColor40d2, fgColor40d3;	// foreground color
 
 wire [1:0] pix;				// pixel value from character generator 1=on,0=off
 
@@ -209,6 +224,8 @@ reg  bgt, bgtd, bgtd2;
 
 wire [63:0] tdat_o;
 wire [63:0] chdat_o;
+reg [63:0] cfg_dat [0:31];
+reg [63:0] cfg_out;
 
 function [63:0] fnRbo;
 input n;
@@ -222,20 +239,35 @@ endfunction
 // I/O range Dx
 //--------------------------------------------------------------------
 // Register the inputs
+reg cs_config;
 reg cs_rom, cs_reg, cs_text, cs_any;
+reg cs_rom1, cs_reg1, cs_text1;
+reg cs_tc;
 reg [17:0] radr_i;
 reg [63:0] rdat_i;
 reg rwr_i;
 reg [7:0] rsel_i;
 reg [7:0] wrs_i;
+reg [31:0] tc_ram_addr;
+reg [31:0] tc_cbm_addr;
+reg [31:0] tc_reg_addr;
+
 always_ff @(posedge clk_i)
-	cs_rom <= cs_i && cyc_i && stb_i && (adr_i[17:8] >= 10'h300 && adr_i[17:8] < 10'h3FF);
+	cs_any <= cyc_i & stb_i & cs_io_i;
 always_ff @(posedge clk_i)
-	cs_reg <= cs_i && cyc_i && stb_i && (adr_i[17:8] == 10'h3FF);
+	cs_config <= cyc_i & stb_i & cs_config_i && adr_i[27:20]==CFG_BUS && adr_i[19:15]==CFG_DEVICE && adr_i[14:12]==CFG_FUNC;
 always_ff @(posedge clk_i)
-	cs_text <= cs_i && cyc_i && stb_i && (adr_i[17:8] < 10'h300);
+	cs_rom1 <= adr_i[31:18] == tc_cbm_addr[31:18];
 always_ff @(posedge clk_i)
-	cs_any <= cs_i && cyc_i && stb_i;
+	cs_reg1 <= adr_i[31: 8] == tc_reg_addr[31: 8];
+always_ff @(posedge clk_i)
+	cs_text1 <= adr_i[31:18] == tc_ram_addr[31:18];
+always_comb
+	cs_rom <= cs_rom1 && cs_any;
+always_comb
+	cs_reg <= cs_reg1 && cs_any;
+always_comb
+	cs_text <= cs_text1 && cs_any;
 always_ff @(posedge clk_i)
 	wrs_i <= (BUSWID==64) ? {8{wr_i}} & sel_i :
 		adr_i[2] ? {{4{wr_i}} & sel_i,4'h0} : {4'h0,{4{wr_i}} & sel_i};
@@ -249,19 +281,21 @@ always_ff @(posedge clk_i)
 	rdat_i <= (BUSWID==64) ? dat_i : (BUSWID==32) ? {2{dat_i}} : {4{dat_i}};
 
 // Register outputs
-always @(posedge clk_i)
+always_ff @(posedge clk_i)
 if (BUSWID==64)
-	casez({cs_rom,cs_reg,cs_text})
-	3'b1??:	dat_o <= chdat_o;
-	3'b01?:	dat_o <= rego;
-	3'b001:	dat_o <= tdat_o;
+	casez({cs_config,cs_rom,cs_reg,cs_text})
+	4'b1???:	dat_o <= cfg_out;
+	4'b01??:	dat_o <= chdat_o;
+	4'b001?:	dat_o <= rego;
+	4'b0001:	dat_o <= tdat_o;
 	default:	dat_o <= 'h0;
 	endcase
 else if (BUSWID==32)
-	casez({cs_rom,cs_reg,cs_text})
-	3'b1??:	dat_o <= radr_i[2] ? chdat_o[63:32] : chdat_o[31:0];
-	3'b01?:	dat_o <= radr_i[2] ? rego[63:32] : rego[31:0];
-	3'b001:	dat_o <= radr_i[2] ? tdat_o[63:32] : tdat_o[31:0];
+	casez({cs_config,cs_rom,cs_reg,cs_text})
+	4'b1???:	dat_o <= radr_i[2] ? cfg_out[63:32] : cfg_out[31:0];
+	4'b01??:	dat_o <= radr_i[2] ? chdat_o[63:32] : chdat_o[31:0];
+	4'b001?:	dat_o <= radr_i[2] ? rego[63:32] : rego[31:0];
+	4'b0001:	dat_o <= radr_i[2] ? tdat_o[63:32] : tdat_o[31:0];
 	default:	dat_o <= 'd0;
 	endcase
 else
@@ -283,16 +317,85 @@ ack_gen #(
 	.REGISTER_OUTPUT(1)
 )
 uag1 (
+	.rst_i(rst_i),
 	.clk_i(clk_i),
 	.ce_i(1'b1),
-	.i(cs_any & ~rwr_i),
-	.we_i(cs_any & rwr_i),
+	.i((cs_any|cs_config) & ~rwr_i),
+	.we_i((cs_any|cs_config) & rwr_i),
 	.o(ack_o),
 	.rid_i(0),
 	.wid_i(0),
 	.rid_o(),
 	.wid_o()
 );
+
+//--------------------------------------------------------------------
+// config
+//--------------------------------------------------------------------
+
+initial begin
+	for (n3 = 0; n3 < 32; n3 = n3 + 1)
+		cfg_dat[n3] = 'd0;
+end
+
+always_ff @(posedge clk_i)
+if (rst_i) begin
+	tc_ram_addr <= `TC_RAM_ADDR;
+	tc_cbm_addr <= `TC_CBM_ADDR;
+	tc_reg_addr	<= `TC_REG_ADDR;
+end
+else begin
+	if (cs_config) begin
+		if (rwr_i)
+			case(radr_i[7:3])
+			5'h02:
+				begin
+					if (&rsel_i[3:0] && rdat_i[31:0]==32'hFFFFFFFF)
+						tc_ram_addr <= 32'hFFFFFFFF;	// no memory is needed
+					else begin
+						if (rsel_i[0])	tc_ram_addr[7:0] <= rdat_i[7:0];
+						if (rsel_i[1])	tc_ram_addr[15:8] <= rdat_i[15:8];
+						if (rsel_i[2])	tc_ram_addr[23:16] <= rdat_i[23:16];
+						if (rsel_i[3])	tc_ram_addr[31:24] <= rdat_i[31:24];
+					end
+					if (&rsel_i[7:4] && rdat_i[31:0]==32'hFFFFFFFF)
+						tc_cbm_addr <= 32'hFFFFFFFF;	// no memory is needed
+					else begin
+						if (rsel_i[4])	tc_cbm_addr[7:0] <= rdat_i[7:0];
+						if (rsel_i[5])	tc_cbm_addr[15:8] <= rdat_i[15:8];
+						if (rsel_i[6])	tc_cbm_addr[23:16] <= rdat_i[23:16];
+						if (rsel_i[7])	tc_cbm_addr[31:24] <= rdat_i[31:24];
+					end
+				end
+			5'h03:
+				begin
+					if (&rsel_i[3:0] && rdat_i[31:0]==32'hFFFFFFFF)
+						tc_reg_addr <= 32'hFFFFFFFF;	// no memory is needed
+					else begin
+						if (rsel_i[0])	tc_reg_addr[7:0] <= rdat_i[7:0];
+						if (rsel_i[1])	tc_reg_addr[15:8] <= rdat_i[15:8];
+						if (rsel_i[2])	tc_reg_addr[23:16] <= rdat_i[23:16];
+						if (rsel_i[3])	tc_reg_addr[31:24] <= rdat_i[31:24];
+					end
+				end
+			default:
+				cfg_dat[radr_i[7:3]] <= rdat_i;
+			endcase
+		else
+			case(radr_i[7:3])
+			5'h00:	cfg_out <= {32'h0,CFG_DEVICE_ID,CFG_VENDOR_ID};
+			5'h01:	cfg_out <= {8'h00,8'h00,8'h00,8'd32,24'h0,8'h0};
+			5'h02:	cfg_out <= {tc_cbm_addr,tc_ram_addr};
+			5'h03:	cfg_out <= {32'hFFFFFFFF,tc_reg_addr};
+			5'h04:	cfg_out <= 64'hFFFFFFFFFFFFFFFF;
+			5'h05:	cfg_out <= {CFG_SUBSYSTEM_ID,CFG_SUBSYSTEM_VENDOR_ID,32'h0};
+			5'h06:	cfg_out <= {24'h00,8'h00,CFG_ROM_ADDR};
+			5'h07: 	cfg_out <= {8'd8,8'd0,8'd0,8'd0,32'h0};
+			default:	cfg_out <= cfg_dat[radr_i[7:3]];
+			endcase
+	end
+end
+
 
 //--------------------------------------------------------------------
 //--------------------------------------------------------------------
@@ -450,7 +553,10 @@ always @(posedge clk_i)
 //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // text screen RAM
 //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-rfTextScreenRam screen_ram1
+rfTextScreenRam #(
+	.TEXT_CELL_COUNT(TEXT_CELL_COUNT)
+)
+screen_ram1
 (
 	.clka_i(clk_i),
 	.csa_i(cs_text),
@@ -677,7 +783,6 @@ always_ff @(posedge clk_i)
 
 reg [31:0] curout;
 wire [31:0] curout1;
-integer n2;
 always_ff @(posedge vclk)
 if (ld_shft) begin
 	curout = 'd0;
@@ -909,8 +1014,11 @@ always_ff @(posedge vclk)
 	if (ld_shft)
 		bkColor40d <= bkColor40;
 always_ff @(posedge vclk)
-	if (nhp)
+	if (ld_shft)
 		bkColor40d2 <= bkColor40d;
+always_ff @(posedge vclk)
+	if (nhp)
+		bkColor40d3 <= bkColor40d2;
 always_ff @(posedge vclk)
 	if (ld_shft)
 		fgColor40 <= {txtZorder1[5:2],txtFgCode1[20:14],5'b0,txtFgCode1[13:7],5'b0,txtFgCode1[6:0],5'b0};
@@ -918,8 +1026,11 @@ always_ff @(posedge vclk)
 	if (ld_shft)
 		fgColor40d <= fgColor40;
 always_ff @(posedge vclk)
-	if (nhp)
+	if (ld_shft)
 		fgColor40d2 <= fgColor40d;
+always_ff @(posedge vclk)
+	if (nhp)
+		fgColor40d3 <= fgColor40d2;
 
 always_ff @(posedge vclk)
 	if (ld_shft)
@@ -997,12 +1108,12 @@ always_ff @(posedge dot_clk_i)
 	9'b11???????:	zrgb_o <= 40'h00000000;
 	9'b1001?????:	zrgb_o <= {bdrColor[30:27],bdrColor[26:18],3'b0,bdrColor[17:9],3'b0,bdrColor[8:0],3'b0};
 `ifdef SUPPORT_AAM	
-	9'b1000?01??:	zrgb_o <= fnBlend(fgColor40d2,zrgb_i[39:36] > bkColor40d2[39:36]) ? zrgb_i : bkColor40d2, pix);
+	9'b1000?01??:	zrgb_o <= fnBlend(fgColor40d3,zrgb_i[39:36] > bkColor40d3[39:36]) ? zrgb_i : bkColor40d3, pix);
 `endif	
-	9'b1000?000?:	zrgb_o <= (zrgb_i[39:36] > bkColor40d2[39:36]) ? zrgb_i : bkColor40d2;
-	9'b1000?001?:	zrgb_o <= fgColor40d2; // ToDo: compare z-order
-	9'b1000?1000:	zrgb_o <= (zrgb_i[39:36] > bkColor40d2[39:36]) ? zrgb_i : bkColor40d2;
-	9'b1000?1001:	zrgb_o <= fgColor40d2;
+	9'b1000?000?:	zrgb_o <= (zrgb_i[39:36] > bkColor40d3[39:36]) ? zrgb_i : bkColor40d3;
+	9'b1000?001?:	zrgb_o <= fgColor40d3; // ToDo: compare z-order
+	9'b1000?1000:	zrgb_o <= (zrgb_i[39:36] > bkColor40d3[39:36]) ? zrgb_i : bkColor40d3;
+	9'b1000?1001:	zrgb_o <= fgColor40d3;
 	9'b1000?1010:	zrgb_o <= {tileColor1[30:27],tileColor1[26:18],3'b0,tileColor1[17:9],3'b0,tileColor1[8:0],3'b0};
 	9'b1000?1011:	zrgb_o <= {tileColor2[30:27],tileColor2[26:18],3'b0,tileColor2[17:9],3'b0,tileColor2[8:0],3'b0};
 //	6'b1010?0:	zrgb_o <= bgtd ? zrgb_i : bkColor32d;

@@ -1,6 +1,6 @@
 // ============================================================================
 //        __
-//   \\__/ o\    (C) 2018-2022  Robert Finch, Waterloo
+//   \\__/ o\    (C) 2018-2023  Robert Finch, Waterloo
 //    \  __ /    All rights reserved.
 //     \/_//     robfinch<remove>@finitron.ca
 //       ||
@@ -34,30 +34,34 @@
 //                                                                          
 // ============================================================================
 //
+`define VENDOR_XILINX
+
 module rfTextScreenRam(clka_i, csa_i, wea_i, sela_i, adra_i, data_i, data_o,
 	clkb_i, csb_i, web_i, selb_i, adrb_i, datb_i, datb_o);
 input clka_i;
 input csa_i;
 input wea_i;
 input [7:0] sela_i;
-input [15:3] adra_i;
+input [16:3] adra_i;
 input [63:0] data_i;
 output [63:0] data_o;
 input clkb_i;
 input csb_i;
 input web_i;
 input [7:0] selb_i;
-input [15:3] adrb_i;
+input [16:3] adrb_i;
 input [63:0] datb_i;
 output [63:0] datb_o;
+parameter TEXT_CELL_COUNT = 16384;
+localparam AWID = $clog2(TEXT_CELL_COUNT);
 
 // xpm_memory_tdpram: True Dual Port RAM
 // Xilinx Parameterized Macro, version 2020.2
 `ifdef VENDOR_XILINX
 
 	xpm_memory_tdpram #(
-	  .ADDR_WIDTH_A(13),
-	  .ADDR_WIDTH_B(13),
+	  .ADDR_WIDTH_A(AWID),
+	  .ADDR_WIDTH_B(AWID),
 	  .AUTO_SLEEP_TIME(0),
 	  .BYTE_WRITE_WIDTH_A(8),
 	  .BYTE_WRITE_WIDTH_B(8),
@@ -68,7 +72,7 @@ output [63:0] datb_o;
 	  .MEMORY_INIT_PARAM("0"),        // String
 	  .MEMORY_OPTIMIZATION("true"),   // String
 	  .MEMORY_PRIMITIVE("block"),      // String
-	  .MEMORY_SIZE(524288),
+	  .MEMORY_SIZE(TEXT_CELL_COUNT*64),
 	  .MESSAGE_CONTROL(0),
 	  .READ_DATA_WIDTH_A(64),
 	  .READ_DATA_WIDTH_B(64),
