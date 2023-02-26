@@ -63,6 +63,7 @@ import Thor2023Mmupkg::*;
 
 module rfFrameBuffer(
 	rst_i,
+	irq_o,
 	cs_config_i,
 	cs_io_i,
 	s_clk_i, s_cyc_i, s_stb_i, s_ack_o, s_we_i, s_sel_i, s_adr_i, s_dat_i, s_dat_o,
@@ -87,6 +88,18 @@ parameter CFG_SUBSYSTEM_VENDOR_ID	= 16'h0;
 parameter CFG_SUBSYSTEM_ID = 16'h0;
 parameter CFG_ROM_ADDR = 32'hFFFFFFF0;
 
+parameter CFG_REVISION_ID = 8'd0;
+parameter CFG_PROGIF = 8'd1;
+parameter CFG_SUBCLASS = 8'h80;					// 80 = Other
+parameter CFG_CLASS = 8'h03;						// 03 = display controller
+parameter CFG_CACHE_LINE_SIZE = 8'd8;		// 32-bit units
+parameter CFG_MIN_GRANT = 8'h00;
+parameter CFG_MAX_LATENCY = 8'h00;
+parameter CFG_IRQ_LINE = 8'd6;
+
+localparam CFG_HEADER_TYPE = 8'h00;			// 00 = a general device
+
+parameter MSIX = 1'b0;
 parameter IRQ_MSGADR = 64'h0FD0900C1;
 parameter IRQ_MSGDAT = 64'h1;
 
@@ -170,6 +183,7 @@ parameter pvTotal = 795;		//  795 total scan lines
 
 // SYSCON
 input rst_i;				// system reset
+output reg [31:0] irq_o;
 
 input cs_config_i;
 input cs_io_i;
@@ -246,9 +260,9 @@ always_ff @(posedge s_clk_i)
 always_ff @(posedge s_clk_i)
 	cs_config <= s_cyc_i & s_stb_i & cs_config_i && adri[27:20]==CFG_BUS && adri[19:15]==CFG_DEVICE && adri[14:12]==CFG_FUNC;
 always_comb
-	cs_map = cs && adri[31:16]==fbc_addr[31:16] && adri[15:14]==3'd1;
+	cs_map = cs && adri[23:16]==fbc_addr[23:16] && adri[15:14]==3'd1;
 always_comb
-	cs_reg = cs && adri[31:16]==fbc_addr[31:16] && adri[15:14]==3'd0;
+	cs_reg = cs && adri[23:16]==fbc_addr[23:16] && adri[15:14]==3'd0;
 	
 ack_gen #(
 	.READ_STAGES(3),
@@ -322,9 +336,44 @@ reg [31:0] vm_adr_o;
 
 // config
 
+reg [15:0] cmd_reg;
+reg [15:0] cmdo_reg;
+reg memory_space, io_space;
+reg bus_master;
+reg parity_err_resp;
+reg serr_enable;
+reg int_disable;
+reg [7:0] latency_timer = 8'h00;
+
+always_comb
+begin
+	cmdo_reg = cmd_reg;
+	cmdo_reg[3] = 1'b0;			// no special cycles
+	cmdo_reg[4] = 1'b0;			// memory write and invalidate supported
+	cmdo_reg[5] = 1'b0;			// VGA palette snoop
+	cmdo_reg[7] = 1'b0;			// reserved bit
+	cmdo_reg[9] = 1'b1;			// fast back-to-back enable
+	cmdo_reg[15:11] = 5'd0;	// reserved
+end
+
+reg [15:0] stat_reg;
+reg [15:0] stato_reg;
+always_comb
+begin
+	stato_reg = stat_reg;
+	stato_reg[2:0] = 3'b0;	// reserved
+	stato_reg[3] = 1'b0;		// interrupt status
+	stato_reg[4] = 1'b0;		// capabilities list
+	stato_reg[5] = 1'b1;		// 66 MHz enable (N/A)
+	stato_reg[6] = 1'b0;		// reserved
+	stato_reg[7] = 1'b1;		// fast back-to-back capable
+	stato_reg[10:9] = 2'b01;	// medium DEVSEL timing
+end
+
 reg [63:0] cfg_dat [0:31];
 reg [63:0] cfg_out;
 wire [31:0] map_out;
+reg [7:0] irq_line;
 reg [63:0] irq_msgadr;
 reg [63:0] irq_msgdat;
 
@@ -336,12 +385,34 @@ end
 always_ff @(posedge s_clk_i)
 if (rst_i) begin
 	fbc_addr <= `FBC_ADDR;
+	cmd_reg <= 16'h4003;
+	stat_reg <= 16'h0000;
+	irq_line <= CFG_IRQ_LINE;
 end
 else begin
+	io_space <= cmdo_reg[0];
+	memory_space <= cmdo_reg[1];
+	bus_master <= cmdo_reg[2];
+	parity_err_resp <= cmdo_reg[6];
+	serr_enable <= cmdo_reg[8];
+	int_disable <= cmdo_reg[10];
+
 	if (cs_config) begin
 		if (we)
 			case(adri[7:3])
-			5'h00:	;
+			5'h01:
+				begin
+					if (sel[0]) cmd_reg[7:0] <= dat[7:0];
+					if (sel[1]) cmd_reg[15:8] <= dat[15:8];
+					if (sel[3]) begin
+						if (dat[8]) stat_reg[8] <= 1'b0;
+						if (dat[11]) stat_reg[11] <= 1'b0;
+						if (dat[12]) stat_reg[12] <= 1'b0;
+						if (dat[13]) stat_reg[13] <= 1'b0;
+						if (dat[14]) stat_reg[14] <= 1'b0;
+						if (dat[15]) stat_reg[15] <= 1'b0;
+					end
+				end
 			5'h02:
 				begin
 					if (&sel[3:0] && dat[31:0]==32'hFFFFFFFF)
@@ -353,19 +424,23 @@ else begin
 						if (sel[3])	fbc_addr[31:24] <= dat[31:24];
 					end
 				end
+			5'h07:
+				if (sel[4]) irq_line <= dat[39:32];
 			default:
 				cfg_dat[adri[7:3]] <= dat;
 			endcase
 		else
 			case(adri[7:3])
-			5'h00:	cfg_out <= {32'h0,CFG_DEVICE_ID,CFG_VENDOR_ID};
-			5'h01:	cfg_out <= {8'h00,8'h00,8'h00,8'd32,24'h0,8'h0};
+			5'h00:	cfg_out <= {stato_reg,cmdo_reg,CFG_DEVICE_ID,CFG_VENDOR_ID};
+			5'h01:	cfg_out <= {8'h00,
+				CFG_HEADER_TYPE,latency_timer,CFG_CACHE_LINE_SIZE,
+				CFG_CLASS,CFG_SUBCLASS,CFG_PROGIF,CFG_REVISION_ID};
 			5'h02:	cfg_out <= {32'hFFFFFFFF,fbc_addr};
 			5'h03:	cfg_out <= 64'hFFFFFFFFFFFFFFFF;
 			5'h04:	cfg_out <= 64'hFFFFFFFFFFFFFFFF;
 			5'h05:	cfg_out <= {CFG_SUBSYSTEM_ID,CFG_SUBSYSTEM_VENDOR_ID,32'h0};
 			5'h06:	cfg_out <= {24'h00,8'h00,CFG_ROM_ADDR};
-			5'h07: 	cfg_out <= {8'd8,8'd0,8'd0,8'd0,32'h0};
+			5'h07: 	cfg_out <= {8'd8,8'd0,8'd0,irq_line,32'h0};
 			5'h08:	cfg_out <= {18'h0,REG_IRQ_MSGADR,3'b0,16'h8000,8'h4C,8'h11};
 			5'h09:	cfg_out <= 64'd0;
 			default:	cfg_out <= cfg_dat[adri[7:3]];
@@ -373,6 +448,8 @@ else begin
 	end
 end
 
+always_comb
+	irq_o = {31'd0,irq & ~int_disable} << irq_line;
 
 wire [15:0] map_page;
 
@@ -1214,7 +1291,7 @@ else begin
       state <= WAITLOAD;
     end
     // Send an IRQ message if needed.
-    else if (irq & ~wbm_resp.ack) begin
+    else if (irq & ~wbm_resp.ack & MSIX) begin
     	vm_cyc_o <= HIGH;
     	vm_adr_o <= irq_msgadr;
     	wbm_req.we <= HIGH;

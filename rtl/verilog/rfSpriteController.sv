@@ -162,6 +162,9 @@ output wb_write_request128_t wbm_req,
 input wb_read_response128_t wbm_resp,
 output [4:0] m_spriteno_o,
 //--------------------------
+// interrupt
+output [31:0] irq_o,
+//--------------------------
 input dot_clk_i,		// video dot clock
 input hsync_i,			// horizontal sync pulse
 input vsync_i,			// vertical sync pulse
@@ -185,7 +188,7 @@ parameter pnSpr = 32;		// number of sprites
 parameter phBits = 12;		// number of bits in horizontal timing counter
 parameter pvBits = 12;		// number of bits in vertical timing counter
 localparam pnSprm = pnSpr-1;
-parameter SPR_ADDR = 32'hEDA00000;
+parameter SPR_ADDR = 32'hFEDA0000;
 
 parameter CFG_BUS = 8'd0;
 parameter CFG_DEVICE = 5'd2;
@@ -196,6 +199,17 @@ parameter CFG_SUBSYSTEM_VENDOR_ID	= 16'h0;
 parameter CFG_SUBSYSTEM_ID = 16'h0;
 parameter CFG_ROM_ADDR = 32'hFFFFFFF0;
 
+parameter CFG_REVISION_ID = 8'd0;
+parameter CFG_PROGIF = 8'd1;
+parameter CFG_SUBCLASS = 8'h80;					// 80 = Other
+parameter CFG_CLASS = 8'h03;						// 03 = display controller
+parameter CFG_CACHE_LINE_SIZE = 8'd8;		// 32-bit units
+parameter CFG_MIN_GRANT = 8'h00;
+parameter CFG_MAX_LATENCY = 8'h00;
+
+localparam CFG_HEADER_TYPE = 8'h00;			// 00 = a general device
+
+parameter MSIX = 1'b0;
 parameter IRQ_MSGADR = 64'h0EDA900E1;
 parameter IRQ_MSGDAT = 64'h1;
 
@@ -311,8 +325,43 @@ genvar g;
 reg cs_config;
 reg cs_io;
 
+reg [15:0] cmd_reg;
+reg [15:0] cmdo_reg;
+reg memory_space, io_space;
+reg bus_master;
+reg parity_err_resp;
+reg serr_enable;
+reg int_disable;
+reg [7:0] latency_timer = 8'h00;
+
+always_comb
+begin
+	cmdo_reg = cmd_reg;
+	cmdo_reg[3] = 1'b0;			// no special cycles
+	cmdo_reg[4] = 1'b0;			// memory write and invalidate supported
+	cmdo_reg[5] = 1'b0;			// VGA palette snoop
+	cmdo_reg[7] = 1'b0;			// reserved bit
+	cmdo_reg[9] = 1'b1;			// fast back-to-back enable
+	cmdo_reg[15:11] = 5'd0;	// reserved
+end
+
+reg [15:0] stat_reg;
+reg [15:0] stato_reg;
+always_comb
+begin
+	stato_reg = stat_reg;
+	stato_reg[2:0] = 3'b0;	// reserved
+	stato_reg[3] = 1'b0;		// interrupt status
+	stato_reg[4] = 1'b0;		// capabilities list
+	stato_reg[5] = 1'b1;		// 66 MHz enable (N/A)
+	stato_reg[6] = 1'b0;		// reserved
+	stato_reg[7] = 1'b1;		// fast back-to-back capable
+	stato_reg[10:9] = 2'b01;	// medium DEVSEL timing
+end
+
 reg [63:0] cfg_dat [0:31];
 reg [63:0] cfg_out;
+reg [7:0] irq_line;
 reg [63:0] irq_msgadr;
 reg [63:0] irq_msgdat;
 
@@ -329,17 +378,38 @@ always_ff @(posedge s_clk_i)
 
 always_ff @(posedge s_clk_i)
 	cs_io <= wbm_req.cyc && wbm_req.stb && cs_io_i &&
-						wbm_req.adr[27:16]==spr_addr[27:16];
+						wbm_req.adr[23:16]==spr_addr[23:16];
 
 always_ff @(posedge s_clk_i)
 if (rst_i) begin
 	spr_addr <= SPR_ADDR;
+	cmd_reg <= 16'h4003;
+	irq_line <= 8'd5;
 end
 else begin
+	io_space <= cmdo_reg[0];
+	memory_space <= cmdo_reg[1];
+	bus_master <= cmdo_reg[2];
+	parity_err_resp <= cmdo_reg[6];
+	serr_enable <= cmdo_reg[8];
+	int_disable <= cmdo_reg[10];
+
 	if (cs_config) begin
 		if (wbm_reqs.we)
 			case(wbm_reqs.adr[7:3])
-			5'h00:	;
+			5'h01:
+				begin
+					if (wbm_reqs.sel[0]) cmd_reg[7:0] <= wbm_reqs.data1[7:0];
+					if (wbm_reqs.sel[1]) cmd_reg[15:8] <= wbm_reqs.data1[15:8];
+					if (wbm_reqs.sel[3]) begin
+						if (wbm_reqs.data1[8]) stat_reg[8] <= 1'b0;
+						if (wbm_reqs.data1[11]) stat_reg[11] <= 1'b0;
+						if (wbm_reqs.data1[12]) stat_reg[12] <= 1'b0;
+						if (wbm_reqs.data1[13]) stat_reg[13] <= 1'b0;
+						if (wbm_reqs.data1[14]) stat_reg[14] <= 1'b0;
+						if (wbm_reqs.data1[15]) stat_reg[15] <= 1'b0;
+					end
+				end
 			5'h02:
 				begin
 					if (&wbm_reqs.sel[3:0] && wbm_reqs.data1[31:0]==32'hFFFFFFFF)
@@ -351,6 +421,8 @@ else begin
 						if (wbm_reqs.sel[3])	spr_addr[31:24] <= wbm_reqs.data1[31:24];
 					end
 				end
+			5'h07:
+				if (wbm_reqs.sel[4]) irq_line <= wbm_reqs.data1[39:32];
 			default:
 				cfg_dat[wbm_reqs.adr[7:3]] <= dat;
 			endcase
@@ -363,7 +435,7 @@ else begin
 			5'h04:	cfg_out <= 64'hFFFFFFFFFFFFFFFF;
 			5'h05:	cfg_out <= {CFG_SUBSYSTEM_ID,CFG_SUBSYSTEM_VENDOR_ID,32'h0};
 			5'h06:	cfg_out <= {24'h00,8'h00,CFG_ROM_ADDR};
-			5'h07: 	cfg_out <= {8'd8,8'd0,8'd0,8'd0,32'h0};
+			5'h07: 	cfg_out <= {CFG_MAX_LATENCY,CFG_MIN_GRANT,8'd0,irq_line,32'h0};
 			5'h08:	cfg_out <= {18'h0,REG_IRQ_MSGADR,3'b0,16'h8000,8'h4C,8'h11};
 			5'h09:	cfg_out <= 64'd0;
 			default:	cfg_out <= cfg_dat[wbm_reqs.adr[7:3]];
@@ -371,6 +443,8 @@ else begin
 	end
 end
 
+always_comb
+	irq_o <= {31'd0,irq & ~int_disable} << irq_line;
 
 //--------------------------------------------------------------------
 // DMA control / bus interfacing
@@ -431,10 +505,14 @@ always_ff @(posedge m_clk_i)
 if (rst_i)
 	irq <= 1'b0;
 else begin
-	if (rst_irq)
-		irq <= 1'b0;
-	else if (sprSprIRQ|sprBkIRQ)
-		irq <= 1'b1;
+	if (MSIX) begin
+		if (rst_irq)
+			irq <= 1'b0;
+		else if (sprSprIRQ|sprBkIRQ)
+			irq <= 1'b1;
+	end
+	else
+		irq <= sprSprIRQ|sprBkIRQ;
 end
 
 reg [11:0] tocnt;
@@ -454,7 +532,7 @@ if (rst_i)
 else begin
 	case(mstate)
 	IDLE:
-		if (irq)
+		if (irq & MSIX)
 			mstate <= IRQ;
 		else if (|sprDt & ce)
 			mstate <= ACTIVE;
