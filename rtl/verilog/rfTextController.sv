@@ -106,9 +106,6 @@
 
 //`define USE_CLOCK_GATE
 //`define SUPPORT_AAM	1
-`define TC_RAM_ADDR	32'hFEC00001
-`define TC_CBM_ADDR	32'hFEC40001
-`define TC_REG_ADDR	32'hFEC80001
 
 module rfTextController(
 	rst_i, clk_i, cs_config_i, cs_io_i,
@@ -120,6 +117,14 @@ parameter COLS = 8'd64;
 parameter ROWS = 8'd32;
 parameter BUSWID = 32;
 parameter TEXT_CELL_COUNT = 8192;
+
+parameter RAM_ADDR = 32'hFEC00001;
+parameter CBM_ADDR = 32'hFEC40001;
+parameter REG_ADDR = 32'hFEC80001;
+parameter RAM_ADDR_MASK = 32'h00FC0000;
+parameter CBM_ADDR_MASK = 32'h00FC0000;
+parameter REG_ADDR_MASK = 32'h00FF0000;
+
 parameter CFG_BUS = 8'd0;
 parameter CFG_DEVICE = 5'd1;
 parameter CFG_FUNC = 3'd0;
@@ -136,6 +141,7 @@ parameter CFG_CLASS = 8'h03;						// 03 = display controller
 parameter CFG_CACHE_LINE_SIZE = 8'd8;		// 32-bit units
 parameter CFG_MIN_GRANT = 8'h00;
 parameter CFG_MAX_LATENCY = 8'h00;
+parameter CFG_IRQ_LINE = 8'hFF;
 
 localparam CFG_HEADER_TYPE = 8'h00;			// 00 = a general device
 
@@ -252,6 +258,7 @@ endfunction
 reg cs_config;
 reg cs_rom, cs_reg, cs_text, cs_any;
 reg cs_rom1, cs_reg1, cs_text1;
+reg cs_rom2, cs_reg2, cs_text2;
 reg cs_tc;
 reg [17:0] radr_i;
 reg [63:0] rdat_i;
@@ -267,11 +274,11 @@ always_ff @(posedge clk_i)
 always_ff @(posedge clk_i)
 	cs_config <= cyc_i & stb_i & cs_config_i && adr_i[27:20]==CFG_BUS && adr_i[19:15]==CFG_DEVICE && adr_i[14:12]==CFG_FUNC;
 always_ff @(posedge clk_i)
-	cs_rom1 <= adr_i[23:18] == tc_cbm_addr[23:18];
+	cs_rom1 <= cs_rom2;
 always_ff @(posedge clk_i)
-	cs_reg1 <= adr_i[23:16] == tc_reg_addr[23:16];
+	cs_reg1 <= cs_reg2;
 always_ff @(posedge clk_i)
-	cs_text1 <= adr_i[23:18] == tc_ram_addr[23:18];
+	cs_text1 <= cs_text2;
 always_comb
 	cs_rom <= cs_rom1 && cs_any;
 always_comb
@@ -343,127 +350,47 @@ uag1 (
 // config
 //--------------------------------------------------------------------
 
-reg [15:0] cmd_reg;
-reg [15:0] cmdo_reg;
-reg memory_space, io_space;
-reg bus_master;
-reg parity_err_resp;
-reg serr_enable;
-reg int_disable;
-reg [7:0] latency_timer = 8'h00;
-
-always_comb
-begin
-	cmdo_reg = cmd_reg;
-	cmdo_reg[3] = 1'b0;			// no special cycles
-	cmdo_reg[4] = 1'b0;			// memory write and invalidate supported
-	cmdo_reg[5] = 1'b0;			// VGA palette snoop
-	cmdo_reg[7] = 1'b0;			// reserved bit
-	cmdo_reg[9] = 1'b1;			// fast back-to-back enable
-	cmdo_reg[15:11] = 5'd0;	// reserved
-end
-
-reg [15:0] stat_reg;
-reg [15:0] stato_reg;
-always_comb
-begin
-	stato_reg = stat_reg;
-	stato_reg[2:0] = 3'b0;	// reserved
-	stato_reg[3] = 1'b0;		// interrupt status
-	stato_reg[4] = 1'b0;		// capabilities list
-	stato_reg[5] = 1'b1;		// 66 MHz enable (N/A)
-	stato_reg[6] = 1'b0;		// reserved
-	stato_reg[7] = 1'b1;		// fast back-to-back capable
-	stato_reg[10:9] = 2'b01;	// medium DEVSEL timing
-end
-
-initial begin
-	for (n3 = 0; n3 < 32; n3 = n3 + 1)
-		cfg_dat[n3] = 'd0;
-end
-
-always_ff @(posedge clk_i)
-if (rst_i) begin
-	tc_ram_addr <= `TC_RAM_ADDR;
-	tc_cbm_addr <= `TC_CBM_ADDR;
-	tc_reg_addr	<= `TC_REG_ADDR;
-	cmd_reg <= 16'h4003;
-	stat_reg <= 16'h0000;
-end
-else begin
-	io_space <= cmdo_reg[0];
-	memory_space <= cmdo_reg[1];
-	bus_master <= cmdo_reg[2];
-	parity_err_resp <= cmdo_reg[6];
-	serr_enable <= cmdo_reg[8];
-	int_disable <= cmdo_reg[10];
-
-	if (cs_config) begin
-		if (rwr_i)
-			case(radr_i[7:3])
-			5'h01:
-				begin
-					if (rsel_i[0]) cmd_reg[7:0] <= rdat_i[7:0];
-					if (rsel_i[1]) cmd_reg[15:8] <= rdat_i[15:8];
-					if (rsel_i[3]) begin
-						if (rdat_i[8]) stat_reg[8] <= 1'b0;
-						if (rdat_i[11]) stat_reg[11] <= 1'b0;
-						if (rdat_i[12]) stat_reg[12] <= 1'b0;
-						if (rdat_i[13]) stat_reg[13] <= 1'b0;
-						if (rdat_i[14]) stat_reg[14] <= 1'b0;
-						if (rdat_i[15]) stat_reg[15] <= 1'b0;
-					end
-				end
-			5'h02:
-				begin
-					if (&rsel_i[3:0] && rdat_i[31:0]==32'hFFFFFFFF)
-						tc_ram_addr <= 32'hFFFFFFFF;	// no memory is needed
-					else begin
-						if (rsel_i[0])	tc_ram_addr[7:0] <= rdat_i[7:0];
-						if (rsel_i[1])	tc_ram_addr[15:8] <= rdat_i[15:8];
-						if (rsel_i[2])	tc_ram_addr[23:16] <= rdat_i[23:16];
-						if (rsel_i[3])	tc_ram_addr[31:24] <= rdat_i[31:24];
-					end
-					if (&rsel_i[7:4] && rdat_i[31:0]==32'hFFFFFFFF)
-						tc_cbm_addr <= 32'hFFFFFFFF;	// no memory is needed
-					else begin
-						if (rsel_i[4])	tc_cbm_addr[7:0] <= rdat_i[7:0];
-						if (rsel_i[5])	tc_cbm_addr[15:8] <= rdat_i[15:8];
-						if (rsel_i[6])	tc_cbm_addr[23:16] <= rdat_i[23:16];
-						if (rsel_i[7])	tc_cbm_addr[31:24] <= rdat_i[31:24];
-					end
-				end
-			5'h03:
-				begin
-					if (&rsel_i[3:0] && rdat_i[31:0]==32'hFFFFFFFF)
-						tc_reg_addr <= 32'hFFFFFFFF;	// no memory is needed
-					else begin
-						if (rsel_i[0])	tc_reg_addr[7:0] <= rdat_i[7:0];
-						if (rsel_i[1])	tc_reg_addr[15:8] <= rdat_i[15:8];
-						if (rsel_i[2])	tc_reg_addr[23:16] <= rdat_i[23:16];
-						if (rsel_i[3])	tc_reg_addr[31:24] <= rdat_i[31:24];
-					end
-				end
-			default:
-				cfg_dat[radr_i[7:3]] <= rdat_i;
-			endcase
-		else
-			case(radr_i[7:3])
-			5'h00:	cfg_out <= {stato_reg,cmdo_reg,CFG_DEVICE_ID,CFG_VENDOR_ID};
-			5'h01:	cfg_out <= {8'h00,
-				CFG_HEADER_TYPE,latency_timer,CFG_CACHE_LINE_SIZE,
-				CFG_CLASS,CFG_SUBCLASS,CFG_PROGIF,CFG_REVISION_ID};
-			5'h02:	cfg_out <= {tc_cbm_addr,tc_ram_addr};
-			5'h03:	cfg_out <= {32'hFFFFFFFF,tc_reg_addr};
-			5'h04:	cfg_out <= 64'hFFFFFFFFFFFFFFFF;
-			5'h05:	cfg_out <= {CFG_SUBSYSTEM_ID,CFG_SUBSYSTEM_VENDOR_ID,32'h0};
-			5'h06:	cfg_out <= {24'h00,8'h00,CFG_ROM_ADDR};
-			5'h07: 	cfg_out <= {CFG_MAX_LATENCY,CFG_MIN_GRANT,8'd0,8'hFF,32'h0};
-			default:	cfg_out <= cfg_dat[radr_i[7:3]];
-			endcase
-	end
-end
-
+pci64_config #(
+	.CFG_BUS(CFG_BUS),
+	.CFG_DEVICE(CFG_DEVICE),
+	.CFG_FUNC(CFG_FUNC),
+	.CFG_VENDOR_ID(CFG_VENDOR_ID),
+	.CFG_DEVICE_ID(CFG_DEVICE_ID),
+	.CFG_BAR0(RAM_ADDR),
+	.CFG_BAR0_ALLOC(RAM_ADDR_MASK),
+	.CFG_BAR1(CBM_ADDR),
+	.CFG_BAR1_ALLOC(CBM_ADDR_MASK),
+	.CFG_BAR2(REG_ADDR),
+	.CFG_BAR2_ALLOC(REG_ADDR_MASK),
+	.CFG_SUBSYSTEM_VENDOR_ID(CFG_SUBSYSTEM_VENDOR_ID),
+	.CFG_SUBSYSTEM_ID(CFG_SUBSYSTEM_ID),
+	.CFG_ROM_ADDR(CFG_ROM_ADDR),
+	.CFG_REVISION_ID(CFG_REVISION_ID),
+	.CFG_PROGIF(CFG_PROGIF),
+	.CFG_SUBCLASS(CFG_SUBCLASS),
+	.CFG_CLASS(CFG_CLASS),
+	.CFG_CACHE_LINE_SIZE(CFG_CACHE_LINE_SIZE),
+	.CFG_MIN_GRANT(CFG_MIN_GRANT),
+	.CFG_MAX_LATENCY(CFG_MAX_LATENCY),
+	.CFG_IRQ_LINE(CFG_IRQ_LINE)
+)
+ucfg1
+(
+	.rst_i(rst_i),
+	.clk_i(clk_i),
+	.irq_i(1'b0),
+	.irq_o(),
+	.cs_config_i(cs_config), 
+	.we_i(rwr_i),
+	.sel_i(rsel_i),
+	.adr_i(radr_i),
+	.dat_i(rdat_i),
+	.dat_o(cfg_out),
+	.cs_bar0_o(cs_ram2),
+	.cs_bar1_o(cs_rom2),
+	.cs_bar2_o(cs_reg2),
+	.irq_en_o()
+);
 
 //--------------------------------------------------------------------
 //--------------------------------------------------------------------

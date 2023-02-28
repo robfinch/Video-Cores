@@ -189,6 +189,7 @@ parameter phBits = 12;		// number of bits in horizontal timing counter
 parameter pvBits = 12;		// number of bits in vertical timing counter
 localparam pnSprm = pnSpr-1;
 parameter SPR_ADDR = 32'hFEDA0000;
+parameter SPR_ADDR_MASK = 32'h00FF0000;
 
 parameter CFG_BUS = 8'd0;
 parameter CFG_DEVICE = 5'd2;
@@ -206,6 +207,7 @@ parameter CFG_CLASS = 8'h03;						// 03 = display controller
 parameter CFG_CACHE_LINE_SIZE = 8'd8;		// 32-bit units
 parameter CFG_MIN_GRANT = 8'h00;
 parameter CFG_MAX_LATENCY = 8'h00;
+parameter CFG_IRQ_LINE = 8'd5;
 
 localparam CFG_HEADER_TYPE = 8'h00;			// 00 = a general device
 
@@ -324,127 +326,54 @@ genvar g;
 
 reg cs_config;
 reg cs_io;
+wire irq_en;
 
-reg [15:0] cmd_reg;
-reg [15:0] cmdo_reg;
-reg memory_space, io_space;
-reg bus_master;
-reg parity_err_resp;
-reg serr_enable;
-reg int_disable;
-reg [7:0] latency_timer = 8'h00;
-
-always_comb
-begin
-	cmdo_reg = cmd_reg;
-	cmdo_reg[3] = 1'b0;			// no special cycles
-	cmdo_reg[4] = 1'b0;			// memory write and invalidate supported
-	cmdo_reg[5] = 1'b0;			// VGA palette snoop
-	cmdo_reg[7] = 1'b0;			// reserved bit
-	cmdo_reg[9] = 1'b1;			// fast back-to-back enable
-	cmdo_reg[15:11] = 5'd0;	// reserved
-end
-
-reg [15:0] stat_reg;
-reg [15:0] stato_reg;
-always_comb
-begin
-	stato_reg = stat_reg;
-	stato_reg[2:0] = 3'b0;	// reserved
-	stato_reg[3] = 1'b0;		// interrupt status
-	stato_reg[4] = 1'b0;		// capabilities list
-	stato_reg[5] = 1'b1;		// 66 MHz enable (N/A)
-	stato_reg[6] = 1'b0;		// reserved
-	stato_reg[7] = 1'b1;		// fast back-to-back capable
-	stato_reg[10:9] = 2'b01;	// medium DEVSEL timing
-end
-
-reg [63:0] cfg_dat [0:31];
-reg [63:0] cfg_out;
-reg [7:0] irq_line;
-reg [63:0] irq_msgadr;
-reg [63:0] irq_msgdat;
-
-initial begin
-	for (n1 = 0; n1 < 32; n1 = n1 + 1)
-		cfg_dat[n1] = 'd0;
-end
+pci32_config #(
+	.CFG_BUS(CFG_BUS),
+	.CFG_DEVICE(CFG_DEVICE),
+	.CFG_FUNC(CFG_FUNC),
+	.CFG_VENDOR_ID(CFG_VENDOR_ID),
+	.CFG_DEVICE_ID(CFG_DEVICE_ID),
+	.CFG_BAR0(SPR_ADDR),
+	.CFG_BAR0_ALLOC(SPR_ADDR_MASK),
+	.CFG_SUBSYSTEM_VENDOR_ID(CFG_SUBSYSTEM_VENDOR_ID),
+	.CFG_SUBSYSTEM_ID(CFG_SUBSYSTEM_ID),
+	.CFG_ROM_ADDR(CFG_ROM_ADDR),
+	.CFG_REVISION_ID(CFG_REVISION_ID),
+	.CFG_PROGIF(CFG_PROGIF),
+	.CFG_SUBCLASS(CFG_SUBCLASS),
+	.CFG_CLASS(CFG_CLASS),
+	.CFG_CACHE_LINE_SIZE(CFG_CACHE_LINE_SIZE),
+	.CFG_MIN_GRANT(CFG_MIN_GRANT),
+	.CFG_MAX_LATENCY(CFG_MAX_LATENCY),
+	.CFG_IRQ_LINE(CFG_IRQ_LINE)
+)
+ucfg1
+(
+	.rst_i(rst_i),
+	.clk_i(clk_i),
+	.irq_i(irq),
+	.irq_o(irq_o),
+	.cs_config_i(cs_config), 
+	.we_i(wbs_req.we),
+	.sel_i(wbs_req.sel),
+	.adr_i(wbs_req.adr),
+	.dat_i(wbs_req.dat),
+	.dat_o(cfg_out),
+	.cs_bar0_o(cs_spr),
+	.cs_bar1_o(),
+	.cs_bar2_o(),
+	.irq_en_o(irq_en)
+);
 
 always_ff @(posedge s_clk_i)
-	cs_config <= wbm_req.cyc && wbm_req.stb && cs_config_i && 
-							wbm_req.adr[27:20]==CFG_BUS &&
-							wbm_req.adr[19:15]==CFG_DEVICE &&
-							wbm_req.adr[14:12]==CFG_FUNC;
+	cs_config <= wbs_req.cyc && wbs_req.stb && cs_config_i && 
+							wbs_req.adr[27:20]==CFG_BUS &&
+							wbs_req.adr[19:15]==CFG_DEVICE &&
+							wbs_req.adr[14:12]==CFG_FUNC;
 
 always_ff @(posedge s_clk_i)
-	cs_io <= wbm_req.cyc && wbm_req.stb && cs_io_i &&
-						wbm_req.adr[23:16]==spr_addr[23:16];
-
-always_ff @(posedge s_clk_i)
-if (rst_i) begin
-	spr_addr <= SPR_ADDR;
-	cmd_reg <= 16'h4003;
-	irq_line <= 8'd5;
-end
-else begin
-	io_space <= cmdo_reg[0];
-	memory_space <= cmdo_reg[1];
-	bus_master <= cmdo_reg[2];
-	parity_err_resp <= cmdo_reg[6];
-	serr_enable <= cmdo_reg[8];
-	int_disable <= cmdo_reg[10];
-
-	if (cs_config) begin
-		if (wbm_reqs.we)
-			case(wbm_reqs.adr[7:3])
-			5'h01:
-				begin
-					if (wbm_reqs.sel[0]) cmd_reg[7:0] <= wbm_reqs.data1[7:0];
-					if (wbm_reqs.sel[1]) cmd_reg[15:8] <= wbm_reqs.data1[15:8];
-					if (wbm_reqs.sel[3]) begin
-						if (wbm_reqs.data1[8]) stat_reg[8] <= 1'b0;
-						if (wbm_reqs.data1[11]) stat_reg[11] <= 1'b0;
-						if (wbm_reqs.data1[12]) stat_reg[12] <= 1'b0;
-						if (wbm_reqs.data1[13]) stat_reg[13] <= 1'b0;
-						if (wbm_reqs.data1[14]) stat_reg[14] <= 1'b0;
-						if (wbm_reqs.data1[15]) stat_reg[15] <= 1'b0;
-					end
-				end
-			5'h02:
-				begin
-					if (&wbm_reqs.sel[3:0] && wbm_reqs.data1[31:0]==32'hFFFFFFFF)
-						spr_addr <= 32'hFFFFFFFF;	// reserve 0MB
-					else begin
-						if (wbm_reqs.sel[0])	spr_addr[7:0] <= wbm_reqs.data1[7:0];
-						if (wbm_reqs.sel[1])	spr_addr[15:8] <= wbm_reqs.data1[15:8];
-						if (wbm_reqs.sel[2])	spr_addr[23:16] <= wbm_reqs.data1[23:16];
-						if (wbm_reqs.sel[3])	spr_addr[31:24] <= wbm_reqs.data1[31:24];
-					end
-				end
-			5'h07:
-				if (wbm_reqs.sel[4]) irq_line <= wbm_reqs.data1[39:32];
-			default:
-				cfg_dat[wbm_reqs.adr[7:3]] <= dat;
-			endcase
-		else
-			case(wbm_reqs.adr[7:3])
-			5'h00:	cfg_out <= {32'h0,CFG_DEVICE_ID,CFG_VENDOR_ID};
-			5'h01:	cfg_out <= {8'h00,8'h00,8'h00,8'd32,24'h0,8'h0};
-			5'h02:	cfg_out <= {32'hFFFFFFFF,spr_addr};
-			5'h03:	cfg_out <= 64'hFFFFFFFFFFFFFFFF;
-			5'h04:	cfg_out <= 64'hFFFFFFFFFFFFFFFF;
-			5'h05:	cfg_out <= {CFG_SUBSYSTEM_ID,CFG_SUBSYSTEM_VENDOR_ID,32'h0};
-			5'h06:	cfg_out <= {24'h00,8'h00,CFG_ROM_ADDR};
-			5'h07: 	cfg_out <= {CFG_MAX_LATENCY,CFG_MIN_GRANT,8'd0,irq_line,32'h0};
-			5'h08:	cfg_out <= {18'h0,REG_IRQ_MSGADR,3'b0,16'h8000,8'h4C,8'h11};
-			5'h09:	cfg_out <= 64'd0;
-			default:	cfg_out <= cfg_dat[wbm_reqs.adr[7:3]];
-			endcase
-	end
-end
-
-always_comb
-	irq_o <= {31'd0,irq & ~int_disable} << irq_line;
+	cs_io <= wbs_req.cyc && wbs_req.stb && cs_io_i && cs_spr;
 
 //--------------------------------------------------------------------
 // DMA control / bus interfacing
@@ -509,10 +438,10 @@ else begin
 		if (rst_irq)
 			irq <= 1'b0;
 		else if (sprSprIRQ|sprBkIRQ)
-			irq <= 1'b1;
+			irq <= irq_en;
 	end
 	else
-		irq <= sprSprIRQ|sprBkIRQ;
+		irq <= (sprSprIRQ|sprBkIRQ) & irq_en;
 end
 
 reg [11:0] tocnt;
@@ -532,7 +461,7 @@ if (rst_i)
 else begin
 	case(mstate)
 	IDLE:
-		if (irq & MSIX)
+		if (irq & MSIX & irq_en)
 			mstate <= IRQ;
 		else if (|sprDt & ce)
 			mstate <= ACTIVE;
@@ -684,7 +613,9 @@ wire [31:0] reg_shadow_o = reg_shadow[radr];
 
 // register/sprite memory output mux
 always_ff @(posedge s_clk_i)
-	if (cs_io)
+	if (cs_config)
+		wbs_resp.dat <= cfg_out;
+	else if (cs_io)
 		case (wb_reqs.adr[9:2])		// synopsys full_case parallel_case
 		8'b11110000:	wbs_resp.dat <= sprEn;
 		8'b11110001:	wbs_resp.dat <= {sprBkIRQPending|sprSprIRQPending,5'b0,sprBkIRQPending,sprSprIRQPending,6'b0,sprBkIe,sprSprIe};
