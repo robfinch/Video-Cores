@@ -116,6 +116,11 @@ output [2*point_width-1:0] triangle_edge0_o;
 output [2*point_width-1:0] triangle_edge1_o;
 output [2*point_width-1:0] triangle_area_o;
 
+input [point_width-1:0] char_x_i;
+input [point_width-1:0] char_y_i;
+input char_write_i;
+input char_ack_i;
+
 wire ack_i = interpolate_i ? interp_ack_i : clip_ack_i;
 
 // Variables used in rect drawing
@@ -140,7 +145,8 @@ parameter wait_state           = 3'b000,
           rect_state           = 3'b001,
           line_state           = 3'b010,
           triangle_state       = 3'b011,
-          triangle_final_state = 3'b100;
+          triangle_final_state = 3'b100,
+          char_state = 3'b101;
 
 // Write/ack counter
 reg [delay_width-1:0] ack_counter;
@@ -236,6 +242,8 @@ else
         state <= rect_state;
       else if(line_write_i)
         state <= line_state; // if request for drawing a line, go to line drawing state
+      else if (char_write_i)
+      	state <= char_state;
 
     rect_state:
       if(raster_rect_done) // if we are done drawing a rect, go to wait state
