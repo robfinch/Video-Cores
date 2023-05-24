@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 // ============================================================================
 //        __
-//   \\__/ o\    (C) 2015-2022  Robert Finch, Waterloo
+//   \\__/ o\    (C) 2015-2023  Robert Finch, Waterloo
 //    \  __ /    All rights reserved.
 //     \/_//     robfinch<remove>@finitron.ca
 //       ||
@@ -45,7 +45,7 @@ parameter SW = 128;		// strip width in bits
 parameter BN = 6;
 input clk;
 input [31:0] base_address_i;
-input [3:0] color_depth_i;
+input [1:0] color_depth_i;
 input [15:0] bmp_width_i;	// pixel per line
 input [15:0] x_coord_i;
 input [15:0] y_coord_i;
@@ -60,18 +60,10 @@ output [BN:0] ce_o;					// color bits end
 reg [15:0] coeff;
 always_comb
 	case(color_depth_i)
-	BPP6: coeff = 65536*6/SW;
 	BPP8:	coeff = 65536*8/SW;
-	BPP12:	coeff = 65536*12/SW;
 	BPP16:	coeff = 65536*16/SW;
-	BPP18:	coeff = 65536*18/SW;
-	BPP21:	coeff = 65536*21/SW;
 	BPP24:	coeff = 65536*24/SW;
-	BPP27:	coeff = 65536*27/SW;
 	BPP32:	coeff = 65536*32/SW;
-	BPP33:	coeff = 65536*33/SW;
-	BPP36:	coeff = 65536*36/SW;
-	BPP40:	coeff = 65536*40/SW;
 	default:	coeff = 65536*16/SW;
 	endcase
 
@@ -79,18 +71,10 @@ always_comb
 reg [5:0] bpp;
 always_comb
 	case(color_depth_i)
-	BPP6: bpp = 5;
 	BPP8:	bpp = 7;
-	BPP12: bpp = 11;
 	BPP16:	bpp = 15;
-	BPP18:	bpp = 17;
-	BPP21:	bpp = 20;
 	BPP24:	bpp = 23;
-	BPP27:	bpp = 26;
 	BPP32:	bpp = 31;
-	BPP33:	bpp = 32;
-	BPP36:	bpp = 35;
-	BPP40:	bpp = 39;
 	default:	bpp = 15;
 	endcase
 
@@ -98,18 +82,10 @@ always_comb
 reg [5:0] cbpp;
 always_comb
 	case(color_depth_i)
-	BPP6: cbpp = 2;
 	BPP8:	cbpp = 4;
-	BPP12: cbpp = 8;
 	BPP16:	cbpp = 11;
-	BPP18:	cbpp = 14;
-	BPP21:	cbpp = 17;
 	BPP24:	cbpp = 20;
-	BPP27:	cbpp = 23;
 	BPP32:	cbpp = 26;
-	BPP33:	cbpp = 29;
-	BPP36:	cbpp = 32;
-	BPP40:	cbpp = 35;
 	default:	cbpp = 11;
 	endcase
 
@@ -118,18 +94,10 @@ always_comb
 reg [7:0] coeff2;
 always_comb
 	case(color_depth_i)
-	BPP6: coeff2 = SW-(SW % 6);
 	BPP8:	coeff2 = SW-(SW % 8);
-	BPP12: coeff2 = SW-(SW % 12);
 	BPP16:	coeff2 = SW-(SW % 16);
-	BPP18:	coeff2 = SW-(SW % 18);
-	BPP21:	coeff2 = SW-(SW % 21);
 	BPP24:	coeff2 = SW-(SW % 24);
-	BPP27:	coeff2 = SW-(SW % 27);
 	BPP32:	coeff2 = SW-(SW % 32);
-	BPP33:	coeff2 = SW-(SW % 33);
-	BPP36:	coeff2 = SW-(SW % 36);
-	BPP40:	coeff2 = SW-(SW % 40);
 	default:	coeff2 = SW-(SW % 16);
 	endcase
 

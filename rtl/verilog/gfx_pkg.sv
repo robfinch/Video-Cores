@@ -40,19 +40,11 @@ package gfx_pkg;
 parameter point_width = 16;
 parameter address_width = 32;
 
-typedef enum logic [3:0] {
-	BPP6 = 4'd1,		// 1-1-1-3
-	BPP8 = 4'd2,		// 2-2-2-2
-	BPP12 = 4'd3,		// 3-3-3-3
-	BPP16 = 4'd4,		// 4-4-4-4
-	BPP18 = 4'd5,		// 5-5-5-3
-	BPP21 = 4'd6,		// 6-6-6-3
-	BPP24 = 4'd7,		// 7-7-7-3
-	BPP27 = 4'd8,		// 8-8-8-3
-	BPP32 = 4'd9,		// 9-9-9-4
-	BPP33 = 4'd10,	// 10-10-10-3
-	BPP36 = 4'd11,	// 11-11-11-3
-	BPP40 = 4'd12		// 12-12-12-4
+typedef enum logic [1:0] {
+	BPP8 = 2'd0,		// 8
+	BPP16 = 2'd1,		// 1-5-5-5
+	BPP24 = 2'd2,		// 1-8-8-7
+	BPP32 = 2'd3		// 1-10-11-10
 } color_depth_t;
 
 endpackage
