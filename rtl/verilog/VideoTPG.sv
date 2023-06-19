@@ -49,7 +49,7 @@ input fta_cmd_request128_t req;
 output fta_cmd_response128_t resp;
 input fta_cmd_response128_t ex_resp;	// external response input
 
-wire pe_hsync, pe_vsync;
+wire pe_vsync;
 wire [30:0] lfsr31o;
 
 edge_det uedvs1
@@ -87,11 +87,11 @@ always_comb
 always_comb
 	c = {1'b0,5'h1F,q[4:0],p[4:0]};
 
-vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(clk_i), .ce(1'b1), .a(lfsr31o[3:0]), .d(req.cyc), .q(resp.ack));
-vtdl #(.WID(6), .DEP(16)) urdyd3 (.clk(clk_i), .ce(1'b1), .a(lfsr31o[3:0]), .d(req.cid), .q(resp.cid));
-vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(clk_i), .ce(1'b1), .a(lfsr31o[3:0]), .d(req.tid), .q(resp.tid));
-vtdl #(.WID($bits(fta_address_t)), .DEP(16)) urdyd5 (.clk(clk_i), .ce(1'b1), .a(lfsr31o[3:0]), .d(req.padr), .q(resp.adr));
-vtdl #(.WID(128), .DEP(16)) urdyd6 (.clk(clk_i), .ce(1'b1), .a(lfsr31o[3:0]), .d({8{c}}), .q(resp.dat));
+vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(clk), .ce(1'b1), .a(lfsr31o[3:0]), .d(req.cyc), .q(resp.ack));
+vtdl #(.WID(6), .DEP(16)) urdyd3 (.clk(clk), .ce(1'b1), .a(lfsr31o[3:0]), .d(req.cid), .q(resp.cid));
+vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(clk), .ce(1'b1), .a(lfsr31o[3:0]), .d(req.tid), .q(resp.tid));
+vtdl #(.WID($bits(fta_address_t)), .DEP(16)) urdyd5 (.clk(clk), .ce(1'b1), .a(lfsr31o[3:0]), .d(req.padr), .q(resp.adr));
+vtdl #(.WID(128), .DEP(16)) urdyd6 (.clk(clk), .ce(1'b1), .a(lfsr31o[3:0]), .d(en ? {8{c}} : ex_resp.dat), .q(resp.dat));
 
 always_ff @(posedge clk)
 begin
@@ -103,6 +103,8 @@ begin
 	resp.stall <= 1'b0;
 	resp.next <= 1'b0;
 	resp.err <= 1'b0;
+	resp.rty <= 1'b0;
+	resp.pri <= 4'd7;
 	/*
 	resp.adr <= req.padr;
 	resp.dat <= {8{c}};

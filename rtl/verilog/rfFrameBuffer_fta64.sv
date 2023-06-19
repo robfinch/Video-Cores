@@ -1,14 +1,13 @@
 `timescale 1ns / 1ps
 // ============================================================================
-//  Bitmap Controller (Frame Buffer Display)
-//  - Displays a bitmap from memory.
-//
-//
 //        __
 //   \\__/ o\    (C) 2008-2023  Robert Finch, Waterloo
 //    \  __ /    All rights reserved.
 //     \/_//     robfinch<remove>@finitron.ca
 //       ||
+//
+// rfFrameBuffer_fta64.sv
+//  - Displays a bitmap from memory.
 //
 //
 // BSD 3-Clause License
@@ -41,8 +40,6 @@
 //  The default base screen address is:
 //		$0200000 - the third meg of RAM
 //
-//
-//	3367 LUTs / 155 FFs / 5 BRAMs / 7 DSP
 // ============================================================================
 
 //`define USE_CLOCK_GATE	1'b1
@@ -107,8 +104,8 @@ localparam BITS_IN_ADDR_MAP = PHYS_ADDR_BITS - 16;
 
 parameter MDW = 128;		// Bus master data width
 parameter MAP = 12'd0;
-parameter BM_BASE_ADDR1 = 32'h00200000;
-parameter BM_BASE_ADDR2 = 32'h00280000;
+parameter BM_BASE_ADDR1 = 32'h00000000;
+parameter BM_BASE_ADDR2 = 32'h00100000;
 parameter REG_CTRL = 11'd0;
 parameter REG_REFDELAY = 11'd1;
 parameter REG_PAGE1ADDR = 11'd2;
@@ -657,8 +654,8 @@ if (rst_i) begin
 	greyscale <= 1'b0;
 	bm_base_addr1 <= BM_BASE_ADDR1;
 	bm_base_addr2 <= BM_BASE_ADDR2;
-	hrefdelay = 16'hFF39;//16'd3964;//16'hFF99;//12'd103;
-	vrefdelay = 16'hFFEA;//16'hFFF3;12'd13;
+	hrefdelay <= 16'hFF39;//16'd3964;//16'hFF99;//12'd103;
+	vrefdelay <= 16'hFFEA;//16'hFFF3;12'd13;
 	windowLeft <= 16'h0;
 	windowTop <= 16'h0;
 	windowWidth <= 16'd800;
@@ -926,36 +923,31 @@ edge_det edv1
 	.ee()
 );
 
-reg [3:0] hc = 4'd1;
-always_ff @(posedge vclk)
-if (pe_hsync) begin
-	hc <= 4'd1;
-	pixelCol <= hrefdelay;
-end
-else begin
-	if (hc==hres) begin
-		hc <= 4'd1;
-		pixelCol <= pixelCol + 16'd1;
-	end
-	else
-		hc <= hc + 4'd1;
-end
+wire [2:0] hc;
+wire [2:0] vc;
 
-reg [3:0] vc = 4'd1;
-always_ff @(posedge vclk)
-if (pe_vsync) begin
-	vc <= 4'd1;
-	pixelRow <= vrefdelay;
-end
-else begin
-	if (pe_hsync) begin
-		vc <= vc + 4'd1;
-		if (vc==vres) begin
-			vc <= 4'd1;
-			pixelRow <= pixelRow + 16'd1;
-		end
-	end
-end
+pixelCounter upxc1
+(
+	.rst(pe_hsync),
+	.clk(vclk),
+	.ce(1'b1),
+	.res(hres),
+	.d(hrefdelay),
+	.q(pixelCol),
+	.mq(hc)
+);
+
+pixelCounter upxr1
+(
+	.rst(pe_vsync),
+	.clk(vclk),
+	.ce(pe_hsync),
+	.res(vres),
+	.d(vrefdelay),
+	.q(pixelRow),
+	.mq(vc)
+);
+
 always_comb
 	lef = ~pixelRow[0];
 always_comb
@@ -1101,6 +1093,7 @@ always_comb m_req.cti = fta_bus_pkg::CLASSIC;
 always_comb m_req.blen = 6'd63;
 always_comb m_req.stb = m_req.cyc;
 always_comb m_req.cid = 'd0;
+always_comb m_req.tid = 15'h1234;
 
 reg [31:0] adr;
 typedef enum logic [3:0] {
@@ -1323,10 +1316,12 @@ default:	rgbo4 <= {rgbo3[15:10],5'b0,rgbo3[9:5],5'b0,rgbo3[4:0],5'b0};
 endcase
 
 reg rd_fifo,rd_fifo1,rd_fifo2;
+/*
 reg de;
 always_ff @(posedge vclk)
 	if (rd_fifo1)
 		de <= ~blank_i;
+*/
 
 always_ff @(posedge vclk)
 	if (onoff && xonoff_i && !blank_i) begin
@@ -1442,5 +1437,40 @@ rfVideoFifo #(MDW) uf2
 	.dout(rgbo1o),
 	.cnt()
 );
+
+endmodule
+
+// Horizontal or vertical pixel counter.
+// If the count is negative, step by one keeps the meaning of the refdelay value
+// consistent between different resolutions.
+
+module pixelCounter(rst, clk, ce, res, d, q, mq);
+input rst;
+input clk;
+input ce;
+input [2:0] res;
+input [15:0] d;
+output reg [15:0] q;
+output reg [2:0] mq;		// modulo count
+
+always_ff @(posedge clk)
+if (rst) begin
+	mq <= 3'd1;
+	q <= d;
+end
+else begin
+	if (ce) begin
+		if (&q[15:12]) begin
+			q <= q + 16'd1;
+			mq <= 3'd1;
+		end
+		else if (mq==res) begin
+			mq <= 3'd1;
+			q <= q + 16'd1;
+		end
+		else
+			mq <= mq + 3'd1;
+	end
+end
 
 endmodule

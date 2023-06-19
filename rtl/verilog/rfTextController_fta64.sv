@@ -1078,7 +1078,7 @@ endfunction
 // controllers would not be visible if the clock were gated off.
 always_ff @(posedge dot_clk_i)
 	casez({controller_enable&xonoff_i,blank_i,iblank,border_i,bpix,mcm,aam,pix})
-	9'b01???????:	zrgb_o <= 32'h00000000;
+	9'b01???????:	zrgb_o <= zrgb_i;
 	9'b11???????:	zrgb_o <= 32'h00000000;
 	9'b1001?????:	zrgb_o <= {2'b0,bdrColor[23:16],2'b0,bdrColor[15:8],2'b0,bdrColor[7:0],2'b0};
 `ifdef SUPPORT_AAM	

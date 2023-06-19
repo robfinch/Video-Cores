@@ -34,6 +34,8 @@
 //                                                                          
 // ============================================================================
 //
+`define VENDOR_XILINX 1'b1
+
 module rfTextCharRam(clk_i, cs_i, we_i, sel_i, adr_i, dat_i, dat_o, dot_clk_i, ce_i,
   fontAddress_i, char_code_i, maxScanpix_i, maxscanline_i, scanline_i, bmp_o);
 parameter pFontFile = "char_bitmaps_12x18.mem";
