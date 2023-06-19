@@ -106,6 +106,7 @@
 
 //`define USE_CLOCK_GATE
 //`define SUPPORT_AAM	1
+import fta_bus_pkg::*;
 
 module rfTextController_fta64(
 	rst_i, clk_i, cs_config_i, cs_io_i, req, resp,
@@ -324,8 +325,9 @@ else
 
 vtdl #(.WID(1), .DEP(16)) urdyd1 (.clk(clk_i), .ce(1'b1), .a(4'd3), .d(cs_any|cs_config), .q(ack));
 vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(clk_i), .ce(1'b1), .a(4'd4), .d(cs_any|cs_config), .q(resp.ack));
-vtdl #(.WID(4), .DEP(16)) urdyd3 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req.cid), .q(resp.cid));
-vtdl #(.WID(8), .DEP(16)) urdyd4 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req.tid), .q(resp.tid));
+vtdl #(.WID(6), .DEP(16)) urdyd3 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req.cid), .q(resp.cid));
+vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req.tid), .q(resp.tid));
+vtdl #(.WID($bits(fta_address_t)), .DEP(16)) urdyd5 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req.padr), .q(resp.adr));
 
 //--------------------------------------------------------------------
 // config
@@ -578,11 +580,11 @@ rfTextCharRam charRam0
 reg [23:0] txtBkCode1;
 reg [23:0] txtFgCode1;
 reg [5:0] txtZorder1;
-always @(posedge vclk)
-	if (ld_shft) txtBkCode1 <= screen_ram_out[39:16];
-always @(posedge vclk)
-	if (ld_shft) txtFgCode1 <= screen_ram_out[63:40];
-always @(posedge vclk)
+always_ff @(posedge vclk)
+	if (ld_shft) txtBkCode1 <= {screen_ram_out[36:30],1'b0,screen_ram_out[29:23],1'b0,screen_ram_out[22:16],1'b0};
+always_ff @(posedge vclk)
+	if (ld_shft) txtFgCode1 <= {screen_ram_out[57:51],1'b0,screen_ram_out[50:44],1'b0,screen_ram_out[43:37],1'b0};
+always_ff @(posedge vclk)
 	if (ld_shft) txtZorder1 <= 'd0;
 
 //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -981,7 +983,7 @@ VT151 ub2
 
 always_ff @(posedge vclk)
 	if (ld_shft)
-		bkColor40 <= {1'b0,txtBkCode1[23:16],2'b0,txtBkCode1[15:8],3'b0,txtBkCode1[7:0],2'b0};
+		bkColor40 <= {2'b0,txtBkCode1[23:16],2'b0,txtBkCode1[15:8],2'b0,txtBkCode1[7:0],2'b0};
 always_ff @(posedge vclk)
 	if (ld_shft)
 		bkColor40d <= bkColor40;
@@ -993,7 +995,7 @@ always_ff @(posedge vclk)
 		bkColor40d3 <= bkColor40d2;
 always_ff @(posedge vclk)
 	if (ld_shft)
-		fgColor40 <= {1'b0,txtFgCode1[23:16],2'b0,txtFgCode1[15:8],3'b0,txtFgCode1[7:0],2'b0};
+		fgColor40 <= {2'b0,txtFgCode1[23:16],2'b0,txtFgCode1[15:8],2'b0,txtFgCode1[7:0],2'b0};
 always_ff @(posedge vclk)
 	if (ld_shft)
 		fgColor40d <= fgColor40;
@@ -1045,9 +1047,9 @@ always_ff @(posedge vclk)
 		iblank <= (row >= numRows) || (col >= numCols + charOutDelay) || (col < charOutDelay);
 
 `ifdef SUPPORT_AAM
-function [11:0] fnBlendComponent;
-input [11:0] c1;
-input [11:0] c2;
+function [9:0] fnBlendComponent;
+input [9:0] c1;
+input [9:0] c2;
 input [1:0] pix;
 case(pix)
 2'b00:	fnBlendComponent = c2;
@@ -1057,15 +1059,15 @@ case(pix)
 endcase
 endfunction
 
-function [39:0] fnBlend;
-input [39:0] c1;
-input [39:0] c2;
+function [31:0] fnBlend;
+input [31:0] c1;
+input [31:0] c2;
 input [1:0] pix;
 fnBlend = {
-	|pix ? c1[39:36] : c2[39:36],
-	fnBlendComponent(c1[35:24],c2[35:24]),
-	fnBlendComponent(c1[23:12],c2[23:12]),
-	fnBlendComponent(c1[11: 0],c2[11: 0])
+	|pix ? c1[31:30] : c2[31:30],
+	fnBlendComponent(c1[29:20],c2[29:20]),
+	fnBlendComponent(c1[19:10],c2[19:10]),
+	fnBlendComponent(c1[ 9: 0],c2[ 9: 0])
 };
 endfunction
 `endif
@@ -1078,7 +1080,7 @@ always_ff @(posedge dot_clk_i)
 	casez({controller_enable&xonoff_i,blank_i,iblank,border_i,bpix,mcm,aam,pix})
 	9'b01???????:	zrgb_o <= 32'h00000000;
 	9'b11???????:	zrgb_o <= 32'h00000000;
-	9'b1001?????:	zrgb_o <= {1'b0,bdrColor[23:16],2'b0,bdrColor[15:8],3'b0,bdrColor[7:0],2'b0};
+	9'b1001?????:	zrgb_o <= {2'b0,bdrColor[23:16],2'b0,bdrColor[15:8],2'b0,bdrColor[7:0],2'b0};
 `ifdef SUPPORT_AAM	
 	9'b1000?01??:	zrgb_o <= fnBlend(fgColor40d3, bgtd2 ? zrgb_i : bkColor40d3, pix);
 `endif	
@@ -1086,8 +1088,8 @@ always_ff @(posedge dot_clk_i)
 	9'b1000?001?:	zrgb_o <= fgColor40d3; // ToDo: compare z-order
 	9'b1000?1000:	zrgb_o <= bgtd2 ? zrgb_i : bkColor40d3;
 	9'b1000?1001:	zrgb_o <= fgColor40d3;
-	9'b1000?1010:	zrgb_o <= {1'b0,tileColor1[23:16],2'b0,tileColor1[15:8],3'b0,tileColor1[7:0],2'b0};
-	9'b1000?1011:	zrgb_o <= {1'b0,tileColor2[23:16],2'b0,tileColor2[15:8],3'b0,tileColor2[7:0],2'b0};
+	9'b1000?1010:	zrgb_o <= {2'b0,tileColor1[23:16],2'b0,tileColor1[15:8],2'b0,tileColor1[7:0],2'b0};
+	9'b1000?1011:	zrgb_o <= {2'b0,tileColor2[23:16],2'b0,tileColor2[15:8],2'b0,tileColor2[7:0],2'b0};
 //	6'b1010?0:	zrgb_o <= bgtd ? zrgb_i : bkColor32d;
 	default:	zrgb_o <= zrgb_i;
 	endcase

@@ -65,8 +65,8 @@ module rfFrameBuffer_fta64(
 	s_clk_i, s_req, s_resp,
 	m_clk_i, m_fst_o, 
 //	m_cyc_o, m_stb_o, m_ack_i, m_we_o, m_sel_o, m_adr_o, m_dat_i, m_dat_o,
-	wbm_req, wbm_resp,
-	dot_clk_i, zrgb_i, zrgb_o, xonoff_i, xal_o
+	m_req, m_resp,
+	dot_clk_i, rgb_i, rgb_o, xonoff_i, xal_o
 `ifdef INTERNAL_SYNC_GEN
 	, hsync_o, vsync_o, blank_o, border_o, hctr_o, vctr_o, fctr_o, vblank_o
 `else
@@ -75,7 +75,7 @@ module rfFrameBuffer_fta64(
 );
 parameter BUSWID = 64;
 
-parameter FBC_ADDR = 32'hFED40001;
+parameter FBC_ADDR = 32'hFED70001;
 parameter FBC_ADDR_MASK = 32'h00FF0000;
 
 parameter CFG_BUS = 8'd0;
@@ -197,8 +197,8 @@ output fta_cmd_response64_t s_resp;
 // Used to read memory via burst access
 input m_clk_i;				// system bus interface clock
 output reg m_fst_o;		// first access on scanline
-output fta_cmd_request128_t wbm_req;
-input fta_cmd_response128_t wbm_resp;
+output fta_cmd_request128_t m_req;
+input fta_cmd_response128_t m_resp;
 
 // Video
 input dot_clk_i;		// Video clock 80 MHz
@@ -216,9 +216,9 @@ input hsync_i;			// start/end of scan line
 input vsync_i;			// start/end of frame
 input blank_i;			// blank the output
 `endif
-input [31:0] zrgb_i;
-output [31:0] zrgb_o;		// 32-bit RGB output
-reg [31:0] zrgb_o;
+input [31:0] rgb_i;
+output [31:0] rgb_o;		// 32-bit RGB output
+reg [31:0] rgb_o;
 
 input xonoff_i;
 output reg xal_o;		// external access line (sprite access)
@@ -274,7 +274,8 @@ assign s_resp.dat = s_dat_o;
 vtdl #(.WID(1), .DEP(16)) urdyd1 (.clk(s_clk_i), .ce(1'b1), .a(4'd3), .d(cs_map|cs_reg|cs_config), .q(ack));
 vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(s_clk_i), .ce(1'b1), .a(4'd4), .d(cs_map|cs_reg|cs_config), .q(s_resp.ack));
 vtdl #(.WID(4), .DEP(16)) urdyd3 (.clk(s_clk_i), .ce(1'b1), .a(4'd5), .d(s_req.cid), .q(s_resp.cid));
-vtdl #(.WID(8), .DEP(16)) urdyd4 (.clk(s_clk_i), .ce(1'b1), .a(4'd5), .d(s_req.tid), .q(s_resp.tid));
+vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(s_clk_i), .ce(1'b1), .a(4'd5), .d(s_req.tid), .q(s_resp.tid));
+vtdl #(.WID(32), .DEP(16)) urdyd5 (.clk(s_clk_i), .ce(1'b1), .a(4'd5), .d(s_req.padr), .q(s_resp.adr));
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -426,11 +427,11 @@ wire [15:0] map_out;
    xpm_memory_tdpram #(
       .ADDR_WIDTH_A(11),               // DECIMAL
       .ADDR_WIDTH_B(11),               // DECIMAL
-      .AUTO_SLEEP_TIME(0),            // DECIMAL
+      .AUTO_SLEEP_TIME(0),             // DECIMAL
       .BYTE_WRITE_WIDTH_A(BITS_IN_ADDR_MAP),
       .BYTE_WRITE_WIDTH_B(BITS_IN_ADDR_MAP),
       .CASCADE_HEIGHT(0),             // DECIMAL
-      .CLOCKING_MODE("common_clock"), // String
+      .CLOCKING_MODE("independent_clock"), // String
       .ECC_MODE("no_ecc"),            // String
       .MEMORY_INIT_FILE("fb_map.mem"),      // String
       .MEMORY_INIT_PARAM(""),        // String
@@ -507,7 +508,7 @@ wire [15:0] map_out;
                                        // ECC enabled (Error injection capability is not available in
                                        // "decode_only" mode).
 
-      .regcea(cs_map),                 // 1-bit input: Clock Enable for the last register stage on the output
+      .regcea(1'b1),                 // 1-bit input: Clock Enable for the last register stage on the output
                                        // data path.
 
       .regceb(onoff),                 // 1-bit input: Clock Enable for the last register stage on the output
@@ -539,11 +540,11 @@ wire [15:0] map_out;
    );
 
 always_comb
-	wbm_req.padr <= {map_page,vm_adr_o[15:0]};
+	m_req.padr <= {map_page,vm_adr_o[15:0]};
 	
    // End of xpm_memory_tdpram_inst instantiation
 				
-delay3 #(1) udly1 (.clk(m_clk_i), .ce(1'b1), .i(vm_cyc_o), .o(wbm_req.cyc));
+delay3 #(1) udly1 (.clk(m_clk_i), .ce(1'b1), .i(vm_cyc_o), .o(m_req.cyc));
 
 `ifdef INTERNAL_SYNC_GEN
 wire hsync_i, vsync_i, blank_i;
@@ -646,24 +647,24 @@ always_ff @(posedge s_clk_i)
 if (rst_i) begin
 	page <= 1'b0;
 	pals <= 4'h0;
-	hres <= 3'd2;
-	vres <= 3'd2;
-	windowWidth <= 12'd400;
-	windowHeight <= 12'd300;
+	hres <= 3'd1;
+	vres <= 3'd1;
+	windowWidth <= 12'd800;
+	windowHeight <= 12'd600;
 	onoff <= 1'b1;
 	color_depth <= BPP16;
 	color_depth2 <= BPP16;
 	greyscale <= 1'b0;
 	bm_base_addr1 <= BM_BASE_ADDR1;
 	bm_base_addr2 <= BM_BASE_ADDR2;
-	hrefdelay = 16'd3964;//16'hFF99;//12'd103;
-	vrefdelay = 16'hFFF3;//12'd13;
+	hrefdelay = 16'hFF39;//16'd3964;//16'hFF99;//12'd103;
+	vrefdelay = 16'hFFEA;//16'hFFF3;12'd13;
 	windowLeft <= 16'h0;
 	windowTop <= 16'h0;
-	windowWidth <= 16'd400;
-	windowHeight <= 16'd300;
-	bmpWidth <= 16'd400;
-	bmpHeight <= 16'd300;
+	windowWidth <= 16'd800;
+	windowHeight <= 16'd600;
+	bmpWidth <= 16'd800;
+	bmpHeight <= 16'd600;
 	map <= MAP;
 	pcmd <= 2'b00;
 	rstcmd1 <= 1'b0;
@@ -1003,7 +1004,7 @@ case(MDW)
 	endcase
 default:
 	begin
-	$display("rfBitmapController: Bad master bus width");
+	$display("rfFramBuffer_fta64: Bad master bus width");
 	$finish;
 	end
 endcase
@@ -1095,11 +1096,11 @@ always @(posedge m_clk_i)
 	else if (blankEdge)
 		do_loads <= 1'b0;
 */
-always_comb wbm_req.bte = fta_bus_pkg::LINEAR;
-always_comb wbm_req.cti = fta_bus_pkg::CLASSIC;
-always_comb wbm_req.blen = 6'd63;
-always_comb wbm_req.stb = wbm_req.cyc;
-always_comb wbm_req.cid = 4'd0;
+always_comb m_req.bte = fta_bus_pkg::LINEAR;
+always_comb m_req.cti = fta_bus_pkg::CLASSIC;
+always_comb m_req.blen = 6'd63;
+always_comb m_req.stb = m_req.cyc;
+always_comb m_req.cid = 'd0;
 
 reg [31:0] adr;
 typedef enum logic [3:0] {
@@ -1144,7 +1145,7 @@ always_ff @(posedge m_clk_i)
 	if (fifo_wrst)
 		adr <= grAddr;
   else begin
-    if ((state==WAITLOAD && (wbm_resp.ack|tocnt[10])) || state==LOAD_OOB)
+    if ((state==WAITLOAD && (m_resp.ack|tocnt[10])) || state==LOAD_OOB)
     	case(MDW)
     	32:		adr <= adr + 32'd4;
     	64:		adr <= adr + 32'd8;
@@ -1156,7 +1157,7 @@ always_ff @(posedge m_clk_i)
 	if (fifo_wrst)
 		fetchCol <= 12'd0;
   else begin
-    if ((state==WAITLOAD && (wbm_resp.ack|tocnt[10])) || state==LOAD_OOB)
+    if ((state==WAITLOAD && (m_resp.ack|tocnt[10])) || state==LOAD_OOB)
       fetchCol <= fetchCol + shifts;
   end
 
@@ -1170,38 +1171,39 @@ always_comb legal_y = ~&pixelRow[15:12] && pixelRow < bmpHeight;
 reg modd;
 always_comb
 	case(MDW)
-	32:	modd <= wbm_req.padr[5:2]==4'hF;
-	64:	modd <= wbm_req.padr[5:3]==3'h7;
-	default:	modd <= wbm_req.padr[5:4]==2'h3;
+	32:	modd <= m_req.padr[5:2]==4'hF;
+	64:	modd <= m_req.padr[5:3]==3'h7;
+	default:	modd <= m_req.padr[5:4]==2'h3;
 	endcase
 
-always @(posedge m_clk_i)
+always_ff @(posedge m_clk_i)
 if (rst_i)
 	tocnt <= 'd0;
 else begin
-	if (wbm_req.cyc)
+	if (m_req.cyc)
 		tocnt <= tocnt + 2'd1;
 	else
 		tocnt <= 'd0;
 end
 
-always @(posedge m_clk_i)
+always_ff @(posedge m_clk_i, posedge rst_i)
 if (rst_i) begin
 	vm_cyc_o <= LOW;
-	wbm_req.we <= LOW;
-	wbm_req.sel <= 'd0;
+	m_req.we <= LOW;
+	m_req.sel <= 'd0;
 	vm_adr_o <= 'd0;
   rstcmd <= 1'b0;
   state <= IDLE;
   rst_irq2 <= 1'b0;
 end
 else begin
+  wb_nack();
   rst_irq2 <= 1'b0;
 	if (fifo_wrst)
 		m_fst_o <= HIGH;
 	case(state)
   WAITRST:
-    if (pcmd==2'b00 && ~wbm_resp.ack) begin
+    if (pcmd==2'b00 && ~m_resp.ack) begin
       rstcmd <= 1'b0;
       state <= IDLE;
     end
@@ -1210,19 +1212,19 @@ else begin
   IDLE:
   	if (load_fifo && !(legal_x && legal_y))
  			state <= LOAD_OOB;
-    else if (load_fifo & ~wbm_resp.ack) begin
+    else if (load_fifo & ~m_resp.ack) begin
       vm_cyc_o <= HIGH;
       vm_adr_o <= adr;
-      wbm_req.sel <= 16'hFFFF;
+      m_req.sel <= 16'hFFFF;
       state <= WAITLOAD;
     end
     // Send an IRQ message if needed.
-    else if (irq & ~wbm_resp.ack & MSIX) begin
+    else if (irq & ~m_resp.ack & MSIX) begin
     	vm_cyc_o <= HIGH;
     	vm_adr_o <= irq_msgadr;
-    	wbm_req.we <= HIGH;
-    	wbm_req.sel <= irq_msgadr[3] ? 16'hFF00 : 16'h00FF;
-    	wbm_req.data1 <= {2{irq_msgdat}};
+    	m_req.we <= HIGH;
+    	m_req.sel <= irq_msgadr[3] ? 16'hFF00 : 16'h00FF;
+    	m_req.data1 <= {2{irq_msgdat}};
     	rst_irq2 <= 1'b1;
     end
     // The adr_o[5:3]==3'b111 causes the controller to wait until all eight
@@ -1234,13 +1236,13 @@ else begin
     else if (pcmd!=2'b00 && (modd || !(vFetch && onoff && xonoff_i && fetchCol < windowWidth))) begin
       vm_cyc_o <= HIGH;
       vm_adr_o <= xyAddr;
-      wbm_req.sel <= 16'hFFFF;
+      m_req.sel <= 16'hFFFF;
       state <= LOADSTRIP;
     end
   LOADSTRIP:
-    if (wbm_resp.ack|tocnt[10]) begin
+    if (m_resp.ack|tocnt[10]) begin
       wb_nack();
-      mem_strip <= wbm_resp.dat;
+      mem_strip <= m_resp.dat;
       icolor1 <= {96'b0,color} << mb;
       rstcmd <= 1'b1;
       if (pcmd==2'b01)
@@ -1261,7 +1263,7 @@ else begin
     begin
       for (n = 0; n < 32; n = n + 1)
         color_o[n] <= (n <= bpp) ? color_o[n] : 1'b0;
-      state <= pcmd == 2'b0 ? (~wbm_resp.ack ? IDLE : WAITRST) : WAITRST;
+      state <= pcmd == 2'b0 ? (~m_resp.ack ? IDLE : WAITRST) : WAITRST;
       if (pcmd==2'b00)
         rstcmd <= 1'b0;
     end
@@ -1269,28 +1271,28 @@ else begin
   ICOLOR2:
     begin
       for (n = 0; n < MDW; n = n + 1)
-        wbm_req.data1[n] <= (n >= mb && n <= me)
+        m_req.data1[n] <= (n >= mb && n <= me)
         	? ((n <= ce) ?	rastop(raster_op, mem_strip[n], icolor1[n]) : icolor1[n])
         	: mem_strip[n];
       state <= STORESTRIP;
     end
   STORESTRIP:
-    if (~wbm_resp.ack) begin
+    if (~m_resp.ack) begin
       vm_cyc_o <= HIGH;
-      wbm_req.we <= HIGH;
-      wbm_req.sel <= 16'hFFFF;
+      m_req.we <= HIGH;
+      m_req.sel <= 16'hFFFF;
       vm_adr_o <= xyAddr;
       state <= ACKSTRIP;
     end
   ACKSTRIP:
-    if (wbm_resp.ack|tocnt[10]) begin
+    if (m_resp.ack|tocnt[10]) begin
       wb_nack();
       state <= pcmd == 2'b0 ? IDLE : WAITRST;
       if (pcmd==2'b00)
         rstcmd <= 1'b0;
     end
   WAITLOAD:
-    if (wbm_resp.ack|tocnt[10]) begin
+    if (m_resp.ack|tocnt[10]) begin
       wb_nack();
       state <= IDLE;
     end
@@ -1304,8 +1306,8 @@ task wb_nack;
 begin
 	m_fst_o <= LOW;
 	vm_cyc_o <= LOW;
-	wbm_req.we <= LOW;
-	wbm_req.sel <= 16'h0000;
+	m_req.we <= LOW;
+	m_req.sel <= 16'h0000;
 end
 endtask
 
@@ -1314,10 +1316,10 @@ reg [MDW-1:0] rgbo3;
 always_ff @(posedge vclk)
 case(color_depth2)
 BPP8:	rgbo4 <= {24'h0,rgbo3[7:0]};		// feeds into palette
-BPP16:	rgbo4 <= {rgbo3[15:10],5'b0,rgbo3[9:5],6'b0,rgbo3[4:0],5'b0};
-BPP24:	rgbo4 <= {rgbo3[23:15],2'b0,rgbo3[14:7],3'b0,rgbo3[6:0],3'b0};
-BPP32:	rgbo4 <= {rgbo3[31:21],rgbo3[20:10],rgbo3[9:0]};
-default:	rgbo4 <= {rgbo3[15:10],5'b0,rgbo3[9:5],6'b0,rgbo3[4:0],5'b0};
+BPP16:	rgbo4 <= {rgbo3[15:10],5'b0,rgbo3[9:5],5'b0,rgbo3[4:0],5'b0};
+BPP24:	rgbo4 <= {rgbo3[23:16],2'b0,rgbo3[15:8],2'b0,rgbo3[7:0],2'b0};
+BPP32:	rgbo4 <= {rgbo3[29:20],rgbo3[19:10],rgbo3[9:0]};
+default:	rgbo4 <= {rgbo3[15:10],5'b0,rgbo3[9:5],5'b0,rgbo3[4:0],5'b0};
 endcase
 
 reg rd_fifo,rd_fifo1,rd_fifo2;
@@ -1332,7 +1334,7 @@ always_ff @(posedge vclk)
 			if (!greyscale)
 				zrgb <= pal_o;
 			else
-				zrgb <= {pal_o[31],pal_o[10:1],pal_o[10:0],pal_o[10:1]};
+				zrgb <= {pal_o[31:30],pal_o[9:0],pal_o[9:0],pal_o[9:0]};
 		end
 		else
 			zrgb <= rgbo4;
@@ -1341,9 +1343,9 @@ always_ff @(posedge vclk)
 		zrgb <= 32'h00000000;
 always_ff @(posedge vclk)
 	if (zrgb==trans_color)
-		zrgb_o <= zrgb_i;
+		rgb_o <= rgb_i;
 	else
-		zrgb_o <= zrgb;
+		rgb_o <= zrgb;
 
 // Before the hrefdelay expires, pixelCol will be negative, which is greater
 // than windowWidth as the value is unsigned. That means that fifo reading is
@@ -1419,8 +1421,8 @@ rfVideoFifo #(MDW) uf1
 (
 	.wrst(fifo_wrst),
 	.wclk(m_clk_i),
-	.wr((((wbm_resp.ack|tocnt[10]) && state==WAITLOAD) || state==LOAD_OOB) && lef),
-	.di((state==LOAD_OOB) ? oob_dat : wbm_resp.dat),
+	.wr((((m_resp.ack|tocnt[10]) && state==WAITLOAD) || state==LOAD_OOB) && lef),
+	.di((state==LOAD_OOB) ? oob_dat : m_resp.dat),
 	.rrst(fifo_rrst),
 	.rclk(vclk),
 	.rd(rd_fifo & lof),
@@ -1432,8 +1434,8 @@ rfVideoFifo #(MDW) uf2
 (
 	.wrst(fifo_wrst),
 	.wclk(m_clk_i),
-	.wr((((wbm_resp.ack|tocnt[10]) && state==WAITLOAD) || state==LOAD_OOB) && lof),
-	.di((state==LOAD_OOB) ? oob_dat : wbm_resp.dat),
+	.wr((((m_resp.ack|tocnt[10]) && state==WAITLOAD) || state==LOAD_OOB) && lof),
+	.di((state==LOAD_OOB) ? oob_dat : m_resp.dat),
 	.rrst(fifo_rrst),
 	.rclk(vclk),
 	.rd(rd_fifo & lef),
