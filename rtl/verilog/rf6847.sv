@@ -41,12 +41,12 @@
 import const_pkg::*;
 
 module rf6847(rst, clk, dot_clk, css, ag, as, inv, intext, gm0, gm1, gm2,
-	leg, s_cs, s_rw, s_adr, s_dat_i, s_dat_o, m_ra, m_adr, m_dat_i,
-	hsync, vsync, blank, rgb, vbl_irq);
+	leg, s_cs, s_rw, s_adr, s_dat_i, s_dat_o, m_ra, m_adr, m_charno, m_dat_i,
+	rst_busy, frame_cnt, hsync, vsync, blank, rgb, vbl_irq);
 input rst;
 input clk;							// CPU bus clock
 input dot_clk;					// pixel clock	(40 MHz)
-input css;							// color select
+input css;							// color set select
 input ag;								// alpha(0)/graphics(1)
 input as;								// alpha(0)/semi-graphics(1)
 input inv;							// invert alphanumerics
@@ -59,10 +59,13 @@ input s_cs;							// circuit select
 input s_rw;							// read(1)/write(0)
 input [15:0] s_adr;
 input [7:0] s_dat_i;
-output [7:0] s_dat_o;
+output reg [7:0] s_dat_o;
 output reg [3:0] m_ra;	// row address
 output reg [15:0] m_adr;
+output reg [7:0] m_charno;
 input [7:0] m_dat_i;		// external char ROM input
+output reg rst_busy;		// device is busy resetting
+output reg [5:0] frame_cnt;	// frame counter
 output reg hsync;
 output reg vsync;
 output reg blank;
@@ -71,14 +74,17 @@ output reg vbl_irq;			// vertical blank
 
 reg iinv;
 reg iag;
+reg ias;
 reg iintext;
 
+reg por;
 reg [15:0] ma,ma2;
 reg [3:0] ra;						// scan line (row address)
 reg [7:0] mem [0:16383];
 reg [7:0] charrom [0:4095];
 reg [7:0] charno;				// character number
 reg [11:0] charrom_adr;
+reg char_en;
 
 wire clka = dot_clk;
 wire clkb = dot_clk;
@@ -86,17 +92,31 @@ wire rsta = rst;
 wire rstb = rst;
 wire [7:0] dispmem_outa;
 wire [7:0] dispmem_outb;
+wire [7:0] charrom_outa;
+wire [7:0] charrom_outb;
+wire [26:0] lfsr1_o;
+lfsr27 #(.WID(27)) ulfsr1(rst, dot_clk, 1'b1, 1'b0, lfsr1_o);
+wire [7:0] dispmem_dinb = lfsr1_o[7:0];
+
+reg border;
+wire [11:0] hCtr, vCtr;
 
 always_comb
 	iinv = inv;
 always_comb
 	iag = ag;
 always_comb
+	ias = as;
+always_comb
 	iintext = intext;
 always_comb
 	m_ra = ra;
 always_comb
 	m_adr = ma;
+always_comb
+	m_charno = charno;
+always_comb
+	rst_busy = por;
 
 // XPM_MEMORY instantiation template for True Dual Port RAM configurations
 // Refer to the targeted device family architecture libraries guide for XPM_MEMORY documentation
@@ -517,7 +537,7 @@ always_comb
                                        // "common_clock".
 
       .dina(s_dat_i),                     // WRITE_DATA_WIDTH_A-bit input: Data input for port A write operations.
-      .dinb(8'h00),                     // WRITE_DATA_WIDTH_B-bit input: Data input for port B write operations.
+      .dinb(dispmem_dinb),                // WRITE_DATA_WIDTH_B-bit input: Data input for port B write operations.
       .ena(s_cs && s_adr[15:14]==2'b00),   // 1-bit input: Memory enable signal for port A. Must be high on clock
                                        // cycles when read or write operations are initiated. Pipelined
                                        // internally.
@@ -564,7 +584,7 @@ always_comb
                                        // synchronously write only bits [15-8] of dina when WRITE_DATA_WIDTH_A
                                        // is 32, wea would be 4'b0010.
 
-      .web(1'b0)                        // WRITE_DATA_WIDTH_B/BYTE_WRITE_WIDTH_B-bit input: Write enable vector
+      .web(por)                        // WRITE_DATA_WIDTH_B/BYTE_WRITE_WIDTH_B-bit input: Write enable vector
                                        // for port B input data port dinb. 1 bit wide when word-wide writes are
                                        // used. In byte-wide write configurations, each bit controls the
                                        // writing one byte of dinb to address addrb. For example, to
@@ -979,7 +999,7 @@ always_comb
                                        // on the data output of port A.
 
       .douta(charrom_outa),                   // READ_DATA_WIDTH_A-bit output: Data output for port A read operations.
-      .doutb(charrom_dout),                   // READ_DATA_WIDTH_B-bit output: Data output for port B read operations.
+      .doutb(charrom_outb),                   // READ_DATA_WIDTH_B-bit output: Data output for port B read operations.
       .sbiterra(),             // 1-bit output: Status signal to indicate single bit error occurrence
                                        // on the data output of port A.
 
@@ -1090,36 +1110,55 @@ wire [23:0] magenta = {8'hff, 8'h1c, 8'hff};
 wire [23:0] orange = {8'hff, 8'h81, 8'h00};
 wire [23:0] black = {8'h00, 8'h00, 8'h00};
 wire [23:0] dark_green = {8'h00, 8'h7c, 8'h00};
-wire [23:0] dark_orange {8'h91,8'h00,8'h00};
+wire [23:0] dark_orange = {8'h91,8'h00,8'h00};
 wire [23:0] buff = {8'hff, 8'hff, 8'hff};
 
+always @(posedge dot_clk)
+if (rst)
+	por <= 1'b1;
+else begin
+	if (frame_cnt > 6'd10)
+		por <= 1'b0;
+end
+
 always_comb
-if (cs & rw) begin
-	case(adr[15:14])
+if (s_cs & s_rw) begin
+	case(s_adr[15:14])
 	2'b00:	s_dat_o = dispmem_outa;
 	2'b11:	s_dat_o = charrom_outa;
 	default:	s_dat_o = 8'h00;
 	endcase
 end
 else
-	dout = 8'h00;
+	s_dat_o = 8'h00;
 
 reg hBlank1;
 wire vBlank1;
 wire hSync1,vSync1;
-reg hBorder1;
+reg hBorder1,vBorder1;
+reg vblank;
+reg eof;
+reg eol;
 
 wire eol1 = hCtr==phTotal;
 wire eof1 = vCtr==pvTotal;
 
 assign vSync1 = vCtr >= pvSyncOn && vCtr < pvSyncOff;
 assign hSync1 = hCtr >= phSyncOn && hCtr < phSyncOff;
-assign vBlank1 = vCtr >= vBlankOn || vCtr < vBlankOff;
+assign vBlank1 = vCtr >= pvBlankOn || vCtr < pvBlankOff;
 assign vBorder1 = leg ? vCtr >= plegvBorderOn || vCtr < plegvBorderOff :
 												vCtr >= pvBorderOn || vCtr < pvBorderOff;
 
-counter #(12) u1 (.rst(rst), .dot_clk(dot_clk), .ce(1'b1), .ld(eol1), .d(8'd1), .q(hCtr), .tc() );
-counter #(12) u2 (.rst(rst), .dot_clk(dot_clk), .ce(eol1),  .ld(eof1), .d(12'd1), .q(vCtr), .tc() );
+counter #(12) u1 (.rst(rst), .clk(dot_clk), .ce(1'b1), .ld(eol1), .d(8'd1), .q(hCtr), .tc() );
+counter #(12) u2 (.rst(rst), .clk(dot_clk), .ce(eol1),  .ld(eof1), .d(12'd1), .q(vCtr), .tc() );
+
+always @(posedge dot_clk)
+if (rst)
+	frame_cnt <= 6'd0;
+else begin
+	if (eof)
+		frame_cnt <= frame_cnt + 2'd1;
+end
 
 // Decode modes
 wire int_alpha = iag==1'b0 && iintext==1'b0;
@@ -1159,11 +1198,11 @@ always @(posedge dot_clk)
 	charrom_adr <= charno * 12 + ra;
 
 always @(posedge dot_clk)
-if (rst) begin
+if (rst)
 	ra <= 4'd0;
 else begin
 	if (blank)
-		ra <== 4'd0;
+		ra <= 4'd0;
 	else if (hsync) begin
 		if (ra==4'd11)
 			ra <= 4'd0;
@@ -1227,6 +1266,12 @@ else begin
 	if (char_en)
 		charno <= dispmem_outb;
 end
+
+reg [7:0] char_bitmap, char_bitmap1;
+reg [7:0] bitmap;
+reg L;
+reg c0,c1,c2;
+reg [23:0] border_color, pixel_color;
 
 always @(posedge dot_clk)
 if (rst)
@@ -1401,7 +1446,7 @@ always @(posedge dot_clk)
   blank <= #1 hBlank1|vBlank1;
 always @(posedge dot_clk)
   vblank <= #1 vBlank1;
-always @(posedge cdot_clk)
+always @(posedge dot_clk)
 	hsync <= #1 hSync1;
 always @(posedge dot_clk)
 	vsync <= #1 vSync1;
@@ -1410,10 +1455,7 @@ always @(posedge dot_clk)
 always @(posedge dot_clk)
   eol <= eol1;
 always @(posedge dot_clk)
-  vbl_irq <= hCtr==8'd1 && vCtr==vBlankOn;
-
-always_comb
-	disp_en = ~blank;
+  vbl_irq <= hCtr==8'd1 && vCtr==pvBlankOn;
 
 always_ff @(posedge dot_clk)
 case({blank,border})
