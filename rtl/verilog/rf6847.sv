@@ -45,7 +45,7 @@ module rf6847(rst, clk, dot_clk, css, ag, as, inv, intext, gm0, gm1, gm2,
 	rst_busy, frame_cnt, hsync, vsync, blank, rgb, vbl_irq);
 input rst;
 input clk;							// CPU bus clock
-input dot_clk;					// pixel clock	(40 MHz)
+input dot_clk;					// pixel clock	(20 MHz)
 input css;							// color set select
 input ag;								// alpha(0)/graphics(1)
 input as;								// alpha(0)/semi-graphics(1)
@@ -79,7 +79,7 @@ reg iintext;
 
 reg por;
 reg [15:0] ma,ma2;
-reg [3:0] ra;						// scan line (row address)
+reg [4:0] ra;						// scan line (row address)
 reg [7:0] mem [0:16383];
 reg [7:0] charrom [0:4095];
 reg [7:0] charno;				// character number
@@ -96,9 +96,9 @@ wire [7:0] charrom_outa;
 wire [7:0] charrom_outb;
 wire [26:0] lfsr1_o;
 lfsr27 #(.WID(27)) ulfsr1(rst, dot_clk, 1'b1, 1'b0, lfsr1_o);
-wire [7:0] dispmem_dinb = lfsr1_o[7:0];
+wire [7:0] dispmem_dinb = lfsr1_o[6:0];
 
-reg border;
+reg border,border2;
 wire [11:0] hCtr, vCtr;
 
 always_comb
@@ -110,7 +110,7 @@ always_comb
 always_comb
 	iintext = intext;
 always_comb
-	m_ra = ra;
+	m_ra = ra[4:1];
 always_comb
 	m_adr = ma;
 always_comb
@@ -970,7 +970,7 @@ always_comb
       .MEMORY_INIT_PARAM("0"),        // String
       .MEMORY_OPTIMIZATION("true"),   // String
       .MEMORY_PRIMITIVE("auto"),      // String
-      .MEMORY_SIZE(16*256),           // DECIMAL
+      .MEMORY_SIZE(12*256*8),         // DECIMAL
       .MESSAGE_CONTROL(0),            // DECIMAL
       .READ_DATA_WIDTH_A(8),         // DECIMAL
       .READ_DATA_WIDTH_B(8),         // DECIMAL
@@ -1075,15 +1075,15 @@ always_comb
    // End of xpm_memory_tdpram_inst instantiation
 				
 			
-parameter phSyncOn  = 40;		//   40 front porch
-parameter phSyncOff = 168;		//  128 sync
-parameter phBlankOff = 252;	//256	//   88 back porch
+parameter phSyncOn  = 20;		//   40 front porch
+parameter phSyncOff = 84;		//  128 sync
+parameter phBlankOff = 126;	//256	//   88 back porch
 //parameter phBorderOff = 336;	//   80 border
-parameter phBorderOff = 256;	//   80 border
+parameter phBorderOff = 128;	//   80 border
 //parameter phBorderOn = 976;		//  640 display
-parameter phBorderOn = 1056;		//  800 display
-parameter phBlankOn = 1052;		//   4 border
-parameter phTotal = 1056;		// 1056 total clocks
+parameter phBorderOn = 528;		//  800 display
+parameter phBlankOn = 526;		//   4 border
+parameter phTotal = 528;		// 1056 total clocks
 parameter pvSyncOn  = 1;		//    1 front porch
 parameter pvSyncOff = 5;		//    4 vertical sync
 parameter pvBlankOff = 28;		//   23 back porch
@@ -1094,8 +1094,8 @@ parameter pvBorderOn = 628;		//  600 display
 parameter pvBlankOn = 628;  	//   44 border	0
 parameter pvTotal = 628;		//  628 total scan lines
 
-parameter pleghBorderOff = 396;
-parameter pleghBorderOn = 908;
+parameter pleghBorderOff = 198;
+parameter pleghBorderOn = 454;
 parameter plegvBorderOff = 136;
 parameter plegvBorderOn = 520;
 
@@ -1132,10 +1132,16 @@ end
 else
 	s_dat_o = 8'h00;
 
+reg [7:0] char_bitmap, char_bitmap1;
+reg [7:0] bitmap,bitmap1;
+reg L;
+reg c0,c1,c2;
+reg [23:0] border_color, pixel_color;
+
 reg hBlank1;
 wire vBlank1;
 wire hSync1,vSync1;
-reg hBorder1,vBorder1;
+reg hBorder1,vBorder1,hBorder2;
 reg vblank;
 reg eof;
 reg eol;
@@ -1184,74 +1190,87 @@ else begin
 	ext_alpha,
 	sg4,sg6,
 	cg2,cg3,cg6,rg6:
-		char_en <= hCtr[3:0]==4'd0;
+		char_en <= hCtr[2:0]==3'd0;
 	cg1,rg1,
 	rg2,
 	rg3:
-		char_en <= hCtr[4:0]==5'd0;
-	default:	
 		char_en <= hCtr[3:0]==4'd0;
+	default:	
+		char_en <= hCtr[2:0]==3'd0;
 	endcase
 end
 
 always @(posedge dot_clk)
-	charrom_adr <= charno * 12 + ra;
+if (char_en)
+	charrom_adr <= {8'h00,charno} * 4'd12 + ra[4:1];
 
 always @(posedge dot_clk)
 if (rst)
-	ra <= 4'd0;
+	ra <= 5'd0;
 else begin
-	if (blank)
-		ra <= 4'd0;
-	else if (hsync) begin
-		if (ra==4'd11)
-			ra <= 4'd0;
+	if (vBorder1)
+		ra <= 5'd0;
+	else if (eol) begin
+		if (ra==5'd23)
+			ra <= 5'd0;
 		else
 			ra <= ra + 2'd1;
 	end
 end
 
 // Memory address generation
+// Rescans the same set of addresses each scanline until the number of
+// scanlines needed is reached.
+
 always @(posedge dot_clk)
 if (rst) begin
 	ma <= 16'd0;
 	ma2 <= 16'd0;
 end
 else begin
-	if (hsync) begin
-		ma2 <= ma;
-		case(1'b1)
-		int_alpha,ext_alpha,sg4,sg6:
-			if (ra!=4'd11)
-				ma <= ma2;
-		// 3 scan lines per pixel
-		cg1,rg1,cg2:
-			if (ra!=4'd2 && ra!=4'd5 && ra!=4'd8 && ra != 4'd11)
-				ma <= ma2;
-		// 2 scanline per pixel
-		rg2,cg3:
-			if (ra!=4'd1 && ra!=4'd3 && ra!=4'd5 && ra != 4'd7 && ra!=4'd9 && ra != 4'd11)
-				ma <= ma2;
-		// 1 scanline per pixel
-		default:	;
-		endcase
-	end
-	if (vsync) begin
+	if (eof) begin
 		ma <= 16'd0;
 		ma2 <= 16'd0;
 	end
-	else if ({blank,border}==2'b00 && char_en) begin
+	else if (eol) begin
+		case(1'b1)
+		int_alpha,ext_alpha,sg4,sg6:
+			if (ra!=5'd23)
+				ma <= ma2;
+			else
+				ma2 <= ma;
+		// 3 scan lines per pixel
+		cg1,rg1,cg2:
+			if (ra!=4'd5 && ra!=5'd11 && ra!=5'd17 && ra != 5'd23)
+				ma <= ma2;
+			else
+				ma2 <= ma;
+		// 2 scanline per pixel
+		rg2,cg3:
+			if (ra[1:0]!=2'd3)
+				ma <= ma2;
+			else
+				ma2 <= ma;
+		// 1 scanline per pixel
+		default:
+			if (~ra[0])
+				ma <= ma2;
+			else
+				ma2 <= ma;
+		endcase
+	end
+	else if ({blank,border2}==2'b00 && char_en) begin
 		ma <= ma + 2'd1;
 	end
 end
 
-reg [4:0] cnt,cntd1,cntd2,cntd3;
+reg [3:0] cnt,cntd1,cntd2,cntd3;
 always @(posedge dot_clk)
 if (rst)
-	cnt <= 5'd0;
+	cnt <= 4'd0;
 else begin
 	if (char_en)
-		cnt <= 5'd0;
+		cnt <= 4'd0;
 	else
 		cnt <= cnt + 2'd1;
 end
@@ -1263,15 +1282,8 @@ always @(posedge dot_clk)
 if (rst)
 	charno <= 8'd0;
 else begin
-	if (char_en)
-		charno <= dispmem_outb;
+	charno <= dispmem_outb;
 end
-
-reg [7:0] char_bitmap, char_bitmap1;
-reg [7:0] bitmap;
-reg L;
-reg c0,c1,c2;
-reg [23:0] border_color, pixel_color;
 
 always @(posedge dot_clk)
 if (rst)
@@ -1283,61 +1295,68 @@ end
 always @(posedge dot_clk)
 if (rst)
 	char_bitmap <= 8'd0;
-else
-	char_bitmap <= iinv ? ~char_bitmap1 : char_bitmap1;
+else begin
+	if (char_en)
+		char_bitmap <= iinv ? ~char_bitmap1 : char_bitmap1;
+	else
+		char_bitmap <= char_bitmap << 2'd1;
+end
 
 always @(posedge dot_clk)
 if (rst)
-	bitmap <= 8'd0;
+	bitmap1 <= 8'd0;
 else
-	bitmap <= charno;
+	bitmap1 <= charno;
+always @(posedge dot_clk)
+if (char_en)
+	bitmap <= bitmap1;
 
 always_ff @(posedge dot_clk)
 case (1'b1)
 int_alpha,
 ext_alpha:
-	L <= char_bitmap[cntd3[3:1]];
+	L <= char_bitmap[7];
 sg4:
 	begin
-		case({ra>4'd5,cntd3[3:1]>3'd3})
-		2'b00:	L <= bitmap[2];
-		2'b01:	L <= bitmap[3];
-		2'b10:	L <= bitmap[0];
-		2'b11:	L <= bitmap[1];
+		case({ra>5'd11,cnt[2:0]>3'd3})
+		2'b00:	L <= bitmap[3];
+		2'b01:	L <= bitmap[2];
+		2'b10:	L <= bitmap[1];
+		2'b11:	L <= bitmap[0];
 		endcase
 		{c2,c1,c0} <= bitmap[6:4];
 	end
 sg6:
 	begin
-		case({ra>4'd7,ra>4'd3,cntd3[3:1]>3'd3})
-		3'b000:	L <= bitmap[4];
-		3'b001:	L <= bitmap[5];
-		3'b010:	L <= bitmap[2];
-		3'b011:	L <= bitmap[3];
-		3'b100:	L <= bitmap[0];
-		3'b101:	L <= bitmap[1];
+		case({ra>5'd15,ra>5'd7,cnt[2:0]>3'd3})
+		3'b000:	L <= bitmap[5];
+		3'b001:	L <= bitmap[4];
+		3'b010:	L <= bitmap[3];
+		3'b011:	L <= bitmap[2];
+		3'b100:	L <= bitmap[1];
+		3'b101:	L <= bitmap[0];
 		default:	L <= 1'b0;
 		endcase
 		{c1,c0} <= bitmap[7:6];
 	end
 cg1:
 	begin
-		case(cntd3[4:3])
-		2'd0:	{c1,c0} <= bitmap[1:0];
-		2'd1:	{c1,c0} <= bitmap[3:2];
-		2'd2:	{c1,c0} <= bitmap[5:4];
-		2'd3:	{c1,c0} <= bitmap[7:6];
+		case(cnt[3:2])
+		2'd0:	{c1,c0} <= bitmap[7:6];
+		2'd1:	{c1,c0} <= bitmap[5:4];
+		2'd2:	{c1,c0} <= bitmap[3:2];
+		2'd3:	{c1,c0} <= bitmap[1:0];
 		endcase
 	end
-rg1:	L <= bitmap[cntd3[4:2]];
+rg1:	L <= bitmap[cnt[3:1]];
 cg2,cg3,cg6:
-		case(cntd3[3:2])
-		2'd0:	{c1,c0} <= bitmap[1:0];
-		2'd1:	{c1,c0} <= bitmap[3:2];
-		2'd2:	{c1,c0} <= bitmap[5:4];
-		2'd3:	{c1,c0} <= bitmap[7:6];
+		case(cnt[2:1])
+		2'd0:	{c1,c0} <= bitmap[7:6];
+		2'd1:	{c1,c0} <= bitmap[5:4];
+		2'd2:	{c1,c0} <= bitmap[3:2];
+		2'd3:	{c1,c0} <= bitmap[1:0];
 		endcase
-rg2,rg3,rg6:	L <= bitmap[cntd3[3:1]];
+rg2,rg3,rg6:	L <= bitmap[~cnt[2:0]];
 default:
 	begin
 		L <= 1'b0;
@@ -1439,9 +1458,29 @@ else begin
 	    hBorder1 <= 1'b0;
   end
 end
+always @(posedge dot_clk)
+if (rst)
+  hBorder2 <= 1'b0;
+else begin
+	if (leg) begin
+	  if (hCtr==pleghBorderOn-16)
+	    hBorder2 <= 1'b1;
+	  else if (hCtr==pleghBorderOff-16)
+	    hBorder2 <= 1'b0;
+	end
+	else begin
+	  if (hCtr==phBorderOn-16)
+	    hBorder2 <= 1'b1;
+	  else if (hCtr==phBorderOff-16)
+	    hBorder2 <= 1'b0;
+  end
+end
+
 
 always @(posedge dot_clk)
   border <= #1 hBorder1|vBorder1;
+always @(posedge dot_clk)
+  border2 <= #1 hBorder2|vBorder1;
 always @(posedge dot_clk)
   blank <= #1 hBlank1|vBlank1;
 always @(posedge dot_clk)
