@@ -41,7 +41,7 @@
 import const_pkg::*;
 
 module rf6847(rst, clk, dot_clk, css, ag, as, inv, intext, gm0, gm1, gm2,
-	leg, s_cs, s_rw, s_adr, s_dat_i, s_dat_o, m_charrom_adr, m_dat_i,
+	leg, s_cs, s_rw, s_adr, s_dat_i, s_dat_o, m_adr, m_charrom_adr, m_dat_i,
 	rst_busy, frame_cnt, hsync, vsync, blank, rgb, vbl_irq);
 input rst;
 input clk;							// CPU bus clock
@@ -60,6 +60,7 @@ input s_rw;							// read(1)/write(0)
 input [15:0] s_adr;
 input [7:0] s_dat_i;
 output reg [7:0] s_dat_o;
+output reg [15:0] m_adr;
 output reg [15:0] m_charrom_adr;
 input [7:0] m_dat_i;		// external char ROM input
 output reg rst_busy;		// device is busy resetting
@@ -108,6 +109,8 @@ always_comb
 	ias = as;
 always_comb
 	iintext = intext;
+always_comb
+	m_adr = ma;
 always_comb
 	m_charrom_adr = charrom_adr;
 always_comb
@@ -1115,8 +1118,8 @@ else
 
 reg [7:0] char_bitmap, char_bitmap1;
 reg [7:0] bitmap,bitmap1;
-reg L;
-reg c0,c1,c2;
+wire L;
+wire c0,c1,c2;
 wire [23:0] border_color, pixel_color;
 
 reg hBlank1;
@@ -1264,58 +1267,29 @@ always @(posedge dot_clk)
 if (char_en)
 	bitmap <= bitmap1;
 
-always_ff @(posedge dot_clk)
-case (1'b1)
-int_alpha,
-ext_alpha:
-	L <= char_bitmap[7];
-sg4:
-	begin
-		case({ra>5'd11,dot_cnt[2:0]>3'd3})
-		2'b00:	L <= bitmap[3];
-		2'b01:	L <= bitmap[2];
-		2'b10:	L <= bitmap[1];
-		2'b11:	L <= bitmap[0];
-		endcase
-		{c2,c1,c0} <= bitmap[6:4];
-	end
-sg6:
-	begin
-		case({ra>5'd15,ra>5'd7,dot_cnt[2:0]>3'd3})
-		3'b000:	L <= bitmap[5];
-		3'b001:	L <= bitmap[4];
-		3'b010:	L <= bitmap[3];
-		3'b011:	L <= bitmap[2];
-		3'b100:	L <= bitmap[1];
-		3'b101:	L <= bitmap[0];
-		default:	L <= 1'b0;
-		endcase
-		{c1,c0} <= bitmap[7:6];
-	end
-cg1:
-	begin
-		case(dot_cnt[3:2])
-		2'd0:	{c1,c0} <= bitmap[7:6];
-		2'd1:	{c1,c0} <= bitmap[5:4];
-		2'd2:	{c1,c0} <= bitmap[3:2];
-		2'd3:	{c1,c0} <= bitmap[1:0];
-		endcase
-	end
-rg1:	L <= bitmap[dot_cnt[3:1]];
-cg2,cg3,cg6:
-		case(dot_cnt[2:1])
-		2'd0:	{c1,c0} <= bitmap[7:6];
-		2'd1:	{c1,c0} <= bitmap[5:4];
-		2'd2:	{c1,c0} <= bitmap[3:2];
-		2'd3:	{c1,c0} <= bitmap[1:0];
-		endcase
-rg2,rg3,rg6:	L <= bitmap[~dot_cnt[2:0]];
-default:
-	begin
-		L <= 1'b0;
-		{c2,c1,c0} <= 3'b000;
-	end
-endcase
+rf6847_select_pixel usp1
+(
+	.ra(ra),
+	.dot_cnt(dot_cnt),
+	.css(css),
+	.char_bitmap(char_bitmap),
+	.bitmap(bitmap),
+	.text(int_alpha|ext_alpha),
+	.sg4(sg4),
+	.sg6(sg6),
+	.cg1(cg1),
+	.cg2(cg2),
+	.cg3(cg3),
+	.cg6(cg6),
+	.rg1(rg1),
+	.rg2(rg2),
+	.rg3(rg3),
+	.rg6(rg6),
+	.L(L),
+	.c0(c0),
+	.c1(c1),
+	.c2(c2)
+);
 
 rf6847_select_color usc1
 (
@@ -1568,6 +1542,89 @@ else begin
 	    border <= 1'b0;
   end
 end
+endmodule
+
+// Select pixel from bitmap
+
+module rf6847_select_pixel(ra, dot_cnt, css,
+	char_bitmap, bitmap,
+	text, sg4, sg6, cg1, rg1, cg2, rg2, cg3, rg3, cg6, rg6,
+	L, c0, c1, c2
+);
+input [4:0] ra;
+input [3:0] dot_cnt;
+input css;
+input [7:0] char_bitmap;
+input [7:0] bitmap;
+input text;
+input sg4;
+input sg6;
+input cg1;
+input cg2;
+input cg3;
+input cg6;
+input rg1;
+input rg2;
+input rg3;
+input rg6;
+output reg L;
+output reg c0;
+output reg c1;
+output reg c2;
+
+always_comb
+case (1'b1)
+int_alpha,
+ext_alpha:
+	L <= char_bitmap[7];
+sg4:
+	begin
+		case({ra>5'd11,dot_cnt[2:0]>3'd3})
+		2'b00:	L <= bitmap[3];
+		2'b01:	L <= bitmap[2];
+		2'b10:	L <= bitmap[1];
+		2'b11:	L <= bitmap[0];
+		endcase
+		{c2,c1,c0} <= bitmap[6:4];
+	end
+sg6:
+	begin
+		case({ra>5'd15,ra>5'd7,dot_cnt[2:0]>3'd3})
+		3'b000:	L <= bitmap[5];
+		3'b001:	L <= bitmap[4];
+		3'b010:	L <= bitmap[3];
+		3'b011:	L <= bitmap[2];
+		3'b100:	L <= bitmap[1];
+		3'b101:	L <= bitmap[0];
+		default:	L <= 1'b0;
+		endcase
+		{c1,c0} <= bitmap[7:6];
+	end
+cg1:
+	begin
+		case(dot_cnt[3:2])
+		2'd0:	{c1,c0} <= bitmap[7:6];
+		2'd1:	{c1,c0} <= bitmap[5:4];
+		2'd2:	{c1,c0} <= bitmap[3:2];
+		2'd3:	{c1,c0} <= bitmap[1:0];
+		endcase
+	end
+rg1:	L <= bitmap[dot_cnt[3:1]];
+cg2,cg3,cg6:
+		case(dot_cnt[2:1])
+		2'd0:	{c1,c0} <= bitmap[7:6];
+		2'd1:	{c1,c0} <= bitmap[5:4];
+		2'd2:	{c1,c0} <= bitmap[3:2];
+		2'd3:	{c1,c0} <= bitmap[1:0];
+		endcase
+rg2,rg3,rg6:	L <= bitmap[~dot_cnt[2:0]];
+default:
+	begin
+		L <= 1'b0;
+		{c2,c1,c0} <= 3'b000;
+	end
+endcase
+
 endmodule
 
 // Select color for pixel or border given graphics mode and select bits
