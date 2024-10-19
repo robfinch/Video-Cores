@@ -41,7 +41,7 @@
 import const_pkg::*;
 
 module rf6847(rst, clk, dot_clk, css, ag, as, inv, intext, gm0, gm1, gm2,
-	leg, s_cs, s_rw, s_adr, s_dat_i, s_dat_o, m_ra, m_adr, m_charno, m_dat_i,
+	leg, s_cs, s_rw, s_adr, s_dat_i, s_dat_o, m_charrom_adr, m_dat_i,
 	rst_busy, frame_cnt, hsync, vsync, blank, rgb, vbl_irq);
 input rst;
 input clk;							// CPU bus clock
@@ -60,12 +60,10 @@ input s_rw;							// read(1)/write(0)
 input [15:0] s_adr;
 input [7:0] s_dat_i;
 output reg [7:0] s_dat_o;
-output reg [3:0] m_ra;	// row address
-output reg [15:0] m_adr;
-output reg [7:0] m_charno;
+output reg [15:0] m_charrom_adr;
 input [7:0] m_dat_i;		// external char ROM input
 output reg rst_busy;		// device is busy resetting
-output reg [5:0] frame_cnt;	// frame counter
+output [5:0] frame_cnt;	// frame counter
 output reg hsync;
 output reg vsync;
 output reg blank;
@@ -84,6 +82,7 @@ reg [7:0] mem [0:16383];
 reg [7:0] charrom [0:4095];
 reg [7:0] charno;				// character number
 reg [11:0] charrom_adr;
+reg dots16;
 reg char_en;
 
 wire clka = dot_clk;
@@ -110,11 +109,7 @@ always_comb
 always_comb
 	iintext = intext;
 always_comb
-	m_ra = ra[4:1];
-always_comb
-	m_adr = ma;
-always_comb
-	m_charno = charno;
+	m_charrom_adr = charrom_adr;
 always_comb
 	rst_busy = por;
 
@@ -1099,20 +1094,6 @@ parameter pleghBorderOn = 454;
 parameter plegvBorderOff = 136;
 parameter plegvBorderOn = 520;
 
-// 6847 colors as RGB
-wire [23:0] green = {8'h07, 8'hff, 8'h00};
-wire [23:0] yellow = {8'hff,8'hff,8'h00};
-wire [23:0] blue = {8'h3b,8'h08,8'hff};
-wire [23:0] red = {8'hcc,8'h00,8'h3b};
-wire [23:0] white = {8'hff,8'hff,8'hff};
-wire [23:0] cyan = {8'h07,8'he3,8'h99};
-wire [23:0] magenta = {8'hff, 8'h1c, 8'hff};
-wire [23:0] orange = {8'hff, 8'h81, 8'h00};
-wire [23:0] black = {8'h00, 8'h00, 8'h00};
-wire [23:0] dark_green = {8'h00, 8'h7c, 8'h00};
-wire [23:0] dark_orange = {8'h91,8'h00,8'h00};
-wire [23:0] buff = {8'hff, 8'hff, 8'hff};
-
 always @(posedge dot_clk)
 if (rst)
 	por <= 1'b1;
@@ -1136,7 +1117,7 @@ reg [7:0] char_bitmap, char_bitmap1;
 reg [7:0] bitmap,bitmap1;
 reg L;
 reg c0,c1,c2;
-reg [23:0] border_color, pixel_color;
+wire [23:0] border_color, pixel_color;
 
 reg hBlank1;
 wire vBlank1;
@@ -1155,128 +1136,100 @@ assign vBlank1 = vCtr >= pvBlankOn || vCtr < pvBlankOff;
 assign vBorder1 = leg ? vCtr >= plegvBorderOn || vCtr < plegvBorderOff :
 												vCtr >= pvBorderOn || vCtr < pvBorderOff;
 
-counter #(12) u1 (.rst(rst), .clk(dot_clk), .ce(1'b1), .ld(eol1), .d(8'd1), .q(hCtr), .tc() );
-counter #(12) u2 (.rst(rst), .clk(dot_clk), .ce(eol1),  .ld(eof1), .d(12'd1), .q(vCtr), .tc() );
-
-always @(posedge dot_clk)
-if (rst)
-	frame_cnt <= 6'd0;
-else begin
-	if (eof)
-		frame_cnt <= frame_cnt + 2'd1;
-end
+counter #(12) u1 (.rst(rst), .clk(dot_clk), .ce(1'b1), .ld(eol1), .d(12'd1), .q(hCtr), .tc() );
+counter #(12) u2 (.rst(rst), .clk(dot_clk), .ce(eol1), .ld(eof1), .d(12'd1), .q(vCtr), .tc() );
+counter #(6)  u3 (.rst(rst), .clk(dot_clk), .ce(eof1), .ld(1'b0), .d(6'd1), .q(frame_cnt), .tc() );
 
 // Decode modes
-wire int_alpha = iag==1'b0 && iintext==1'b0;
-wire ext_alpha = iag==1'b0 && iintext==1'b1;
-wire sg4 = iag==1'b0 && ias==1'b1 && iintext==1'b0;
-wire sg6 = iag==1'b0 && ias==1'b1 && iintext==1'b1;
-wire cg1 = iag==1'b1 && {gm2,gm1,gm0}==3'b000;
-wire rg1 = iag==1'b1 && {gm2,gm1,gm0}==3'b001;
-wire cg2 = iag==1'b1 && {gm2,gm1,gm0}==3'b010;
-wire rg2 = iag==1'b1 && {gm2,gm1,gm0}==3'b011;
-wire cg3 = iag==1'b1 && {gm2,gm1,gm0}==3'b100;
-wire rg3 = iag==1'b1 && {gm2,gm1,gm0}==3'b101;
-wire cg6 = iag==1'b1 && {gm2,gm1,gm0}==3'b110;
-wire rg6 = iag==1'b1 && {gm2,gm1,gm0}==3'b111;
 
-// There are 16 or 32 dot clocks per character row.
+wire int_alpha;
+wire ext_alpha;
+wire sg4;
+wire sg6;
+wire cg1;
+wire rg1;
+wire cg2;
+wire rg2;
+wire cg3;
+wire rg3;
+wire cg6;
+wire rg6;
+
+rf6847_mode_decode umd1
+(
+	.clk(clk),
+	.ag(iag),
+	.as(ias),
+	.intext(iintext),
+	.gm0(gm0),
+	.gm1(gm1),
+	.gm2(gm2), 
+	.int_alpha(int_alpha),
+	.ext_alpha(ext_alpha),
+	.sg4(sg4),
+	.sg6(sg6),
+	.cg1(cg1),
+	.cg2(cg2),
+	.cg3(cg3),
+	.cg6(cg6),
+	.rg1(rg1),
+	.rg2(rg2),
+	.rg3(rg3),
+	.rg6(rg6)
+);
+
+// There are 8 or 16 dot clocks per character row.
+
+always_comb
+	dots16 = cg1|rg1|rg2|rg3;
+
 always @(posedge dot_clk)
 if (rst)
 	char_en <= 1'b0;
 else begin
-	case(1'b1)
-	int_alpha,
-	ext_alpha,
-	sg4,sg6,
-	cg2,cg3,cg6,rg6:
-		char_en <= hCtr[2:0]==3'd0;
-	cg1,rg1,
-	rg2,
-	rg3:
-		char_en <= hCtr[3:0]==4'd0;
-	default:	
-		char_en <= hCtr[2:0]==3'd0;
-	endcase
+	if (dots16)
+		char_en <= hCtr[3:0]==4'd15;
+	else	
+		char_en <= hCtr[2:0]==3'd7;
 end
+
+rf6947_row_address_gen ura1
+(
+	.rst(rst),
+	.dot_clk(dot_clk),
+	.eol(eol),
+	.vborder(vBorder1),
+	.ra(ra)
+);
+
+// Memory address generation
+
+rf6847_address_gen uagen1
+(
+	.rst(rst),
+	.dot_clk(dot_clk),
+	.en(char_en),
+	.eol(eol),
+	.eof(eof),
+	.blank(blank),
+	.border(border2),
+	.ra(ra),
+	.text(int_alpha|ext_alpha),
+	.sg(sg4|sg6),
+	.scan3(cg1|rg1|cg2),
+	.scan2(rg2|cg3),
+	.ma(ma)
+);
+
+// Character ROM address generation
 
 always @(posedge dot_clk)
 if (char_en)
 	charrom_adr <= {8'h00,charno} * 4'd12 + ra[4:1];
 
-always @(posedge dot_clk)
-if (rst)
-	ra <= 5'd0;
-else begin
-	if (vBorder1)
-		ra <= 5'd0;
-	else if (eol) begin
-		if (ra==5'd23)
-			ra <= 5'd0;
-		else
-			ra <= ra + 2'd1;
-	end
-end
-
-// Memory address generation
-// Rescans the same set of addresses each scanline until the number of
-// scanlines needed is reached.
-
-always @(posedge dot_clk)
-if (rst) begin
-	ma <= 16'd0;
-	ma2 <= 16'd0;
-end
-else begin
-	if (eof) begin
-		ma <= 16'd0;
-		ma2 <= 16'd0;
-	end
-	else if (eol) begin
-		case(1'b1)
-		int_alpha,ext_alpha,sg4,sg6:
-			if (ra!=5'd23)
-				ma <= ma2;
-			else
-				ma2 <= ma;
-		// 3 scan lines per pixel
-		cg1,rg1,cg2:
-			if (ra!=4'd5 && ra!=5'd11 && ra!=5'd17 && ra != 5'd23)
-				ma <= ma2;
-			else
-				ma2 <= ma;
-		// 2 scanline per pixel
-		rg2,cg3:
-			if (ra[1:0]!=2'd3)
-				ma <= ma2;
-			else
-				ma2 <= ma;
-		// 1 scanline per pixel
-		default:
-			if (~ra[0])
-				ma <= ma2;
-			else
-				ma2 <= ma;
-		endcase
-	end
-	else if ({blank,border2}==2'b00 && char_en) begin
-		ma <= ma + 2'd1;
-	end
-end
-
-reg [3:0] cnt,cntd1,cntd2,cntd3;
-always @(posedge dot_clk)
-if (rst)
-	cnt <= 4'd0;
-else begin
-	if (char_en)
-		cnt <= 4'd0;
-	else
-		cnt <= cnt + 2'd1;
-end
-always @(posedge dot_clk) cntd1 <= cnt;
-always @(posedge dot_clk) cntd2 <= cntd1;
-always @(posedge dot_clk) cntd3 <= cntd2;
+reg [3:0] dot_cnt;
+always_comb
+	dot_cnt = hCtr[3:0];
 
 always @(posedge dot_clk)
 if (rst)
@@ -1318,7 +1271,7 @@ ext_alpha:
 	L <= char_bitmap[7];
 sg4:
 	begin
-		case({ra>5'd11,cnt[2:0]>3'd3})
+		case({ra>5'd11,dot_cnt[2:0]>3'd3})
 		2'b00:	L <= bitmap[3];
 		2'b01:	L <= bitmap[2];
 		2'b10:	L <= bitmap[1];
@@ -1328,7 +1281,7 @@ sg4:
 	end
 sg6:
 	begin
-		case({ra>5'd15,ra>5'd7,cnt[2:0]>3'd3})
+		case({ra>5'd15,ra>5'd7,dot_cnt[2:0]>3'd3})
 		3'b000:	L <= bitmap[5];
 		3'b001:	L <= bitmap[4];
 		3'b010:	L <= bitmap[3];
@@ -1341,22 +1294,22 @@ sg6:
 	end
 cg1:
 	begin
-		case(cnt[3:2])
+		case(dot_cnt[3:2])
 		2'd0:	{c1,c0} <= bitmap[7:6];
 		2'd1:	{c1,c0} <= bitmap[5:4];
 		2'd2:	{c1,c0} <= bitmap[3:2];
 		2'd3:	{c1,c0} <= bitmap[1:0];
 		endcase
 	end
-rg1:	L <= bitmap[cnt[3:1]];
+rg1:	L <= bitmap[dot_cnt[3:1]];
 cg2,cg3,cg6:
-		case(cnt[2:1])
+		case(dot_cnt[2:1])
 		2'd0:	{c1,c0} <= bitmap[7:6];
 		2'd1:	{c1,c0} <= bitmap[5:4];
 		2'd2:	{c1,c0} <= bitmap[3:2];
 		2'd3:	{c1,c0} <= bitmap[1:0];
 		endcase
-rg2,rg3,rg6:	L <= bitmap[~cnt[2:0]];
+rg2,rg3,rg6:	L <= bitmap[~dot_cnt[2:0]];
 default:
 	begin
 		L <= 1'b0;
@@ -1364,72 +1317,22 @@ default:
 	end
 endcase
 
-always_ff @(posedge dot_clk)
-case(1'b1)
-cg1:	border_color = css ? white : green;
-rg1:	border_color = css ? white : green;
-cg2:	border_color = css ? white : green;
-rg2:	border_color = css ? white : green;
-cg3:	border_color = css ? white : green;
-rg3:	border_color = css ? white : green;
-cg6:	border_color = css ? white : green;
-rg6:	border_color = css ? white : green;
-default:	border_color = black;
-endcase
-
-always_ff @(posedge dot_clk)
-case(1'b1)
-int_alpha,
-ext_alpha:
-	case({css,L})
-	2'b00:	pixel_color = black;
-	2'b01:	pixel_color = green;
-	2'b10:	pixel_color = black;
-	2'b11:	pixel_color = orange;
-	endcase
-sg4:
-	case({L,c2,c1,c0})
-	4'b1000:	pixel_color = green;
-	4'b1001:	pixel_color = yellow;
-	4'b1010:	pixel_color = blue;
-	4'b1011:	pixel_color = red;
-	4'b1100:	pixel_color = white;
-	4'b1101:	pixel_color = cyan;
-	4'b1110:	pixel_color = magenta;
-	4'b1111:	pixel_color = orange;
-	default:	pixel_color = black;
-	endcase
-sg6:
-	case({L,css,c1,c0})
-	4'b1000:	pixel_color = green;
-	4'b1001:	pixel_color = yellow;
-	4'b1010:	pixel_color = blue;
-	4'b1011:	pixel_color = red;
-	4'b1100:	pixel_color = white;
-	4'b1101:	pixel_color = cyan;
-	4'b1110:	pixel_color = magenta;
-	4'b1111:	pixel_color = orange;
-	default:	pixel_color = black;
-	endcase
-cg1,cg2,cg3,cg6:
-	case({css,c1,c0})
-	3'b000:	pixel_color = green;
-	3'b001:	pixel_color = yellow;
-	3'b010:	pixel_color = blue;
-	3'b011:	pixel_color = red;
-	3'b100:	pixel_color = white;
-	3'b101:	pixel_color = cyan;
-	3'b110:	pixel_color = magenta;
-	3'b111:	pixel_color = orange;
-	endcase
-rg1,rg2,rg3,rg6:
-	case({css,L})
-	2'b00:	pixel_color = black;
-	2'b01:	pixel_color = white;
-	2'b10:	pixel_color = black;
-	2'b11:	pixel_color = green;
-	endcase
-endcase
+rf6847_select_color usc1
+(
+	.dot_clk(dot_clk),
+	.text(int_alpha|ext_alpha),
+	.sg4(sg4),
+	.sg6(sg6),
+	.cg(cg1|cg2|cg3|cg6),
+	.rg(rg1|rg2|rg3|rg6),
+	.css(css),
+	.L(L),
+	.c2(c2),
+	.c1(c1),
+	.c0(c0),
+	.pixel_color(pixel_color),
+	.border_color(border_color)
+);
 
 always @(posedge dot_clk)
 if (rst)
@@ -1441,41 +1344,34 @@ else begin
     hBlank1 <= 1'b0;
 end
 
-always @(posedge dot_clk)
-if (rst)
-  hBorder1 <= 1'b0;
-else begin
-	if (leg) begin
-	  if (hCtr==pleghBorderOn)
-	    hBorder1 <= 1'b1;
-	  else if (hCtr==pleghBorderOff)
-	    hBorder1 <= 1'b0;
-	end
-	else begin
-	  if (hCtr==phBorderOn)
-	    hBorder1 <= 1'b1;
-	  else if (hCtr==phBorderOff)
-	    hBorder1 <= 1'b0;
-  end
-end
-always @(posedge dot_clk)
-if (rst)
-  hBorder2 <= 1'b0;
-else begin
-	if (leg) begin
-	  if (hCtr==pleghBorderOn-16)
-	    hBorder2 <= 1'b1;
-	  else if (hCtr==pleghBorderOff-16)
-	    hBorder2 <= 1'b0;
-	end
-	else begin
-	  if (hCtr==phBorderOn-16)
-	    hBorder2 <= 1'b1;
-	  else if (hCtr==phBorderOff-16)
-	    hBorder2 <= 1'b0;
-  end
-end
+rf6847_hborder uhb1
+(
+	.rst(rst),
+	.dot_clk(dot_clk),
+	.leg(leg),
+	.hCtr(hCtr), 
+	.leg_border_on(pleghBorderOn+4'd2),
+	.leg_border_off(pleghBorderOff+4'd2),
+	.border_on(phBorderOn+4'd2),
+	.border_off(phBorderOff+4'd2),
+	.border(hBorder1)
+);
 
+rf6847_hborder uhb2
+(
+	.rst(rst),
+	.dot_clk(dot_clk),
+	.leg(leg),
+	.hCtr(hCtr), 
+	.leg_border_on(pleghBorderOn-(dots16 ? 6'd48 : 6'd24)),
+	.leg_border_off(pleghBorderOff-(dots16 ? 6'd48 : 6'd24)),
+	.border_on(phBorderOn-(dots16 ? 6'd48 : 6'd24)),
+	.border_off(phBorderOff-(dots16 ? 6'd48 : 6'd24)),
+	.border(hBorder2)
+);
+
+// Output stage
+// Register signals.
 
 always @(posedge dot_clk)
   border <= #1 hBorder1|vBorder1;
@@ -1498,10 +1394,274 @@ always @(posedge dot_clk)
 
 always_ff @(posedge dot_clk)
 case({blank,border})
-2'b00:	rgb = pixel_color;//{pixel_color[23:22],pixel_color[15:14],pixel_color[7:6]};
-2'b01:	rgb = border_color;//{border_color[23:22],border_color[15:14],border_color[7:6]};
+2'b00:	rgb = pixel_color;
+2'b01:	rgb = border_color;
 2'b10:	rgb = 6'd0;
 2'b11:	rgb = 6'd0;
+endcase
+
+endmodule
+
+module rf6847_mode_decode(clk,
+	ag, as, intext, gm0, gm1, gm2, 
+	int_alpha, ext_alpha, sg4, sg6, cg1, cg2, cg3, cg6,
+	rg1, rg2, rg3, rg6
+);
+input clk;
+input ag;
+input as;
+input intext;
+input gm0;
+input gm1;
+input gm2;
+output reg int_alpha;
+output reg ext_alpha;
+output reg sg4;
+output reg sg6;
+output reg cg1;
+output reg cg2;
+output reg cg3;
+output reg cg6;
+output reg rg1;
+output reg rg2;
+output reg rg3;
+output reg rg6;
+
+always_ff @(posedge clk)
+begin
+	int_alpha <= ag==1'b0 && intext==1'b0;
+	ext_alpha <= ag==1'b0 && intext==1'b1;
+	sg4 <= ag==1'b0 && as==1'b1 && intext==1'b0;
+	sg6 <= ag==1'b0 && as==1'b1 && intext==1'b1;
+	cg1 <= ag==1'b1 && {gm2,gm1,gm0}==3'b000;
+	rg1 <= ag==1'b1 && {gm2,gm1,gm0}==3'b001;
+	cg2 <= ag==1'b1 && {gm2,gm1,gm0}==3'b010;
+	rg2 <= ag==1'b1 && {gm2,gm1,gm0}==3'b011;
+	cg3 <= ag==1'b1 && {gm2,gm1,gm0}==3'b100;
+	rg3 <= ag==1'b1 && {gm2,gm1,gm0}==3'b101;
+	cg6 <= ag==1'b1 && {gm2,gm1,gm0}==3'b110;
+	rg6 <= ag==1'b1 && {gm2,gm1,gm0}==3'b111;
+end
+
+endmodule
+
+// Character row address generation
+
+module rf6947_row_address_gen(rst, dot_clk, eol, vborder, ra);
+input rst;
+input dot_clk;
+input eol;
+input vborder;
+output reg [4:0] ra;
+
+always @(posedge dot_clk)
+if (rst)
+	ra <= 5'd0;
+else begin
+	if (vborder)
+		ra <= 5'd0;
+	else if (eol) begin
+		if (ra==5'd23)
+			ra <= 5'd0;
+		else
+			ra <= ra + 2'd1;
+	end
+end
+
+endmodule
+
+// Memory address generation
+// Rescans the same set of addresses each scanline until the number of
+// scanlines needed is reached.
+// Note the border signal is three character times in advance of the displayed
+// border to account for the pipeline.
+
+module rf6847_address_gen(rst, dot_clk, en, eol, eof, blank, border,
+	ra, text, sg, scan3, scan2, ma);
+input rst;
+input dot_clk;
+input en;
+input eol;
+input eof;
+input blank;
+input border;
+input [4:0] ra;
+input text;
+input sg;
+input scan3;
+input scan2;
+output reg [15:0] ma;
+
+reg [15:0] ma2;
+
+always @(posedge dot_clk)
+if (rst) begin
+	ma <= 16'd0;
+	ma2 <= 16'd0;
+end
+else begin
+	if (eof) begin
+		ma <= 16'd0;
+		ma2 <= 16'd0;
+	end
+	else if (eol) begin
+		case(1'b1)
+		text,sg:
+			if (ra!=5'd23)
+				ma <= ma2;
+			else
+				ma2 <= ma;
+		// 3 scan lines per pixel
+		scan3:
+			if (ra!=4'd5 && ra!=5'd11 && ra!=5'd17 && ra != 5'd23)
+				ma <= ma2;
+			else
+				ma2 <= ma;
+		// 2 scanline per pixel
+		scan2:
+			if (ra[1:0]!=2'd3)
+				ma <= ma2;
+			else
+				ma2 <= ma;
+		// 1 scanline per pixel
+		default:
+			if (~ra[0])
+				ma <= ma2;
+			else
+				ma2 <= ma;
+		endcase
+	end
+	else if ({blank,border}==2'b00 && en) begin
+		ma <= ma + 2'd1;
+	end
+end
+endmodule
+
+// Horizontal border timing
+
+module rf6847_hborder(rst, dot_clk, leg, hCtr, 
+	leg_border_on, leg_border_off, border_on, border_off, border);
+input rst;
+input dot_clk;
+input leg;
+input [11:0] hCtr;
+input [11:0] leg_border_on;
+input [11:0] leg_border_off;
+input [11:0] border_on;
+input [11:0] border_off;
+output reg border;
+
+always @(posedge dot_clk)
+if (rst)
+  border <= 1'b0;
+else begin
+	if (leg) begin
+	  if (hCtr==leg_border_on)
+	    border <= 1'b1;
+	  else if (hCtr==leg_border_off)
+	    border <= 1'b0;
+	end
+	else begin
+	  if (hCtr==border_on)
+	    border <= 1'b1;
+	  else if (hCtr==border_off)
+	    border <= 1'b0;
+  end
+end
+endmodule
+
+// Select color for pixel or border given graphics mode and select bits
+
+module rf6847_select_color (dot_clk,
+	text, sg4, sg6, cg, rg,
+	css, L, c2, c1, c0, pixel_color, border_color
+);
+input dot_clk;
+input text;
+input sg4;
+input sg6;
+input cg;
+input rg;
+input css;
+input L;
+input c2;
+input c1;
+input c0;
+output reg [23:0] pixel_color;
+output reg [23:0] border_color;
+
+// 6847 colors as RGB
+wire [23:0] green = {8'h07, 8'hff, 8'h00};
+wire [23:0] yellow = {8'hff,8'hff,8'h00};
+wire [23:0] blue = {8'h3b,8'h08,8'hff};
+wire [23:0] red = {8'hcc,8'h00,8'h3b};
+wire [23:0] white = {8'hff,8'hff,8'hff};
+wire [23:0] cyan = {8'h07,8'he3,8'h99};
+wire [23:0] magenta = {8'hff, 8'h1c, 8'hff};
+wire [23:0] orange = {8'hff, 8'h81, 8'h00};
+wire [23:0] black = {8'h00, 8'h00, 8'h00};
+wire [23:0] dark_green = {8'h00, 8'h7c, 8'h00};
+wire [23:0] dark_orange = {8'h91,8'h00,8'h00};
+wire [23:0] buff = {8'hff, 8'hff, 8'hff};
+
+always_ff @(posedge dot_clk)
+case(1'b1)
+text:
+	case({css,L})
+	2'b00:	pixel_color <= black;
+	2'b01:	pixel_color <= green;
+	2'b10:	pixel_color <= black;
+	2'b11:	pixel_color <= orange;
+	endcase
+sg4:
+	case({L,c2,c1,c0})
+	4'b1000:	pixel_color <= green;
+	4'b1001:	pixel_color <= yellow;
+	4'b1010:	pixel_color <= blue;
+	4'b1011:	pixel_color <= red;
+	4'b1100:	pixel_color <= white;
+	4'b1101:	pixel_color <= cyan;
+	4'b1110:	pixel_color <= magenta;
+	4'b1111:	pixel_color <= orange;
+	default:	pixel_color <= black;
+	endcase
+sg6:
+	case({L,css,c1,c0})
+	4'b1000:	pixel_color <= green;
+	4'b1001:	pixel_color <= yellow;
+	4'b1010:	pixel_color <= blue;
+	4'b1011:	pixel_color <= red;
+	4'b1100:	pixel_color <= white;
+	4'b1101:	pixel_color <= cyan;
+	4'b1110:	pixel_color <= magenta;
+	4'b1111:	pixel_color <= orange;
+	default:	pixel_color <= black;
+	endcase
+cg:
+	case({css,c1,c0})
+	3'b000:	pixel_color <= green;
+	3'b001:	pixel_color <= yellow;
+	3'b010:	pixel_color <= blue;
+	3'b011:	pixel_color <= red;
+	3'b100:	pixel_color <= white;
+	3'b101:	pixel_color <= cyan;
+	3'b110:	pixel_color <= magenta;
+	3'b111:	pixel_color <= orange;
+	endcase
+rg:
+	case({css,L})
+	2'b00:	pixel_color <= black;
+	2'b01:	pixel_color <= white;
+	2'b10:	pixel_color <= black;
+	2'b11:	pixel_color <= green;
+	endcase
+endcase
+
+always_ff @(posedge dot_clk)
+case(1'b1)
+cg:	border_color <= css ? white : green;
+rg:	border_color <= css ? white : green;
+default:	border_color <= black;
 endcase
 
 endmodule
