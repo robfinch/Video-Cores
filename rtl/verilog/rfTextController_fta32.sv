@@ -1,3 +1,4 @@
+`timescale 1ns / 1ps
 // ============================================================================
 //        __
 //   \\__/ o\    (C) 2006-2024  Robert Finch, Waterloo
@@ -53,9 +54,9 @@
 //  The controller expects a 256kB memory region to be reserved.
 //
 //  Memory Map:
-//  00000-3FFFF   display ram
-//  40000-7FFFF   character bitmap ram
-//  80000-800FF   controller registers
+//  00000-0FFFF   display ram (64kB)
+//  10000-13FFF   character bitmap ram (16kB)
+//  1FF00-1FFFF   controller registers
 //
 //--------------------------------------------------------------------
 // Registers
@@ -105,29 +106,32 @@
 //  31- 0   nnnnnnnn nnnnnnnn  font ram lock "LOCK" or "UNLK"
 //--------------------------------------------------------------------
 //
-// 1209 LUTs / 1003 FFs / 48 BRAMs / 1 DSP
+// 1209 LUTs / 1003 FFs / 12 BRAMs / 1 DSP
 // ============================================================================
 
+`define VGA_800x600	1
 //`define USE_CLOCK_GATE
 //`define SUPPORT_AAM	1
 import fta_bus_pkg::*;
 
-module rfTextController_fta32(
-	rst_i, clk_i, cs_config_i, cs_io_i, req, resp,
-	dot_clk_i, hsync_i, vsync_i, blank_i, border_i, zrgb_i, zrgb_o, xonoff_i
+module rfTextController_fta32 (
+	rst_i, clk_i, cs_config_i, req, resp,
+	dot_clk_i, hsync_i, vsync_i, blank_i, border_i, zrgb_i, zrgb_o, xonoff_i,
+	hsync_o, vsync_o, blank_o, border_o
 );
 parameter num = 4'd1;
 parameter COLS = 8'd64;
 parameter ROWS = 8'd32;
-parameter BUSWID = 64;
+parameter BUSWID = 32;
 parameter TEXT_CELL_COUNT = 8192;
+parameter INTERNAL_SYNCGEN = 1;
 
 parameter RAM_ADDR = 32'hFEC00001;
-parameter CBM_ADDR = 32'hFEC40001;
-parameter REG_ADDR = 32'hFEC80001;
-parameter RAM_ADDR_MASK = 32'h00FC0000;
-parameter CBM_ADDR_MASK = 32'h00FC0000;
-parameter REG_ADDR_MASK = 32'h00FF0000;
+parameter CBM_ADDR = 32'hFEC10001;
+parameter REG_ADDR = 32'hFEC1FF01;
+parameter RAM_ADDR_MASK = 32'hFFFF0000;
+parameter CBM_ADDR_MASK = 32'hFFFF0000;
+parameter REG_ADDR_MASK = 32'hFFFFFF00;
 
 parameter CFG_BUS = 8'd0;
 parameter CFG_DEVICE = 5'd1;
@@ -149,16 +153,59 @@ parameter CFG_IRQ_LINE = 8'hFF;
 
 parameter ASYNCH = 1'b1;
 
+`ifdef VGA_800x600
+parameter phSyncOn  = 40;		//   40 front porch
+parameter phSyncOff = 168;		//  128 sync
+parameter phBlankOff = 252;	//256	//   88 back porch
+//parameter phBorderOff = 336;	//   80 border
+parameter phBorderOff = 256;	//   80 border
+//parameter phBorderOn = 976;		//  640 display
+parameter phBorderOn = 1056;		//  800 display
+parameter phBlankOn = 1052;		//   4 border
+parameter phTotal = 1056;		// 1056 total clocks
+parameter pvSyncOn  = 1;		//    1 front porch
+parameter pvSyncOff = 5;		//    4 vertical sync
+parameter pvBlankOff = 28;		//   23 back porch
+parameter pvBorderOff = 28;		//   44 border	0
+//parameter pvBorderOff = 72;		//   44 border	0
+parameter pvBorderOn = 628;		//  600 display
+//parameter pvBorderOn = 584;		//  512 display
+parameter pvBlankOn = 628;  	//   44 border	0
+parameter pvTotal = 628;		//  628 total scan lines
+`endif
+
+`ifdef WXGA_1366x768
+// Needs 
+//	Input clock:     85.86 MHz/4 (50 MHz * 12/7) (85.7142)/4
+//	Input clock:     21.4286 MHz (100 MHz * 3/14)
+//	Horizontal freq: 47.7 kHz	(generated) (47.619KHz)
+//	Vertical freq:   60.00  Hz (generated)  (59.89 Hz)
+parameter phSyncOn  = 18;		//   72 front porch
+parameter phSyncOff = 54;		//  144 sync
+parameter phBlankOff = 107;		//  212 back porch
+parameter phBorderOff = 119;	//    0 border
+parameter phBorderOn = 439;	// 1366 display
+parameter phBlankOn = 450;		//    0 border
+parameter phTotal = 450;		// 1800 total clocks
+// 47.7 = 60 * 795 kHz
+parameter pvSyncOn  = 2;		//    1 front porch
+parameter pvSyncOff = 5;		//    3 vertical sync
+parameter pvBlankOff = 27;		//   23 back porch
+parameter pvBorderOff = 27;		//    2 border	0
+parameter pvBorderOn = 795;		//  768 display
+parameter pvBlankOn = 795;  	//    1 border	0
+parameter pvTotal = 795;		//  795 total scan lines
+
+`endif
+
 localparam CFG_HEADER_TYPE = 8'h00;			// 00 = a general device
 
 // Syscon
 input  rst_i;			// reset
 input  clk_i;			// clock
 
-input cs_config_i;
-input cs_io_i;
-
 // Slave signals
+input cs_config_i;
 input fta_cmd_request32_t req;
 output fta_cmd_response32_t resp;
 
@@ -170,15 +217,22 @@ input blank_i;			// blanking signal
 input border_i;			// border area
 input [31:0] zrgb_i;		// input pixel stream
 output reg [31:0] zrgb_o;	// output pixel stream
+
+output reg hsync_o;
+output reg vsync_o;
+output reg blank_o;
+output reg border_o;
+
 input xonoff_i;
 
 integer n2,n3;
 
-assign resp.next = 1'b0;
-assign resp.stall = 1'b0;
-assign resp.err = fta_bus_pkg::OKAY;
-assign resp.rty = 1'b0;
-assign resp.pri = 4'd7;
+fta_cmd_response32_t resp1;
+assign resp1.next = 1'b0;
+assign resp1.stall = 1'b0;
+assign resp1.err = fta_bus_pkg::OKAY;
+assign resp1.rty = 1'b0;
+assign resp1.pri = 4'd7;
 
 reg controller_enable;
 reg [31:0] bkColor40, bkColor40d, bkColor40d2, bkColor40d3;	// background color
@@ -189,6 +243,9 @@ wire [1:0] pix;				// pixel value from character generator 1=on,0=off
 reg por;
 wire vclk;
 
+reg cs_config;
+fta_cmd_request32_t cfg_req;
+fta_cmd_response32_t cfg_resp;
 reg [31:0] rego;
 reg [5:0] yscroll;
 reg [5:0] xscroll;
@@ -261,7 +318,6 @@ endfunction
 // I/O range Dx
 //--------------------------------------------------------------------
 // Register the inputs
-reg cs_config;
 reg cs_rom, cs_reg, cs_text, cs_any;
 reg cs_rom1, cs_reg1, cs_text1;
 reg erc;
@@ -277,11 +333,15 @@ reg [31:0] tc_reg_addr;
 wire ack;
 
 always_ff @(posedge clk_i)
+	cs_config <= cs_config_i;
+always_ff @(posedge clk_i)
 	erc <= req.cti==fta_bus_pkg::ERC;
 always_ff @(posedge clk_i)
-	cs_any <= req.cyc & req.stb & cs_io_i;
-always_ff @(posedge clk_i)
-	cs_config <= req.cyc & req.stb & cs_config_i && req.padr[27:20]==CFG_BUS && req.padr[19:15]==CFG_DEVICE && req.padr[14:12]==CFG_FUNC;
+begin
+	cfg_req.cyc <= FALSE;
+	if (req.cyc)
+		cfg_req <= req;
+end
 always_comb
 	cs_rom1 <= cs_rom2;
 always_comb
@@ -289,11 +349,11 @@ always_comb
 always_comb
 	cs_text1 <= cs_text2;
 always_comb
-	cs_rom <= cs_rom1 && cs_any;
+	cs_rom <= cs_rom1 & ~cs_reg1;
 always_comb
-	cs_reg <= cs_reg1 && cs_any;
+	cs_reg <= cs_reg1;
 always_comb
-	cs_text <= cs_text1 && cs_any;
+	cs_text <= cs_text1;
 always_ff @(posedge clk_i)
 	wrs_i <= (BUSWID==64) ? {8{req.we}} & req.sel :
 		req.padr[2] ? {{4{req.we}} & req.sel,4'h0} : {4'h0,{4{req.we}} & req.sel};
@@ -309,16 +369,17 @@ always_ff @(posedge clk_i)
 // Register outputs
 always_ff @(posedge clk_i)
 if (ack) begin
-	casez({cs_config,cs_rom,cs_reg,cs_text})
-	4'b1???:	resp.dat <= cfg_out;
-	4'b01??:	resp.dat <= chdat_o;
-	4'b001?:	resp.dat <= rego;
-	4'b0001:	resp.dat <= tdat_o;
-	default:	resp.dat <= 'h0;
+	casez({cs_rom,cs_reg,cs_text})
+	3'b1??:	resp1.dat <= chdat_o;
+	3'b01?:	resp1.dat <= rego;
+	3'b001:	resp1.dat <= tdat_o;
+	default:	;//resp1.dat <= {$bits(fta_cmd_response32_t){1'b0}};
 	endcase
 end
 else
-	resp.dat <= 'd0;
+	resp1.dat <= {$bits(fta_cmd_response32_t){1'b0}};
+
+assign resp = cfg_resp.ack ? cfg_resp : resp1;
 
 //always @(posedge clk_i)
 //	if (cs_text) begin
@@ -331,17 +392,17 @@ else
 // - writes can be acknowledged right away. If not recording errors no need to
 //   ack a write
 
-vtdl #(.WID(1), .DEP(16)) urdyd1 (.clk(clk_i), .ce(1'b1), .a(4'd3), .d(cs_any|cs_config), .q(ack));
-vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(clk_i), .ce(1'b1), .a(4'd4), .d((cs_any|cs_config)&(erc|~rwr_i)), .q(resp.ack));
+vtdl #(.WID(1), .DEP(16)) urdyd1 (.clk(clk_i), .ce(1'b1), .a(4'd3), .d(cs_rom|cs_reg|cs_text), .q(ack));
+vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(clk_i), .ce(1'b1), .a(4'd4), .d((cs_rom|cs_reg|cs_text)&(erc|~rwr_i)), .q(resp1.ack));
 //vtdl #(.WID(6), .DEP(16)) urdyd3 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req.cid), .q(resp.cid));
-vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req.tid), .q(resp.tid));
-vtdl #(.WID($bits(fta_address_t)), .DEP(16)) urdyd5 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req.padr), .q(resp.adr));
+vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req.tid), .q(resp1.tid));
+vtdl #(.WID($bits(fta_address_t)), .DEP(16)) urdyd5 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req.padr), .q(resp1.adr));
 
 //--------------------------------------------------------------------
 // config
 //--------------------------------------------------------------------
 
-pci64_config #(
+ddbb32_config #(
 	.CFG_BUS(CFG_BUS),
 	.CFG_DEVICE(CFG_DEVICE),
 	.CFG_FUNC(CFG_FUNC),
@@ -362,25 +423,19 @@ pci64_config #(
 	.CFG_CLASS(CFG_CLASS),
 	.CFG_CACHE_LINE_SIZE(CFG_CACHE_LINE_SIZE),
 	.CFG_MIN_GRANT(CFG_MIN_GRANT),
-	.CFG_MAX_LATENCY(CFG_MAX_LATENCY),
-	.CFG_IRQ_LINE(CFG_IRQ_LINE)
+	.CFG_MAX_LATENCY(CFG_MAX_LATENCY)
 )
 ucfg1
 (
 	.rst_i(rst_i),
 	.clk_i(clk_i),
+	.cs_i(cs_config),
 	.irq_i(1'b0),
-	.irq_o(),
-	.cs_config_i(cs_config), 
-	.we_i(rwr_i),
-	.sel_i(rsel_i),
-	.adr_i(radr_i),
-	.dat_i(rdat_i),
-	.dat_o(cfg_out),
+	.req_i(cfg_req),
+	.resp_o(cfg_resp),
 	.cs_bar0_o(cs_text2),
 	.cs_bar1_o(cs_rom2),
-	.cs_bar2_o(cs_reg2),
-	.irq_en_o()
+	.cs_bar2_o(cs_reg2)
 );
 
 //--------------------------------------------------------------------
@@ -453,25 +508,7 @@ regReadbackMem32 #(.WID(8)) rrm1H
 
 wire [26:0] lfsr1_o;
 lfsr27 #(.WID(27)) ulfsr1(rst_i, dot_clk_i, 1'b1, 1'b0, lfsr1_o);
-wire [63:0] lfsr_o = {6'h10,
-												lfsr1_o[26:24],4'b0,lfsr1_o[23:21],4'b0,lfsr1_o[20:18],4'b0,
-												lfsr1_o[17:15],4'b0,lfsr1_o[14:12],4'b0,lfsr1_o[11:9],4'b0,
-												7'h00,lfsr1_o[8:0]
-										};
-wire [63:0] lfsr_o2 = {6'h10,
-//												lfsr1_o[26:24],4'b0,lfsr1_o[23:21],4'b0,lfsr1_o[20:18],4'b0,
-//												lfsr1_o[17:15],4'b0,lfsr1_o[14:12],4'b0,lfsr1_o[11:9],4'b0,
-												4'b0,lfsr1_o[26:24],4'b0,lfsr1_o[23:21],lfsr1_o[20:18],4'b0,
-												4'b0,lfsr1_o[17:15],4'b0,lfsr1_o[14:12],lfsr1_o[11:9],4'b0,
-												7'h00,lfsr1_o[8:0]
-										};
-wire [63:0] lfsr_o1 = {lfsr1_o[3:0],2'b00,
-//												lfsr1_o[26:24],4'b0,lfsr1_o[23:21],4'b0,lfsr1_o[20:18],4'b0,
-//												lfsr1_o[17:15],4'b0,lfsr1_o[14:12],4'b0,lfsr1_o[11:9],4'b0,
-												4'b0,lfsr1_o[26:24],4'b0,lfsr1_o[23:21],lfsr1_o[20:18],4'b0,
-												4'b0,lfsr1_o[17:15],lfsr1_o[14:12],4'b0,4'b0,lfsr1_o[11:9],
-												7'h00,lfsr1_o[8:0]
-										};
+wire [31:0] lfsr_o = {6'h10,2'b00,lfsr1_o[23:16],lfsr1_o[15:8],lfsr1_o[7:0]};
 
 /* This snippit of code for performing burst accesses, under construction.
 wire pe_cs;
@@ -500,7 +537,7 @@ always @(posedge clk_i)
 // text screen RAM
 //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 rfTextScreenRam32 #(
-	.TEXT_CELL_COUNT(TEXT_CELL_COUNT)
+	.TEXT_CELL_COUNT(TEXT_CELL_COUNT)	// 32kB
 )
 screen_ram1
 (
@@ -521,8 +558,8 @@ screen_ram1
 );
 
 //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-// Character bitmap RAM
-// - room for 8160 8x8 characters
+// Character bitmap RAM (16kB)
+// - room for 455 12x18 characters
 //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 wire [63:0] char_bmp;		// character ROM output
 
@@ -538,7 +575,7 @@ rfTextCharRam32 charRam0
 	.dot_clk_i(vclk),
 	.ce_i(ld_shft),
 	.fontAddress_i(fontAddress),
-	.char_code_i(screen_ram_out[11:0]),
+	.char_code_i({1'd0,txtAddr[12:0]}),//{2'h0,screen_ram_out[25:24],screen_ram_out[7:0]}),
 	.maxScanpix_i(maxScanpix),
 	.maxscanline_i(maxScanlinePlusOne),
 	.scanline_i(rowscan[5:0]),
@@ -550,11 +587,11 @@ reg [23:0] txtBkCode1;
 reg [23:0] txtFgCode1;
 reg [5:0] txtZorder1;
 always_ff @(posedge vclk)
-	if (ld_shft) txtBkCode1 <= {screen_ram_out[20:18],4'b0,screen_ram_out[17:15],4'b0,screen_ram_out[14:12],4'b0};
+	if (ld_shft) txtBkCode1 <= {screen_ram_out[15:13],5'b0,screen_ram_out[12:10],5'b0,screen_ram_out[9:8],6'b0};
 always_ff @(posedge vclk)
-	if (ld_shft) txtFgCode1 <= {screen_ram_out[29:27],4'b0,screen_ram_out[26:24],4'b0,screen_ram_out[23:21],4'b0};
+	if (ld_shft) txtFgCode1 <= {screen_ram_out[23:21],5'b0,screen_ram_out[20:18],5'b0,screen_ram_out[17:16],6'b0};
 always_ff @(posedge vclk)
-	if (ld_shft) txtZorder1 <= 'd0;
+	if (ld_shft) txtZorder1 <= 6'd0;
 
 //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // Register read port
@@ -581,7 +618,7 @@ always_ff @(posedge clk_i)
     txtTcCode    <= 24'h1ff;
     bdrColor     <= 32'hFFBF2020;
     startAddress <= 16'h0000;
-    fontAddress  <= 16'h0008;
+    fontAddress  <= 16'h0000;
     font_locked  <= 1'b1;
     fontAscent   <= 6'd12;
     cursorStart  <= 5'd00;
@@ -808,7 +845,7 @@ edge_det edh1
 	.rst(rst_i),
 	.clk(vclk),
 	.ce(1'b1),
-	.i(hsync_i),
+	.i(hsync_o),
 	.pe(pe_hsync),
 	.ne(),
 	.ee()
@@ -819,7 +856,7 @@ edge_det edv1
 	.rst(rst_i),
 	.clk(vclk),
 	.ce(1'b1),
-	.i(vsync_i),
+	.i(vsync_o),
 	.pe(pe_vsync),
 	.ne(),
 	.ee()
@@ -1065,7 +1102,7 @@ endfunction
 // Note the ungated dot clock must be used here, or output from other
 // controllers would not be visible if the clock were gated off.
 always_ff @(posedge dot_clk_i)
-	casez({controller_enable&xonoff_i,blank_i,iblank,border_i,bpix,mcm,aam,pix})
+	casez({controller_enable&xonoff_i,blank_o,iblank,border_o,bpix,mcm,aam,pix})
 	9'b01???????:	zrgb_o <= zrgb_i;
 	9'b11???????:	zrgb_o <= 32'h00000000;
 	9'b1001?????:	zrgb_o <= {2'b0,bdrColor[23:16],2'b0,bdrColor[15:8],2'b0,bdrColor[7:0],2'b0};
@@ -1082,5 +1119,103 @@ always_ff @(posedge dot_clk_i)
 	default:	zrgb_o <= zrgb_i;
 	endcase
 
+// ----------------------------------------------------------------------------
+// SYNC generator
+// ----------------------------------------------------------------------------
+
+generate begin : gSyncgen
+if (INTERNAL_SYNCGEN) begin
+
+wire dot_clk = dot_clk_i;
+wire [11:0] hCtr, vCtr;
+reg hBlank1;
+wire vBlank1;
+wire hSync1,vSync1;
+reg hBorder1,vBorder1,hBorder2;
+reg vblank;
+reg eof;
+reg eol;
+
+wire eol1 = hCtr==phTotal;
+wire eof1 = vCtr==pvTotal;
+
+assign vSync1 = vCtr >= pvSyncOn && vCtr < pvSyncOff;
+assign hSync1 = hCtr >= phSyncOn && hCtr < phSyncOff;
+assign vBlank1 = vCtr >= pvBlankOn || vCtr < pvBlankOff;
+assign vBorder1 = vCtr >= pvBorderOn || vCtr < pvBorderOff;
+
+counter #(12) u1syncgen (.rst(rst), .clk(dot_clk), .ce(1'b1), .ld(eol1), .d(12'd1), .q(hCtr), .tc() );
+counter #(12) u2syncgen (.rst(rst), .clk(dot_clk), .ce(eol1), .ld(eof1), .d(12'd1), .q(vCtr), .tc() );
+counter #(6)  u3syncgen (.rst(rst), .clk(dot_clk), .ce(eof1), .ld(1'b0), .d(6'd1), .q(frame_cnt), .tc() );
+
+always @(posedge dot_clk)
+if (rst)
+  hBlank1 <= 1'b0;
+else begin
+  if (hCtr==phBlankOn)
+    hBlank1 <= 1'b1;
+  else if (hCtr==phBlankOff)
+    hBlank1 <= 1'b0;
+end
+
+modHborder u4syncgen
+(
+	.rst(rst),
+	.dot_clk(dot_clk),
+	.hCtr(hCtr), 
+	.border_on(phBorderOn),
+	.border_off(phBorderOff),
+	.border(hBorder1)
+);
+
+// Register signals.
+
+always @(posedge dot_clk_i)
+  border_o <= #1 hBorder1|vBorder1;
+always @(posedge dot_clk_i)
+  blank_o <= #1 hBlank1|vBlank1;
+always @(posedge dot_clk_i)
+  vblank <= #1 vBlank1;
+always @(posedge dot_clk_i)
+	hsync_o <= #1 hSync1;
+always @(posedge dot_clk_i)
+	vsync_o <= #1 vSync1;
+always @(posedge dot_clk_i)
+  eof <= eof1;
+always @(posedge dot_clk_i)
+  eol <= eol1;
+//always @(posedge dot_clk)
+//  vbl_irq <= hCtr==8'd1 && vCtr==pvBlankOn;
+end
+else begin
+	always_comb vsync_o = vsync_i;
+	always_comb hsync_o = hsync_i;
+	always_comb blank_o = blank_i;
+	always_comb border_o = border_i;
+end
+end
+endgenerate
+
+endmodule
+
+// Horizontal border timing
+
+module modHborder(rst, dot_clk, hCtr, border_on, border_off, border);
+input rst;
+input dot_clk;
+input [11:0] hCtr;
+input [11:0] border_on;
+input [11:0] border_off;
+output reg border;
+
+always @(posedge dot_clk)
+if (rst)
+  border <= 1'b0;
+else begin
+	if (hCtr==border_on)
+	  border <= 1'b1;
+	else if (hCtr==border_off)
+	  border <= 1'b0;
+end
 endmodule
 

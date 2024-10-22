@@ -83,6 +83,8 @@ reg iintext;
 reg por;
 reg [7:0] ctrl_adr;
 reg [7:0] ctrl_map;
+reg [7:0] ctrl_res;
+wire [1:0] vdiv = ctrl_res[5:4];
 reg [13:0] ma,ma2;
 reg [3:0] ra;						// scan line (row address)
 reg [7:0] mem [0:16383];
@@ -787,6 +789,8 @@ else begin
 		por <= 1'b0;
 end
 
+// Control registers. Mapped into the address space at $3FFE,$3FFF
+
 always_ff @(posedge clk)
 if (rst)
 	ctrl_adr <= 8'h00;
@@ -798,11 +802,13 @@ end
 always_ff @(posedge clk)
 if (rst) begin
 	ctrl_map <= 8'h00;
+	ctrl_res <= leg ? 8'b00110000 : 8'b00100000;
 end
 else begin
 	if (s_cs && !s_rw && s_adr==14'h3FFF) begin
 		case(ctrl_adr)
 		8'h00:	ctrl_map <= s_dat_i;
+		8'h01:	ctrl_res <= s_dat_i;
 		default:	;
 		endcase
 	end
@@ -903,7 +909,7 @@ rf6947_row_address_gen ura1
 (
 	.rst(rst),
 	.dot_clk(dot_clk),
-	.div2(leg ? 1'b0 : 1'b1),
+	.div(vdiv),
 	.eol(eol),
 	.vborder(vBorder1),
 	.ra(ra)
@@ -1124,14 +1130,21 @@ end
 endmodule
 
 // Character row address generation
+// Uses a pair of counters. One to count the scanlines per character bitmap row,
+// and a second counter to count the character bitmap rows.
 
-module rf6947_row_address_gen(rst, dot_clk, div2, eol, vborder, ra);
+module rf6947_row_address_gen(rst, dot_clk, div, eol, vborder, ra);
 input rst;
 input dot_clk;
-input div2;
+input [1:0] div;
 input eol;
 input vborder;
-output reg [3:0] ra;
+output [3:0] ra;
+
+// under construction
+//wire tc;
+//counter #(2)  u1 (.rst(rst), .clk(dot_clk), .ce(eol), .ld(tc|vborder), .d(~div), .q(), .tc(tc) );
+//counter #(4)  u2 (.rst(rst), .clk(dot_clk), .ce(eol&tc), .ld(vborder||(eol&&tc&&ra==4'd11)), .d(4'd0), .q(ra), .tc() );
 
 reg [5:0] ra1;
 
@@ -1142,7 +1155,7 @@ else begin
 	if (vborder)
 		ra1 <= 6'd0;
 	else if (eol) begin
-		if (ra1==(div2 ? 6'd23 : 6'd47))
+		if (ra1==(div==2'b11 ? 6'd23 : 6'd47))
 			ra1 <= 6'd0;
 		else
 			ra1 <= ra1 + 2'd1;
@@ -1153,11 +1166,12 @@ always @(posedge dot_clk)
 if (rst)
 	ra <= 4'd0;
 else begin
-	if (div2)
+	if (div==2'b11)
 		ra <= ra1 >> 2'd1;
 	else
 		ra <= ra1 >> 2'd2;
 end
+
 
 endmodule
 

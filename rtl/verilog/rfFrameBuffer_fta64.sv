@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 // ============================================================================
 //        __
-//   \\__/ o\    (C) 2008-2023  Robert Finch, Waterloo
+//   \\__/ o\    (C) 2008-2024  Robert Finch, Waterloo
 //    \  __ /    All rights reserved.
 //     \/_//     robfinch<remove>@finitron.ca
 //       ||
@@ -46,7 +46,6 @@
 `define INTERNAL_SYNC_GEN	1'b1
 `define WXGA800x600		1'b1
 //`define WXGA1366x768	1'b1
-`define FBC_ADDR		32'hFD0400001
 
 import const_pkg::*;
 `define ABITS	31:0
@@ -58,7 +57,6 @@ module rfFrameBuffer_fta64(
 	rst_i,
 	irq_o,
 	cs_config_i,
-	cs_io_i,
 	s_clk_i, s_req, s_resp,
 	m_clk_i, m_fst_o, 
 //	m_cyc_o, m_stb_o, m_ack_i, m_we_o, m_sel_o, m_adr_o, m_dat_i, m_dat_o,
@@ -183,7 +181,6 @@ input rst_i;				// system reset
 output reg [31:0] irq_o;
 
 input cs_config_i;
-input cs_io_i;
 
 // Peripheral IO slave port
 input s_clk_i;
@@ -229,11 +226,12 @@ reg rst_irq,rst_irq2;
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 wire vclk;
-reg cs,cs2;
+reg cs2;
 reg cs_config;
 reg cs_map;
 reg cs_reg;
 wire cs_edge;
+wire cs_fbc;
 reg we;
 reg [7:0] sel;
 reg [31:0] adri;
@@ -241,9 +239,12 @@ reg [63:0] dat;
 wire irq_en;
 reg [63:0] s_dat_o;
 wire ack;
+fta_cmd_request64_t reqd;
+fta_cmd_response64_t s_resp1;
+fta_cmd_response64_t cfg_resp;
 
 always_ff @(posedge s_clk_i)
-	cs <= s_req.cyc & s_req.stb & cs_io_i;
+	reqd <= req;
 always_ff @(posedge s_clk_i)
 	we <= s_req.we;
 always_ff @(posedge s_clk_i)
@@ -254,25 +255,35 @@ always_ff @(posedge s_clk_i)
 	dat <= s_req.dat;
 
 always_ff @(posedge s_clk_i)
-	cs_config <= s_req.cyc & s_req.stb & cs_config_i && adri[27:20]==CFG_BUS && adri[19:15]==CFG_DEVICE && adri[14:12]==CFG_FUNC;
-wire cs_fbc;
+	cs_config <= cs_config_i;
 always_comb
-	cs_map = cs && cs_fbc && adri[15:14]==3'd1;
+	cs_map = cs_fbc && adri[15:14]==3'd1;
 always_comb
-	cs_reg = cs && cs_fbc && adri[15:14]==3'd0;
+	cs_reg = cs_fbc && adri[15:14]==3'd0;
 
-assign s_resp.next = 1'b0;
-assign s_resp.stall = 1'b0;
-assign s_resp.err = 1'b0;
-assign s_resp.rty = 1'b0;
-assign s_resp.pri = 4'd7;
-assign s_resp.dat = s_dat_o;
+always_ff @(posedge s_clk_i)
+if (rst_i)
+	s_resp <= {$bits(fta_cmd_response64_t){1'b0}};
+else begin
+	if (cfg_resp.ack)
+		s_resp <= cfg_resp;
+	else begin
+		s_resp.ack <= s_resp1.ack;
+		s_resp.tid <= s_resp1.tid;
+		s_resp.next <= 1'b0;
+		s_resp.stall <= 1'b0;
+		s_resp.err <= fta_bus_pkg::OKAY;
+		s_resp.rty <= 1'b0;
+		s_resp.pri <= 4'd7;
+		s_resp.adr <= s_resp1.adr;
+		s_resp.dat <= s_dat_o;
+	end
+end
 
 vtdl #(.WID(1), .DEP(16)) urdyd1 (.clk(s_clk_i), .ce(1'b1), .a(4'd3), .d(cs_map|cs_reg|cs_config), .q(ack));
-vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(s_clk_i), .ce(1'b1), .a(4'd4), .d(cs_map|cs_reg|cs_config), .q(s_resp.ack));
-vtdl #(.WID(4), .DEP(16)) urdyd3 (.clk(s_clk_i), .ce(1'b1), .a(4'd5), .d(s_req.cid), .q(s_resp.cid));
-vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(s_clk_i), .ce(1'b1), .a(4'd5), .d(s_req.tid), .q(s_resp.tid));
-vtdl #(.WID(32), .DEP(16)) urdyd5 (.clk(s_clk_i), .ce(1'b1), .a(4'd5), .d(s_req.padr), .q(s_resp.adr));
+vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(s_clk_i), .ce(1'b1), .a(4'd4), .d(cs_map|cs_reg|cs_config), .q(s_resp1.ack));
+vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(s_clk_i), .ce(1'b1), .a(4'd5), .d(s_req.tid), .q(s_resp1.tid));
+vtdl #(.WID(32), .DEP(16)) urdyd5 (.clk(s_clk_i), .ce(1'b1), .a(4'd5), .d(s_req.padr), .q(s_resp1.adr));
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -335,7 +346,7 @@ reg [63:0] irq_msgdat = IRQ_MSGDAT;
 wire [BUSWID-1:0] cfg_out;
 generate begin : gConfigSpace
 	if (BUSWID==32) begin
-		pci32_config #(
+		ddbb32_config #(
 			.CFG_BUS(CFG_BUS),
 			.CFG_DEVICE(CFG_DEVICE),
 			.CFG_FUNC(CFG_FUNC),
@@ -360,21 +371,16 @@ generate begin : gConfigSpace
 			.rst_i(rst_i),
 			.clk_i(s_clk_i),
 			.irq_i(irq),
-			.irq_o(irq_o),
-			.cs_config_i(cs_config), 
-			.we_i(we),
-			.sel_i(sel),
-			.adr_i(adri),
-			.dat_i(dat),
-			.dat_o(cfg_out),
+			.cs(cs_config), 
+			.req(reqd),
+			.resp(cfg_resp),
 			.cs_bar0_o(cs_fbc),
 			.cs_bar1_o(),
-			.cs_bar2_o(),
-			.irq_en_o(irq_en)
+			.cs_bar2_o()
 		);
 	end
 	else if (BUSWID==64) begin
-		pci64_config #(
+		ddbb64_config #(
 			.CFG_BUS(CFG_BUS),
 			.CFG_DEVICE(CFG_DEVICE),
 			.CFG_FUNC(CFG_FUNC),
@@ -545,6 +551,7 @@ delay3 #(1) udly1 (.clk(m_clk_i), .ce(1'b1), .i(vm_cyc_o), .o(m_req.cyc));
 
 `ifdef INTERNAL_SYNC_GEN
 wire hsync_i, vsync_i, blank_i;
+wire vblank;
 
 VGASyncGen usg1
 (

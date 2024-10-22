@@ -43,12 +43,12 @@ input clk_i;
 input cs_i;
 input we_i;
 input [3:0] sel_i;
-input [15:2] adr_i;
+input [13:2] adr_i;
 input [31:0] dat_i;
 output [31:0] dat_o;
 input dot_clk_i;
 input ce_i;
-input [15:0] fontAddress_i;
+input [13:0] fontAddress_i;
 input [12:0] char_code_i;
 input [5:0] maxScanpix_i;
 input [5:0] maxscanline_i;
@@ -56,7 +56,7 @@ input [5:0] scanline_i;
 output reg [63:0] bmp_o;
 
 wire [63:0] memo;
-reg [15:0] rcc, rcc0, rcc1, rcc2, rcc3;
+reg [13:0] rcc, rcc0, rcc1, rcc2, rcc3;
 reg [2:0] rcc200, rcc201, rcc202;
 reg [1:0] bndx;
 reg [63:0] bmp1;
@@ -65,17 +65,17 @@ reg [63:0] bmp1;
 wire pe_cs;
 edge_det ued1 (.rst(1'b0), .clk(clk_i), .ce(1'b1), .i(cs_i), .pe(pe_cs), .ne(), .ee());
 
-reg [7:0] wea;
+reg [3:0] wea;
 always_comb
-	wea <= {8{we_i}} & sel_i;
+	wea <= {4{we_i}} & sel_i;
 
 // xpm_memory_tdpram: True Dual Port RAM
 // Xilinx Parameterized Macro, version 2020.2
 `ifdef VENDOR_XILINX
 
 	xpm_memory_tdpram #(
-	  .ADDR_WIDTH_A(14),
-	  .ADDR_WIDTH_B(13),
+	  .ADDR_WIDTH_A(12),
+	  .ADDR_WIDTH_B(11),
 	  .AUTO_SLEEP_TIME(0),
 	  .BYTE_WRITE_WIDTH_A(32),
 	  .BYTE_WRITE_WIDTH_B(64),
@@ -86,7 +86,7 @@ always_comb
 	  .MEMORY_INIT_PARAM(""),        // String
 	  .MEMORY_OPTIMIZATION("true"),   // String
 	  .MEMORY_PRIMITIVE("block"),      // String
-	  .MEMORY_SIZE(524288),
+	  .MEMORY_SIZE(131072),
 	  .MESSAGE_CONTROL(0),
 	  .READ_DATA_WIDTH_A(32),
 	  .READ_DATA_WIDTH_B(64),
@@ -121,7 +121,7 @@ always_comb
 	                                   // on the data output of port B.
 
 	  .addra(adr_i),                   // ADDR_WIDTH_A-bit input: Address for port A write and read operations.
-	  .addrb(rcc3[15:3]),               // ADDR_WIDTH_B-bit input: Address for port B write and read operations.
+	  .addrb(rcc3[13:3]),               // ADDR_WIDTH_B-bit input: Address for port B write and read operations.
 	  .clka(clk_i),                     // 1-bit input: Clock signal for port A. Also clocks port B when
 	                                   // parameter CLOCKING_MODE is "common_clock".
 
@@ -277,7 +277,7 @@ always_ff @(posedge dot_clk_i)
 // Clock #2
 always_ff @(posedge dot_clk_i)
   if (ce_i) begin
-    rcc3 <= {fontAddress_i[15:3],3'b0}+rcc2;
+    rcc3 <= {fontAddress_i[13:3],3'b0}+rcc2;
     bndx <= 'd0;
   end
   else begin
