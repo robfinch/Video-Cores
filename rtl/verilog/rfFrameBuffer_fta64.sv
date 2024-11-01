@@ -57,15 +57,17 @@ import gfx_pkg::*;
 
 module rfFrameBuffer_fta64 (
 	rst_i,
+	xonoff_i,
 	irq_o,
 	cs_config_i,
-	s_clk_i, s_req_i, s_resp_o,
+	s_bus_i,
 	m_fst_o, 
-	fbm,
+	m_bus_o,
 	m_rst_busy_i,
-	dot_clk_i, rgb_i, rgb_o, xonoff_i, xal_o,
-	hsync_i, vsync_i, blank_i, border_i,
-	hsync_o, vsync_o, blank_o, border_o, vblank_o
+	video_i,
+	video_o,
+	xal_o,
+	vblank_o
 );
 parameter BUSWID = 64;
 parameter INTERNAL_SYNCGEN = 1'b1;
@@ -229,37 +231,47 @@ parameter pvTotal = 795;		//  795 total scan lines
 // SYSCON
 input rst_i;				// system reset
 output reg [31:0] irq_o;
-
 input cs_config_i;
+input xonoff_i;
+output reg xal_o;		// external access line (sprite access)
 
 // Peripheral IO slave port
-input s_clk_i;
-input fta_cmd_request64_t s_req_i;
-output fta_cmd_response64_t s_resp_o;
+fta_bus_interface.slave s_bus_i;
 
 // Video Memory Master Port
 // Used to read memory via burst access
 output reg m_fst_o;		// first access on scanline
-fta_bus_interface.master fbm;
+fta_bus_interface.master m_bus_o;
 input m_rst_busy_i;
 
 // Video
-input dot_clk_i;		// Video clock 80 MHz
-output hsync_o;
-output vsync_o;
-output blank_o;
+video_bus.in video_i;
+video_bus.out video_o;
 output vblank_o;
-output border_o;
-input hsync_i;			// start/end of scan line
-input vsync_i;			// start/end of frame
-input blank_i;			// blank the output
-input border_i;
-input [31:0] rgb_i;
-output [31:0] rgb_o;		// 32-bit RGB output
-reg [31:0] rgb_o;
 
-input xonoff_i;
-output reg xal_o;		// external access line (sprite access)
+
+wire s_clk_i = s_bus_i.clk;
+fta_cmd_request64_t s_req_i = s_bus_i.req;
+fta_cmd_response64_t s_resp_o;
+assign s_bus_i.resp = s_resp_o;
+
+wire dot_clk_i = video_i.clk;		// video clock (40 MHz)
+wire hsync_i = video_i.hsync;		// start/end of scan line
+wire vsync_i = video_i.vsync;		// start/end of frame
+wire blank_i = video_i.blank;		// blank the output
+wire border_i = video_i.border;
+wire [31:0] rgb_i = video_i.data;
+wire hsync_o;
+wire vsync_o;
+wire blank_o;
+wire border_o;
+reg [31:0] rgb_o;							// 32-bit RGB output
+assign video_o.clk = video_i.clk;
+assign video_o.hsync = hsync_o;
+assign video_o.vsync = vsync_o;
+assign video_o.blank = blank_o;
+assign video_o.border = border_o;
+assign video_o.data = rgb_o;
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // IO registers
@@ -531,7 +543,7 @@ wire [BITS_IN_ADDR_MAP-1:0] map_out;
       .clka(s_clk_i),                  // 1-bit input: Clock signal for port A. Also clocks port B when
                                        // parameter CLOCKING_MODE is "common_clock".
 
-      .clkb(fbm.clk),                  // 1-bit input: Clock signal for port B when parameter CLOCKING_MODE is
+      .clkb(m_bus_o.clk),                  // 1-bit input: Clock signal for port B when parameter CLOCKING_MODE is
                                        // "independent_clock". Unused when parameter CLOCKING_MODE is
                                        // "common_clock".
 
@@ -592,15 +604,15 @@ wire [BITS_IN_ADDR_MAP-1:0] map_out;
 
    );
 
-delay3 #(3) udly0 (.clk(fbm.clk), .ce(1'b1), .i(vm_cmd_o), .o(fbm.req.cmd));
-delay3 #(1) udly1 (.clk(fbm.clk), .ce(1'b1), .i(vm_cyc_o), .o(fbm.req.cyc));
-delay3 #(1) udly2 (.clk(fbm.clk), .ce(1'b1), .i(vm_we_o), .o(fbm.req.we));
-delay3 #(MDW/8) udly3 (.clk(fbm.clk), .ce(1'b1), .i(vm_sel_o), .o(fbm.req.sel));
-delay3 #(32) udly4 (.clk(fbm.clk), .ce(1'b1), .i(vm_adr_o), .o(fbm.req.vadr));
-delay3 #(13) udly5 (.clk(fbm.clk), .ce(1'b1), .i(vm_adr_o[12:0]), .o(fbm.req.padr[12:0]));
-delay1 #(32) udly8 (.clk(fbm.clk), .ce(1'b1), .i({1'b0,map_page}), .o(fbm.req.padr[31:13]));
-delay3 #(13) udly6 (.clk(fbm.clk), .ce(1'b1), .i(vm_tid_o), .o(fbm.req.tid));
-delay3 #(6) udly7 (.clk(fbm.clk), .ce(1'b1), .i(vm_blen_o), .o(fbm.req.blen));
+delay3 #(3) udly0 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_cmd_o), .o(m_bus_o.req.cmd));
+delay3 #(1) udly1 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_cyc_o), .o(m_bus_o.req.cyc));
+delay3 #(1) udly2 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_we_o), .o(m_bus_o.req.we));
+delay3 #(MDW/8) udly3 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_sel_o), .o(m_bus_o.req.sel));
+delay3 #(32) udly4 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_adr_o), .o(m_bus_o.req.vadr));
+delay3 #(13) udly5 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_adr_o[12:0]), .o(m_bus_o.req.padr[12:0]));
+delay1 #(32) udly8 (.clk(m_bus_o.clk), .ce(1'b1), .i({1'b0,map_page}), .o(m_bus_o.req.padr[31:13]));
+delay3 #(13) udly6 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_tid_o), .o(m_bus_o.req.tid));
+delay3 #(6) udly7 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_blen_o), .o(m_bus_o.req.blen));
 
 wire vblank;
 generate begin : gSyncGen
@@ -1013,7 +1025,7 @@ edge_det edh1
 edge_det edh2
 (
 	.rst(rst_i),
-	.clk(fbm.clk),
+	.clk(m_bus_o.clk),
 	.ce(1'b1),
 	.i(hsync_i),
 	.pe(pe_hsync2),
@@ -1114,7 +1126,7 @@ gfx_calc_address
 )
 u1
 (
-  .clk(fbm.clk),
+  .clk(m_bus_o.clk),
 	.base_address_i(baseAddr),
 	.color_depth_i(color_depth2),
 	.bmp_width_i(bmpWidth),
@@ -1134,7 +1146,7 @@ gfx_calc_address
 )
 u2
 (
-  .clk(fbm.clk),
+  .clk(m_bus_o.clk),
 	.base_address_i(baseAddr),
 	.color_depth_i(color_depth2),
 	.bmp_width_i(bmpWidth),
@@ -1150,7 +1162,7 @@ wire memreq,first_memreq;
 modMemReqGen umrgen1
 (
 	.rst(rst_i),
-	.clk(fbm.clk),
+	.clk(m_bus_o.clk),
 	.burst_len(burst_len),
 	.max_nburst(max_nburst),
 	.pe_hsync(pe_hsync2),
@@ -1168,10 +1180,10 @@ modMemReqGen umrgen1
 // pointers are reset at the beginning of a scanline, the fifo can be used like
 // a cache.
 wire blankEdge;
-edge_det ed2(.rst(rst_i), .clk(fbm.clk), .ce(1'b1), .i(blank_i), .pe(blankEdge), .ne(), .ee() );
+edge_det ed2(.rst(rst_i), .clk(m_bus_o.clk), .ce(1'b1), .i(blank_i), .pe(blankEdge), .ne(), .ee() );
 reg do_loads;
 reg load_fifo = 1'b0;
-//always_ff @(posedge fbm.clk)
+//always_ff @(posedge m_bus_o.clk)
 	//load_fifo <= fifo_cnt < 10'd1000 && vFetch && onoff && xonoff && !m_cyc_o && do_loads;
 //	load_fifo <= /*fifo_cnt < 8'd224 &&*/ vFetch && onoff && xonoff_i && (fetchCol < windowWidth) && memreq;
 
@@ -1189,7 +1201,7 @@ upif1
 	.pif(hCmp)
 );
 /*
-always @(posedge fbm.clk)
+always @(posedge m_bus_o.clk)
 	// if windowWidth > hCmp we always load because the fifo isn't large enough to act as a cache.
 	if (!(windowWidth < hCmp))
 		do_loads <= 1'b1;
@@ -1199,22 +1211,22 @@ always @(posedge fbm.clk)
 	else if (blankEdge)
 		do_loads <= 1'b0;
 */
-always_comb fbm.req.bte = fta_bus_pkg::LINEAR;
-always_comb fbm.req.cti = fta_bus_pkg::CLASSIC;
-always_comb fbm.req.stb = fbm.req.cyc;
-always_comb fbm.req.om = 2'd0;
-always_comb fbm.req.sz = 4'd0;
-always_comb fbm.req.asid = 16'd0;
-always_comb fbm.req.ctag = 1'b0;
-always_comb fbm.req.data2 = 256'd0;
-always_comb fbm.req.csr = 1'b0;
-always_comb fbm.req.key[0] = 20'd0;
-always_comb fbm.req.key[1] = 20'd0;
-always_comb fbm.req.key[2] = 20'd0;
-always_comb fbm.req.key[3] = 20'd0;
-always_comb fbm.req.pl = 8'h00;
-always_comb fbm.req.pri = 4'd7;
-always_comb fbm.req.cache = 4'd0;
+always_comb m_bus_o.req.bte = fta_bus_pkg::LINEAR;
+always_comb m_bus_o.req.cti = fta_bus_pkg::CLASSIC;
+always_comb m_bus_o.req.stb = m_bus_o.req.cyc;
+always_comb m_bus_o.req.om = 2'd0;
+always_comb m_bus_o.req.sz = 4'd0;
+always_comb m_bus_o.req.asid = 16'd0;
+always_comb m_bus_o.req.ctag = 1'b0;
+always_comb m_bus_o.req.data2 = 256'd0;
+always_comb m_bus_o.req.csr = 1'b0;
+always_comb m_bus_o.req.key[0] = 20'd0;
+always_comb m_bus_o.req.key[1] = 20'd0;
+always_comb m_bus_o.req.key[2] = 20'd0;
+always_comb m_bus_o.req.key[3] = 20'd0;
+always_comb m_bus_o.req.pl = 8'h00;
+always_comb m_bus_o.req.pri = 4'd7;
+always_comb m_bus_o.req.cache = 4'd0;
 
 wire [31:0] adr;
 fb_state_t state;
@@ -1244,19 +1256,19 @@ endfunction
 modAddrGen uaddrgen1
 (
 	.rst(fifo_wrst),
-	.clk(fbm.clk),
+	.clk(m_bus_o.clk),
 	.state(state),
 	.grAddr(grAddr),
-	.ack(fbm.resp.ack),
+	.ack(m_bus_o.resp.ack),
 	.tocnt(tocnt),
 	.adr(adr)
 );
 
-always_ff @(posedge fbm.clk)
+always_ff @(posedge m_bus_o.clk)
 	if (fifo_wrst)
 		fetchCol <= 12'd0;
   else begin
-    if ((state==WAITLOAD && (fbm.resp.ack|tocnt[10])) || state==LOAD_OOB)
+    if ((state==WAITLOAD && (m_bus_o.resp.ack|tocnt[10])) || state==LOAD_OOB)
       fetchCol <= fetchCol + shifts;
   end
 
@@ -1270,27 +1282,27 @@ always_comb legal_y = ~&pixelRow[15:12] && pixelRow < bmpHeight;
 reg modd;
 always_comb
 	case(MDW)
-	32:	modd <= fbm.req.padr[5:2]==4'hF;
-	64:	modd <= fbm.req.padr[5:3]==3'h7;
-	128:	modd <= fbm.req.padr[5:4]==2'h3;
-	256:	modd <= fbm.req.padr[5]==1'h1;
-	default:	modd <= fbm.req.padr[5]==1'h1;
+	32:	modd <= m_bus_o.req.padr[5:2]==4'hF;
+	64:	modd <= m_bus_o.req.padr[5:3]==3'h7;
+	128:	modd <= m_bus_o.req.padr[5:4]==2'h3;
+	256:	modd <= m_bus_o.req.padr[5]==1'h1;
+	default:	modd <= m_bus_o.req.padr[5]==1'h1;
 	endcase
 
 // Bus timeout counter
 modTocnt utocnt1
 (
 	.rst(rst_i),
-	.clk(fbm.clk),
-	.cyc(fbm.req.cyc),
-	.ack(fbm.resp.ack),
+	.clk(m_bus_o.clk),
+	.cyc(m_bus_o.req.cyc),
+	.ack(m_bus_o.resp.ack),
 	.tocnt(tocnt)
 );
 
 reg [31:0] next_adr;
 
-always_ff @(posedge fbm.clk)
-if (fbm.rst) begin
+always_ff @(posedge m_bus_o.clk)
+if (m_bus_o.rst) begin
 	vm_blen_o <= 6'd0;
 	vm_cmd_o <= fta_bus_pkg::CMD_LOADZ;
 	vm_cyc_o <= LOW;
@@ -1373,7 +1385,7 @@ else begin
   ICOLOR2:
     begin
       for (n = 0; n < MDW; n = n + 1)
-        fbm.req.data1[n] <= (n >= mb && n <= me)
+        m_bus_o.req.data1[n] <= (n >= mb && n <= me)
         	? ((n <= ce) ?	rastop(raster_op, mem_strip[n], icolor1[n]) : icolor1[n])
         	: mem_strip[n];
       state <= STORESTRIP;
@@ -1397,18 +1409,18 @@ else begin
   endcase
 
 	// Process responses from memory
-  if (fbm.resp.ack|tocnt[10]) begin
-  	case(fbm.resp.tid.tranid)
+  if (m_bus_o.resp.ack|tocnt[10]) begin
+  	case(m_bus_o.resp.tid.tranid)
   	4'd1:	// Get pixel
   		begin
-	      mem_strip <= fbm.resp.dat;
+	      mem_strip <= m_bus_o.resp.dat;
 	      icolor1 <= {224'b0,color} << mb;
 	      rstcmd <= 1'b1;
         state <= ICOLOR3;
   		end
   	4'd2:	// Plot pixesl (RMW cycle)
   		begin
-	      mem_strip <= fbm.resp.dat;
+	      mem_strip <= m_bus_o.resp.dat;
 	      icolor1 <= {224'b0,color} << mb;
 	      rstcmd <= 1'b1;
         state <= ICOLOR2;
@@ -1527,11 +1539,11 @@ modOobColor #(.MDW(MDW)) uoobdat1
 rescan_fifo #(.WIDTH(MDW), .DEPTH(256)) uf1
 (
 	.wrst(fifo_wrst),
-	.wclk(fbm.clk),
-//	.wr((((fbm.resp.ack|tocnt[10]) && state==WAITLOAD) || state==LOAD_OOB) && lef),
-//	.di((state==LOAD_OOB) ? oob_dat : fbm.resp.dat),
-	.wr(((fbm.resp.ack && fbm.resp.tid.tranid==4'h0)|tocnt[10]) && lef),
-	.din(fbm.resp.dat),
+	.wclk(m_bus_o.clk),
+//	.wr((((m_bus_o.resp.ack|tocnt[10]) && state==WAITLOAD) || state==LOAD_OOB) && lef),
+//	.di((state==LOAD_OOB) ? oob_dat : m_bus_o.resp.dat),
+	.wr(((m_bus_o.resp.ack && m_bus_o.resp.tid.tranid==4'h0)|tocnt[10]) && lef),
+	.din(m_bus_o.resp.dat),
 	.rrst(fifo_rrst),
 	.rclk(vclk),
 	.rd(rd_fifo & lof),
@@ -1542,9 +1554,9 @@ rescan_fifo #(.WIDTH(MDW), .DEPTH(256)) uf1
 rescan_fifo #(.WIDTH(MDW), .DEPTH(256)) uf2
 (
 	.wrst(fifo_wrst),
-	.wclk(fbm.clk),
-	.wr(((fbm.resp.ack && fbm.resp.tid.tranid==4'h0)|tocnt[10]) && lof),
-	.din(fbm.resp.dat),
+	.wclk(m_bus_o.clk),
+	.wr(((m_bus_o.resp.ack && m_bus_o.resp.tid.tranid==4'h0)|tocnt[10]) && lof),
+	.din(m_bus_o.resp.dat),
 	.rrst(fifo_rrst),
 	.rclk(vclk),
 	.rd(rd_fifo & lef),

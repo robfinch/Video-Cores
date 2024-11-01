@@ -109,12 +109,11 @@
 //`define WXGA1366x768	1'b1
 //`define USE_CLOCK_GATE
 //`define SUPPORT_AAM	1
+import video_pkg::*;
 import fta_bus_pkg::*;
 
-module rfTextController_fta64 (
-	rst_i, clk_i, rst_busy_o, cs_config_i, req_i, resp_o,
-	dot_clk_i, hsync_i, vsync_i, blank_i, border_i, zrgb_i, zrgb_o, xonoff_i,
-	hsync_o, vsync_o, blank_o, border_o
+module rfTextController_fta64 (rst_busy_o, cs_config_i, xonoff_i,
+	slave_i, video_i, video_o
 );
 parameter num = 4'd1;
 `ifdef WXGA800x600
@@ -204,37 +203,50 @@ parameter pvTotal = 795;		//  795 total scan lines
 `endif
 
 // Syscon
-input  rst_i;			// reset
-input  clk_i;			// clock
 output rst_busy_o;
-
+input xonoff_i;
 input cs_config_i;
 
 // Slave signals
-input fta_cmd_request64_t req_i;
-output fta_cmd_response64_t resp_o;
+fta_bus_interface.slave slave_i;
 
 // Video signals
-input dot_clk_i;		// video dot clock
-input hsync_i;			// end of scan line
-input vsync_i;			// end of frame
-input blank_i;			// blanking signal
-input border_i;			// border area
-input [31:0] zrgb_i;		// input pixel stream
-output reg [31:0] zrgb_o;	// output pixel stream
-input xonoff_i;
-output reg hsync_o;
-output reg vsync_o;
-output reg blank_o;
-output reg border_o;
+video_bus.in video_i;
+video_bus.out video_o;
+
+
+// Signal renaming for convenience
+wire dot_clk_i = video_i.clk;				// video dot clock
+wire hsync_i = video_i.hsync;
+wire vsync_i = video_i.vsync;
+wire blank_i = video_i.blank;
+wire border_i = video_i.border;
+wire [31:0] zrgb_i = video_i.data;	// input pixel stream
+reg hsync_o;
+reg vsync_o;
+reg blank_o;
+reg border_o;
+reg [31:0] zrgb_o;	// output pixel stream
+assign video_o.clk = video_i.clk;
+assign video_o.hsync = hsync_o;
+assign video_o.vsync = vsync_o;
+assign video_o.blank = blank_o;
+assign video_o.border = border_o;
+assign video_o.data = zrgb_o;
 
 integer n2,n3;
 
-assign resp_o.next = 1'b0;
-assign resp_o.stall = 1'b0;
-assign resp_o.err = fta_bus_pkg::OKAY;
-assign resp_o.rty = 1'b0;
-assign resp_o.pri = 4'd7;
+wire rst_i, clk_i;
+fta_cmd_request64_t req_i;
+assign rst_i = slave_i.rst;
+assign clk_i = slave_i.clk;
+
+assign req_i = slave_i.req;
+assign slave_i.resp.next = 1'b0;
+assign slave_i.resp.stall = 1'b0;
+assign slave_i.resp.err = fta_bus_pkg::OKAY;
+assign slave_i.resp.rty = 1'b0;
+assign slave_i.resp.pri = 4'd7;
 
 reg controller_enable;
 reg [31:0] bkColor40, bkColor40d, bkColor40d2, bkColor40d3;	// background color
@@ -369,18 +381,18 @@ always_ff @(posedge clk_i)
 // Register outputs
 always_ff @(posedge clk_i)
 if (cfg_resp.ack)
-	resp_o.dat <= cfg_resp.dat;
+	slave_i.resp.dat <= cfg_resp.dat;
 else if (ack) begin
 	casez({cs_rom,cs_reg,cs_text})
-	3'b1??:	resp_o.dat <= chdat_o;
-	3'b01?:	resp_o.dat <= rego;
-	3'b001:	resp_o.dat <= tdat_o;
-	default:	resp_o.dat <= 64'h0;
+	3'b1??:	slave_i.resp.dat <= chdat_o;
+	3'b01?:	slave_i.resp.dat <= rego;
+	3'b001:	slave_i.resp.dat <= tdat_o;
+	default:	slave_i.resp.dat <= 64'h0;
 	endcase
 end
 else
-	resp_o.dat <= 'd0;
-always_comb resp_o.asid = 16'h0;
+	slave_i.resp.dat <= 'd0;
+always_comb slave_i.resp.asid = 16'h0;
 
 //always @(posedge clk_i)
 //	if (cs_text) begin
@@ -394,10 +406,10 @@ always_comb resp_o.asid = 16'h0;
 //   ack a write
 
 vtdl #(.WID(1), .DEP(16)) urdyd1 (.clk(clk_i), .ce(1'b1), .a(4'd3), .d(cs_rom|cs_reg|cs_text|cs_config), .q(ack));
-vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(clk_i), .ce(1'b1), .a(4'd4), .d((cs_rom|cs_reg|cs_text|cs_config)&(erc|~rwr_i)), .q(resp_o.ack));
+vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(clk_i), .ce(1'b1), .a(4'd4), .d((cs_rom|cs_reg|cs_text|cs_config)&(erc|~rwr_i)), .q(slave_i.resp.ack));
 //vtdl #(.WID(6), .DEP(16)) urdyd3 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req.cid), .q(resp.cid));
-vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req_i.tid), .q(resp_o.tid));
-vtdl #(.WID($bits(fta_address_t)), .DEP(16)) urdyd5 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req_i.padr), .q(resp_o.adr));
+vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req_i.tid), .q(slave_i.resp.tid));
+vtdl #(.WID($bits(fta_address_t)), .DEP(16)) urdyd5 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req_i.padr), .q(slave_i.resp.adr));
 
 //--------------------------------------------------------------------
 // config
