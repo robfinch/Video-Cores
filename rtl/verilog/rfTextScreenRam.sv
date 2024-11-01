@@ -1,6 +1,6 @@
 // ============================================================================
 //        __
-//   \\__/ o\    (C) 2018-2023  Robert Finch, Waterloo
+//   \\__/ o\    (C) 2018-2024  Robert Finch, Waterloo
 //    \  __ /    All rights reserved.
 //     \/_//     robfinch<remove>@finitron.ca
 //       ||
@@ -36,8 +36,9 @@
 //
 `define VENDOR_XILINX
 
-module rfTextScreenRam(clka_i, csa_i, wea_i, sela_i, adra_i, data_i, data_o,
-	clkb_i, csb_i, web_i, selb_i, adrb_i, datb_i, datb_o);
+module rfTextScreenRam(rsta_i, clka_i, csa_i, wea_i, sela_i, adra_i, data_i, data_o,
+	rstb_i, clkb_i, csb_i, web_i, selb_i, adrb_i, datb_i, datb_o);
+input rsta_i;
 input clka_i;
 input csa_i;
 input wea_i;
@@ -45,6 +46,7 @@ input [7:0] sela_i;
 input [15:3] adra_i;
 input [63:0] data_i;
 output [63:0] data_o;
+input rstb_i;
 input clkb_i;
 input csb_i;
 input web_i;
@@ -54,6 +56,9 @@ input [63:0] datb_i;
 output [63:0] datb_o;
 parameter TEXT_CELL_COUNT = 16384;
 localparam AWID = $clog2(TEXT_CELL_COUNT);
+
+wire rsta = rsta_i;
+wire rstb = rstb_i;
 
 // xpm_memory_tdpram: True Dual Port RAM
 // Xilinx Parameterized Macro, version 2020.2
@@ -141,17 +146,17 @@ localparam AWID = $clog2(TEXT_CELL_COUNT);
 	                                   // ECC enabled (Error injection capability is not available in
 	                                   // "decode_only" mode).
 
-	  .regcea(csa_i),                 // 1-bit input: Clock Enable for the last register stage on the output
+	  .regcea(1'b1),                 // 1-bit input: Clock Enable for the last register stage on the output
 	                                   // data path.
 
-	  .regceb(csb_i),                 // 1-bit input: Clock Enable for the last register stage on the output
+	  .regceb(1'b1),                 // 1-bit input: Clock Enable for the last register stage on the output
 	                                   // data path.
 
-	  .rsta(1'b0),                     // 1-bit input: Reset signal for the final port A output register stage.
+	  .rsta(rsta),                     // 1-bit input: Reset signal for the final port A output register stage.
 	                                   // Synchronously resets output port douta to the value specified by
 	                                   // parameter READ_RESET_VALUE_A.
 
-	  .rstb(1'b0),                     // 1-bit input: Reset signal for the final port B output register stage.
+	  .rstb(rstb),                     // 1-bit input: Reset signal for the final port B output register stage.
 	                                   // Synchronously resets output port doutb to the value specified by
 	                                   // parameter READ_RESET_VALUE_B.
 

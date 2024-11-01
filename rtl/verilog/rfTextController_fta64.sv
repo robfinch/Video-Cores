@@ -105,7 +105,8 @@
 // 1209 LUTs / 1003 FFs / 48 BRAMs / 1 DSP
 // ============================================================================
 
-`define VGA_800x600	1
+`define WXGA800x600		1'b1
+//`define WXGA1366x768	1'b1
 //`define USE_CLOCK_GATE
 //`define SUPPORT_AAM	1
 import fta_bus_pkg::*;
@@ -116,8 +117,14 @@ module rfTextController_fta64 (
 	hsync_o, vsync_o, blank_o, border_o
 );
 parameter num = 4'd1;
+`ifdef WXGA800x600
 parameter COLS = 8'd64;
 parameter ROWS = 8'd32;
+`endif
+`ifdef WXGA1366x768
+parameter COLS = 8'd56;
+parameter ROWS = 8'd21;
+`endif
 parameter BUSWID = 64;
 parameter TEXT_CELL_COUNT = 8192;
 parameter INTERNAL_SYNCGEN = 1;
@@ -151,7 +158,7 @@ parameter ASYNCH = 1'b1;
 
 localparam CFG_HEADER_TYPE = 8'h00;			// 00 = a general device
 
-`ifdef VGA_800x600
+`ifdef WXGA800x600
 parameter phSyncOn  = 40;		//   40 front porch
 parameter phSyncOff = 168;		//  128 sync
 parameter phBlankOff = 252;	//256	//   88 back porch
@@ -172,7 +179,7 @@ parameter pvBlankOn = 628;  	//   44 border	0
 parameter pvTotal = 628;		//  628 total scan lines
 `endif
 
-`ifdef WXGA_1366x768
+`ifdef WXGA1366x768
 // Needs 
 //	Input clock:     85.86 MHz/4 (50 MHz * 12/7) (85.7142)/4
 //	Input clock:     21.4286 MHz (100 MHz * 3/14)
@@ -373,6 +380,7 @@ else if (ack) begin
 end
 else
 	resp_o.dat <= 'd0;
+always_comb resp_o.asid = 16'h0;
 
 //always @(posedge clk_i)
 //	if (cs_text) begin
@@ -559,6 +567,7 @@ rfTextScreenRam #(
 )
 screen_ram1
 (
+	.rsta_i(rst_i),
 	.clka_i(clk_i),
 	.csa_i(cs_text),
 	.wea_i(rwr_i),
@@ -566,6 +575,7 @@ screen_ram1
 	.adra_i(radr_i[15:3]),
 	.data_i(rdat_i),
 	.data_o(tdat_o),
+	.rstb_i(rst_i),
 	.clkb_i(vclk),
 	.csb_i(ld_shft),
 	.web_i(por),
@@ -661,8 +671,13 @@ always_ff @(posedge clk_i)
 		if (num==4'd1) begin
       windowTop    <= 12'd4058;//12'd16;
       windowLeft   <= 12'd3918;//12'd3956;//12'd86;
+`ifdef WXGA1366x768
+      pixelWidth   <= 4'd1;		// 683 pixels
+      pixelHeight  <= 4'd1;		// 384 pixels
+`else      
       pixelWidth   <= 4'd0;		// 800 pixels
       pixelHeight  <= 4'd0;		// 600 pixels
+`endif      
       numCols      <= COLS;
       numRows      <= ROWS;
       maxRowScan   <= 6'd17;
@@ -684,7 +699,7 @@ always_ff @(posedge clk_i)
 		end
 	end
 	else begin
-		
+
 		if (bcnt > 6'd10)
 			por <= 1'b0;
 		
@@ -955,7 +970,7 @@ modAccumulator #(.WID(16)) urowcol
 	.clk(vclk),
 	.ce(pe_hsync & nvp),
 	.inc(rowscan==maxRowScan),
-	.amt(numCols),
+	.amt({8'h0,numCols}),
 	.ld1(scanline==12'd0),
 	.d1(16'd0),
 	.ld2(1'b0),
@@ -1118,6 +1133,7 @@ if (INTERNAL_SYNCGEN) begin
 
 wire dot_clk = dot_clk_i;
 wire [11:0] hCtr, vCtr;
+wire [5:0] frame_cnt;
 reg hBlank1;
 wire vBlank1;
 wire hSync1,vSync1;
@@ -1134,9 +1150,9 @@ assign hSync1 = hCtr >= phSyncOn && hCtr < phSyncOff;
 assign vBlank1 = vCtr >= pvBlankOn || vCtr < pvBlankOff;
 assign vBorder1 = vCtr >= pvBorderOn || vCtr < pvBorderOff;
 
-counter #(12) u1syncgen (.rst(rst), .clk(dot_clk), .ce(1'b1), .ld(eol1), .d(12'd1), .q(hCtr), .tc() );
-counter #(12) u2syncgen (.rst(rst), .clk(dot_clk), .ce(eol1), .ld(eof1), .d(12'd1), .q(vCtr), .tc() );
-counter #(6)  u3syncgen (.rst(rst), .clk(dot_clk), .ce(eof1), .ld(1'b0), .d(6'd1), .q(frame_cnt), .tc() );
+counter #(12) u1syncgen (.rst(rst_i), .clk(dot_clk), .ce(1'b1), .ld(eol1), .d(12'd1), .q(hCtr), .tc() );
+counter #(12) u2syncgen (.rst(rst_i), .clk(dot_clk), .ce(eol1), .ld(eof1), .d(12'd1), .q(vCtr), .tc() );
+counter #(6)  u3syncgen (.rst(rst_i), .clk(dot_clk), .ce(eof1), .ld(1'b0), .d(6'd1), .q(frame_cnt), .tc() );
 
 always @(posedge dot_clk)
 if (rst)

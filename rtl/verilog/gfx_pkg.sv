@@ -47,4 +47,20 @@ typedef enum logic [1:0] {
 	BPP32 = 2'd3		// 1-10-11-10
 } color_depth_t;
 
+typedef enum logic [3:0] {
+	FB_IDLE = 4'd0,
+	FB_NEXT_BURST = 4'd1,
+	LOADCOLOR = 4'd2,
+	LOADSTRIP = 4'd3,
+	STORESTRIP = 4'd4,
+	ACKSTRIP = 4'd5,
+	WAITLOAD = 4'd6,
+	WAITRST = 4'd7,
+	ICOLOR1 = 4'd8,
+	ICOLOR2 = 4'd9,
+	ICOLOR3 = 4'd10,
+	ICOLOR4 = 4'd11,
+	LOAD_OOB = 4'd12
+} fb_state_t;
+
 endpackage

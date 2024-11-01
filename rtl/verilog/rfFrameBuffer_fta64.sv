@@ -40,10 +40,12 @@
 //  The default base screen address is:
 //		$0200000 - the third meg of RAM
 //
+// 800x600 40.000MHz clock
+// 1366x768 85.86 MHz clock
 // ============================================================================
 
 //`define USE_CLOCK_GATE	1'b1
-`define INTERNAL_SYNC_GEN	1'b1
+//`define VGA640x480	1'b1
 `define WXGA800x600		1'b1
 //`define WXGA1366x768	1'b1
 
@@ -53,22 +55,22 @@ import const_pkg::*;
 import fta_bus_pkg::*;
 import gfx_pkg::*;
 
-module rfFrameBuffer_fta64(
+module rfFrameBuffer_fta64 (
 	rst_i,
 	irq_o,
 	cs_config_i,
-	s_clk_i, s_req, s_resp,
-	m_clk_i, m_fst_o, 
-//	m_cyc_o, m_stb_o, m_ack_i, m_we_o, m_sel_o, m_adr_o, m_dat_i, m_dat_o,
-	m_req, m_resp,
-	dot_clk_i, rgb_i, rgb_o, xonoff_i, xal_o
-`ifdef INTERNAL_SYNC_GEN
-	, hsync_o, vsync_o, blank_o, border_o, hctr_o, vctr_o, fctr_o, vblank_o
-`else
-	, hsync_i, vsync_i, blank_i
-`endif
+	s_clk_i, s_req_i, s_resp_o,
+	m_fst_o, 
+	fbm,
+	m_rst_busy_i,
+	dot_clk_i, rgb_i, rgb_o, xonoff_i, xal_o,
+	hsync_i, vsync_i, blank_i, border_i,
+	hsync_o, vsync_o, blank_o, border_o, vblank_o
 );
 parameter BUSWID = 64;
+parameter INTERNAL_SYNCGEN = 1'b1;
+parameter CORENO = 6'd62;
+parameter CHANNEL = 3'd1;
 
 parameter FBC_ADDR = 32'hFED70001;
 parameter FBC_ADDR_MASK = 32'h00FF0000;
@@ -98,12 +100,12 @@ parameter IRQ_MSGADR = 64'h0FD0900C1;
 parameter IRQ_MSGDAT = 64'h1;
 
 parameter PHYS_ADDR_BITS = 32;
-localparam BITS_IN_ADDR_MAP = PHYS_ADDR_BITS - 16;
+localparam BITS_IN_ADDR_MAP = 18;
 
-parameter MDW = 128;		// Bus master data width
-parameter MAP = 12'd0;
-parameter BM_BASE_ADDR1 = 32'h00000000;
-parameter BM_BASE_ADDR2 = 32'h00100000;
+parameter MDW = 256;			// Bus master data width
+parameter BURST_INTERVAL = 12'hDFF;
+parameter BM_BASE_ADDR1 = 32'h00010000;
+parameter BM_BASE_ADDR2 = 32'h00200000;
 parameter REG_CTRL = 11'd0;
 parameter REG_REFDELAY = 11'd1;
 parameter REG_PAGE1ADDR = 11'd2;
@@ -136,20 +138,66 @@ parameter OPORN = 4'd11;
 parameter OPWHITE = 4'd15;
 
 // Sync Generator defaults: 800x600 60Hz
+// Driven by a 40.000MHz clock
+/*
+`ifdef VGA640x480
+parameter phSyncOn  = 16;		//   16 front porch
+parameter phSyncOff = 112;		//  96 sync
+parameter phBlankOff = 160;	//256	//   48 back porch
+//parameter phBorderOff = 336;	//   80 border
+parameter phBorderOff = 160;	//   80 border
+//parameter phBorderOn = 976;		//  640 display
+parameter phBorderOn = 800;		//  800 display
+parameter phBlankOn = 800;		//   4 border
+parameter phTotal = 800;		// 1056 total clocks
+parameter pvSyncOn  = 10;		//    10 front porch
+parameter pvSyncOff = 12;		//    2 vertical sync
+parameter pvBlankOff = 45;		//   33 back porch
+parameter pvBorderOff = 51;		//   44 border	0
+//parameter pvBorderOff = 72;		//   44 border	0
+parameter pvBorderOn = 519;		//  600 display
+//parameter pvBorderOn = 584;		//  512 display
+parameter pvBlankOn = 525;  	//   44 border	0
+parameter pvTotal = 525;		//  628 total scan lines
+/*
+// Driven by a 25.175MHz clock
+parameter phSyncOn  = 16;		//   16 front porch
+parameter phSyncOff = 112;		//  96 sync
+parameter phBlankOff = 160;	//256	//   48 back porch
+//parameter phBorderOff = 336;	//   80 border
+parameter phBorderOff = 160;	//   80 border
+//parameter phBorderOn = 976;		//  640 display
+parameter phBorderOn = 800;		//  800 display
+parameter phBlankOn = 800;		//   4 border
+parameter phTotal = 800;		// 1056 total clocks
+parameter pvSyncOn  = 10;		//    10 front porch
+parameter pvSyncOff = 12;		//    2 vertical sync
+parameter pvBlankOff = 45;		//   33 back porch
+parameter pvBorderOff = 51;		//   44 border	0
+//parameter pvBorderOff = 72;		//   44 border	0
+parameter pvBorderOn = 519;		//  600 display
+//parameter pvBorderOn = 584;		//  512 display
+parameter pvBlankOn = 525;  	//   44 border	0
+parameter pvTotal = 525;		//  628 total scan lines
+*/
+//`endif
+
+// Sync Generator defaults: 800x600 60Hz
 // Driven by a 40MHz clock
+
 `ifdef WXGA800x600
 parameter phSyncOn  = 40;		//   40 front porch
 parameter phSyncOff = 168;		//  128 sync
 parameter phBlankOff = 252;	//256	//   88 back porch
 //parameter phBorderOff = 336;	//   80 border
-parameter phBorderOff = 256;	//   80 border
+parameter phBorderOff = 254;	//   80 border
 //parameter phBorderOn = 976;		//  640 display
-parameter phBorderOn = 1056;		//  800 display
-parameter phBlankOn = 1052;		//   4 border
+parameter phBorderOn = 1054;		//  800 display
+parameter phBlankOn = 1056;		//   4 border
 parameter phTotal = 1056;		// 1056 total clocks
 parameter pvSyncOn  = 1;		//    1 front porch
 parameter pvSyncOff = 5;		//    4 vertical sync
-parameter pvBlankOff = 28;		//   23 back porch
+parameter pvBlankOff = 28;		//   23 back porch (28)
 parameter pvBorderOff = 28;		//   44 border	0
 //parameter pvBorderOff = 72;		//   44 border	0
 parameter pvBorderOn = 628;		//  600 display
@@ -157,6 +205,8 @@ parameter pvBorderOn = 628;		//  600 display
 parameter pvBlankOn = 628;  	//   44 border	0
 parameter pvTotal = 628;		//  628 total scan lines
 `endif
+
+/*
 `ifdef WXGA1366x768
 // Driven by an 85.86MHz clock
 parameter phSyncOn  = 72;		//   72 front porch
@@ -175,7 +225,7 @@ parameter pvBorderOn = 795;		//  768 display
 parameter pvBlankOn = 795;  	//    1 border	0
 parameter pvTotal = 795;		//  795 total scan lines
 `endif
-
+*/
 // SYSCON
 input rst_i;				// system reset
 output reg [31:0] irq_o;
@@ -184,32 +234,26 @@ input cs_config_i;
 
 // Peripheral IO slave port
 input s_clk_i;
-input fta_cmd_request64_t s_req;
-output fta_cmd_response64_t s_resp;
+input fta_cmd_request64_t s_req_i;
+output fta_cmd_response64_t s_resp_o;
 
 // Video Memory Master Port
 // Used to read memory via burst access
-input m_clk_i;				// system bus interface clock
 output reg m_fst_o;		// first access on scanline
-output fta_cmd_request128_t m_req;
-input fta_cmd_response128_t m_resp;
+fta_bus_interface.master fbm;
+input m_rst_busy_i;
 
 // Video
 input dot_clk_i;		// Video clock 80 MHz
-`ifdef INTERNAL_SYNC_GEN
 output hsync_o;
 output vsync_o;
 output blank_o;
 output vblank_o;
 output border_o;
-output [11:0] hctr_o;
-output [11:0] vctr_o;
-output [5:0] fctr_o;
-`else
 input hsync_i;			// start/end of scan line
 input vsync_i;			// start/end of frame
 input blank_i;			// blank the output
-`endif
+input border_i;
 input [31:0] rgb_i;
 output [31:0] rgb_o;		// 32-bit RGB output
 reg [31:0] rgb_o;
@@ -226,6 +270,10 @@ reg rst_irq,rst_irq2;
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 wire vclk;
+wire [15:0] hctr;
+wire [11:0] scanline;
+wire [5:0] shifts;
+wire [5:0] shift_cnt;
 reg cs2;
 reg cs_config;
 reg cs_map;
@@ -242,17 +290,19 @@ wire ack;
 fta_cmd_request64_t reqd;
 fta_cmd_response64_t s_resp1;
 fta_cmd_response64_t cfg_resp;
+reg [5:0] max_nburst;
+reg [5:0] burst_len;
 
 always_ff @(posedge s_clk_i)
-	reqd <= req;
+	reqd <= s_req_i;
 always_ff @(posedge s_clk_i)
-	we <= s_req.we;
+	we <= s_req_i.we;
 always_ff @(posedge s_clk_i)
-	sel <= s_req.sel;
+	sel <= s_req_i.sel;
 always_ff @(posedge s_clk_i)
-	adri <= s_req.padr;
+	adri <= s_req_i.padr;
 always_ff @(posedge s_clk_i)
-	dat <= s_req.dat;
+	dat <= s_req_i.dat;
 
 always_ff @(posedge s_clk_i)
 	cs_config <= cs_config_i;
@@ -263,27 +313,27 @@ always_comb
 
 always_ff @(posedge s_clk_i)
 if (rst_i)
-	s_resp <= {$bits(fta_cmd_response64_t){1'b0}};
+	s_resp_o <= {$bits(fta_cmd_response64_t){1'b0}};
 else begin
 	if (cfg_resp.ack)
-		s_resp <= cfg_resp;
+		s_resp_o <= cfg_resp;
 	else begin
-		s_resp.ack <= s_resp1.ack;
-		s_resp.tid <= s_resp1.tid;
-		s_resp.next <= 1'b0;
-		s_resp.stall <= 1'b0;
-		s_resp.err <= fta_bus_pkg::OKAY;
-		s_resp.rty <= 1'b0;
-		s_resp.pri <= 4'd7;
-		s_resp.adr <= s_resp1.adr;
-		s_resp.dat <= s_dat_o;
+		s_resp_o.ack <= s_resp1.ack;
+		s_resp_o.tid <= s_resp1.tid;
+		s_resp_o.next <= 1'b0;
+		s_resp_o.stall <= 1'b0;
+		s_resp_o.err <= fta_bus_pkg::OKAY;
+		s_resp_o.rty <= 1'b0;
+		s_resp_o.pri <= 4'd7;
+		s_resp_o.adr <= s_resp1.adr;
+		s_resp_o.dat <= s_dat_o;
 	end
 end
 
 vtdl #(.WID(1), .DEP(16)) urdyd1 (.clk(s_clk_i), .ce(1'b1), .a(4'd3), .d(cs_map|cs_reg|cs_config), .q(ack));
 vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(s_clk_i), .ce(1'b1), .a(4'd4), .d(cs_map|cs_reg|cs_config), .q(s_resp1.ack));
-vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(s_clk_i), .ce(1'b1), .a(4'd5), .d(s_req.tid), .q(s_resp1.tid));
-vtdl #(.WID(32), .DEP(16)) urdyd5 (.clk(s_clk_i), .ce(1'b1), .a(4'd5), .d(s_req.padr), .q(s_resp1.adr));
+vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(s_clk_i), .ce(1'b1), .a(4'd5), .d(s_req_i.tid), .q(s_resp1.tid));
+vtdl #(.WID(32), .DEP(16)) urdyd5 (.clk(s_clk_i), .ce(1'b1), .a(4'd5), .d(s_req_i.padr), .q(s_resp1.adr));
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -303,8 +353,8 @@ reg [15:0] vrefdelay;
 reg [15:0] windowLeft;
 reg [15:0] windowTop;
 reg [11:0] windowWidth,windowHeight;
-reg [11:0] map;     // memory access period
-reg [11:0] mapctr;
+reg [11:0] burst_interval;     // memory access period
+reg [11:0] bi_ctr;
 reg [15:0] bmpWidth;		// scan line increment (pixels)
 reg [15:0] bmpHeight;
 reg [`ABITS] baseAddr;	// base address register
@@ -335,9 +385,14 @@ reg [11:0] vBorderOn = pvBorderOn, vBorderOff = pvBorderOff;
 reg sgLock;
 wire pe_hsync, pe_hsync2;
 wire pe_vsync;
-reg [11:0] tocnt;		// bus timeout counter
+wire [11:0] tocnt;		// bus timeout counter
+reg [2:0] vm_cmd_o;
+reg [5:0] vm_blen_o;
 reg vm_cyc_o;
 reg [31:0] vm_adr_o;
+reg vm_we_o;
+reg [MDW/8-1:0] vm_sel_o;
+fta_tranid_t vm_tid_o;
 
 // config
 reg [63:0] irq_msgadr = IRQ_MSGADR;
@@ -405,24 +460,19 @@ generate begin : gConfigSpace
 			.rst_i(rst_i),
 			.clk_i(s_clk_i),
 			.irq_i(irq),
-			.irq_o(irq_o),
-			.cs_config_i(cs_config), 
-			.we_i(we),
-			.sel_i(sel),
-			.adr_i(adri),
-			.dat_i(dat),
-			.dat_o(cfg_out),
+			.cs_i(cs_config), 
+			.req_i(reqd),
+			.resp_o(cfg_resp),
 			.cs_bar0_o(cs_fbc),
 			.cs_bar1_o(),
-			.cs_bar2_o(),
-			.irq_en_o(irq_en)
+			.cs_bar2_o()
 		);
 	end
 end
 endgenerate
 
-wire [15:0] map_page;
-wire [15:0] map_out;
+wire [BITS_IN_ADDR_MAP-1:0] map_page;
+wire [BITS_IN_ADDR_MAP-1:0] map_out;
 
    // xpm_memory_tdpram: True Dual Port RAM
    // Xilinx Parameterized Macro, version 2022.2
@@ -455,8 +505,8 @@ wire [15:0] map_out;
       .USE_MEM_INIT(1),               // DECIMAL
       .USE_MEM_INIT_MMI(0),           // DECIMAL
       .WAKEUP_TIME("disable_sleep"),  // String
-      .WRITE_DATA_WIDTH_A(16),        // DECIMAL
-      .WRITE_DATA_WIDTH_B(16),        // DECIMAL
+      .WRITE_DATA_WIDTH_A(BITS_IN_ADDR_MAP),        // DECIMAL
+      .WRITE_DATA_WIDTH_B(BITS_IN_ADDR_MAP),        // DECIMAL
       .WRITE_MODE_A("no_change"),     // String
       .WRITE_MODE_B("no_change"),     // String
       .WRITE_PROTECT(1)               // DECIMAL
@@ -477,16 +527,16 @@ wire [15:0] map_out;
                                        // on the data output of port B.
 
       .addra(adri[13:3]),              // ADDR_WIDTH_A-bit input: Address for port A write and read operations.
-      .addrb(vm_adr_o[26:16]),         // ADDR_WIDTH_B-bit input: Address for port B write and read operations.
+      .addrb(vm_adr_o[23:13]),         // ADDR_WIDTH_B-bit input: Address for port B write and read operations.
       .clka(s_clk_i),                  // 1-bit input: Clock signal for port A. Also clocks port B when
                                        // parameter CLOCKING_MODE is "common_clock".
 
-      .clkb(m_clk_i),                  // 1-bit input: Clock signal for port B when parameter CLOCKING_MODE is
+      .clkb(fbm.clk),                  // 1-bit input: Clock signal for port B when parameter CLOCKING_MODE is
                                        // "independent_clock". Unused when parameter CLOCKING_MODE is
                                        // "common_clock".
 
-      .dina(dat[15:0]),                // WRITE_DATA_WIDTH_A-bit input: Data input for port A write operations.
-      .dinb(16'd0),                    // WRITE_DATA_WIDTH_B-bit input: Data input for port B write operations.
+      .dina(dat[BITS_IN_ADDR_MAP-1:0]),  // WRITE_DATA_WIDTH_A-bit input: Data input for port A write operations.
+      .dinb({BITS_IN_ADDR_MAP{1'b0}}),   // WRITE_DATA_WIDTH_B-bit input: Data input for port B write operations.
       .ena(cs_map),                    // 1-bit input: Memory enable signal for port A. Must be high on clock
                                        // cycles when read or write operations are initiated. Pipelined
                                        // internally.
@@ -542,17 +592,19 @@ wire [15:0] map_out;
 
    );
 
-always_comb
-	m_req.padr <= {map_page,vm_adr_o[15:0]};
-	
-   // End of xpm_memory_tdpram_inst instantiation
-				
-delay3 #(1) udly1 (.clk(m_clk_i), .ce(1'b1), .i(vm_cyc_o), .o(m_req.cyc));
+delay3 #(3) udly0 (.clk(fbm.clk), .ce(1'b1), .i(vm_cmd_o), .o(fbm.req.cmd));
+delay3 #(1) udly1 (.clk(fbm.clk), .ce(1'b1), .i(vm_cyc_o), .o(fbm.req.cyc));
+delay3 #(1) udly2 (.clk(fbm.clk), .ce(1'b1), .i(vm_we_o), .o(fbm.req.we));
+delay3 #(MDW/8) udly3 (.clk(fbm.clk), .ce(1'b1), .i(vm_sel_o), .o(fbm.req.sel));
+delay3 #(32) udly4 (.clk(fbm.clk), .ce(1'b1), .i(vm_adr_o), .o(fbm.req.vadr));
+delay3 #(13) udly5 (.clk(fbm.clk), .ce(1'b1), .i(vm_adr_o[12:0]), .o(fbm.req.padr[12:0]));
+delay1 #(32) udly8 (.clk(fbm.clk), .ce(1'b1), .i({1'b0,map_page}), .o(fbm.req.padr[31:13]));
+delay3 #(13) udly6 (.clk(fbm.clk), .ce(1'b1), .i(vm_tid_o), .o(fbm.req.tid));
+delay3 #(6) udly7 (.clk(fbm.clk), .ce(1'b1), .i(vm_blen_o), .o(fbm.req.blen));
 
-`ifdef INTERNAL_SYNC_GEN
-wire hsync_i, vsync_i, blank_i;
 wire vblank;
-
+generate begin : gSyncGen
+if (INTERNAL_SYNCGEN) begin
 VGASyncGen usg1
 (
 	.rst(rst_i),
@@ -561,8 +613,8 @@ VGASyncGen usg1
 	.eof(),
 	.hSync(hsync_o),
 	.vSync(vsync_o),
-	.hCtr(hctr_o),
-	.vCtr(vctr_o),
+	.hCtr(),
+	.vCtr(),
   .blank(blank_o),
   .vblank(vblank),
   .vbl_int(),
@@ -582,11 +634,17 @@ VGASyncGen usg1
   .vBorderOn_i(vBorderOn),
   .vBorderOff_i(vBorderOff)
 );
-assign hsync_i = hsync_o;
-assign vsync_i = vsync_o;
-assign blank_i = blank_o;
 assign vblank_o = vblank;
-`endif
+end
+else begin
+assign hsync_o = hsync_i;
+assign vsync_o = vsync_i;
+assign blank_o = blank_i;
+assign border_o = border_i;
+assign vblank_o = 1'b0;
+end
+end
+endgenerate
 
 edge_det edcs1
 (
@@ -599,8 +657,32 @@ edge_det edcs1
 	.ee()
 );
 
+vid_counter #(16) u_hctr 
+(
+	.rst(rst_i),
+	.clk(vclk),
+	.ce(1'b1),
+	.ld(pe_hsync),
+	.d(16'h0),
+	.q(hctr),
+	.tc()
+);
+
+// Raw scanline counter
+vid_counter #(12) u_vctr
+(
+	.rst(rst_i),
+	.clk(vclk),
+	.ce(pe_hsync),
+	.ld(pe_vsync),
+	.d(12'h0),
+	.q(scanline),
+	.tc()
+);
+
 // Frame counter
 //
+wire [5:0] fctr_o;
 VT163 #(6) ub1
 (
 	.clk(vclk),
@@ -617,7 +699,7 @@ always_ff @(posedge vclk)
 if (rst_i)
 	irq <= LOW;
 else begin
-	if (hctr_o==12'd02 && rastcmp==vctr_o)
+	if (hctr==16'd02 && rastcmp==scanline)
 		irq <= HIGH;
 	else if (rst_irq|rst_irq2)
 		irq <= LOW;
@@ -632,7 +714,7 @@ always_comb
 fb_palram upal1	// Actually 1024x64
 (
   .clka(s_clk_i),    // input wire clka
-  .ena(cs & adri[13]),      // input wire ena
+  .ena(cs_reg & adri[13]),      // input wire ena
   .wea({8{we}}&sel),      // input wire [3 : 0] wea
   .addra(adri[12:3]),  // input wire [8 : 0] addra
   .dina(dat),    			// input wire [31 : 0] dina
@@ -653,8 +735,18 @@ if (rst_i) begin
 	pals <= 4'h0;
 	hres <= 3'd1;
 	vres <= 3'd1;
+`ifdef WXGA800x600	
 	windowWidth <= 12'd800;
 	windowHeight <= 12'd600;
+	bmpWidth <= 16'd800;
+	bmpHeight <= 16'd600;
+`endif
+`ifdef WXGA1366x768
+	windowWidth <= 12'd1366;
+	windowHeight <= 12'd768;
+	bmpWidth <= 16'd1360;
+	bmpHeight <= 16'd768;
+`endif
 	onoff <= 1'b1;
 	color_depth <= BPP16;
 	color_depth2 <= BPP16;
@@ -665,11 +757,9 @@ if (rst_i) begin
 	vrefdelay <= 16'hFFEA;//16'hFFF3;12'd13;
 	windowLeft <= 16'h0;
 	windowTop <= 16'h0;
-	windowWidth <= 16'd800;
-	windowHeight <= 16'd600;
 	bmpWidth <= 16'd800;
 	bmpHeight <= 16'd600;
-	map <= MAP;
+	burst_interval <= BURST_INTERVAL;
 	pcmd <= 2'b00;
 	rstcmd1 <= 1'b0;
 	rst_irq <= 1'b0;
@@ -677,6 +767,16 @@ if (rst_i) begin
 	oob_color <= 32'h00003C00;
 	irq_msgadr <= IRQ_MSGADR;
 	irq_msgdat <= IRQ_MSGDAT;
+	hTotal <= phTotal;
+	vTotal <= pvTotal;
+	hSyncOn <= phSyncOn; hSyncOff <= phSyncOff;
+	vSyncOn <= pvSyncOn; vSyncOff <= pvSyncOff;
+	hBlankOn <= phBlankOn; hBlankOff <= phBlankOff;
+	vBlankOn <= pvBlankOn; vBlankOff <= pvBlankOff;
+	hBorderOn <= phBorderOn; hBorderOff <= phBorderOff;
+	vBorderOn <= pvBorderOn; vBorderOff <= pvBorderOff;
+	max_nburst <= 6'd1;		// 2 bursts of 25 = 50 accesses for 800 pixels
+	burst_len <= 6'd49;		//
 end
 else begin
 	color_depth2 <= color_depth;
@@ -702,7 +802,9 @@ else begin
 					page <= dat[24];
 					pals <= dat[28:25];
 					end
-					if (|sel[7:6]) map <= dat[59:48];
+					if (sel[4]) burst_len <= dat[37:32];
+					if (sel[5]) max_nburst <= dat[45:40];
+					if (|sel[7:6]) burst_interval <= dat[59:48];
 				end
 			REG_REFDELAY:
 				begin
@@ -768,7 +870,6 @@ else begin
 					if (sel[7]) irq_msgdat <= dat[63:56];
 				end
 
-`ifdef INTERNAL_SYNC_GEN
 			REG_TOTAL:
 				begin
 					if (!sgLock) begin
@@ -803,7 +904,6 @@ else begin
 					if (|sel[5:4]) vBorderOff <= dat[43:32];
 					if (|sel[7:6]) vBorderOn <= dat[59:48];
 				end
-`endif
       default:  ;
 			endcase
 		end
@@ -821,7 +921,7 @@ else begin
 		          s_dat_o[24] <= page;
 		          s_dat_o[28:25] <= pals;
 		          s_dat_o[47:32] <= bmpWidth;
-		          s_dat_o[59:48] <= map;
+		          s_dat_o[59:48] <= burst_interval;
 		      end
 		  REG_REFDELAY:		s_dat_o <= {32'h0,vrefdelay,hrefdelay};
 		  REG_PAGE1ADDR:	s_dat_o <= bm_base_addr1;
@@ -850,7 +950,7 @@ else begin
 		  {REG_CTRL,1'b1}:
 		      begin
 		          s_dat_o[15: 0] <= bmpWidth;
-		          s_dat_o[27:16] <= map;
+		          s_dat_o[27:16] <= burst_interval;
 		      end
 		  {REG_REFDELAY,1'b0}:	s_dat_o <= {vrefdelay,hrefdelay};
 		  {REG_PAGE1ADDR,1'b0}:	s_dat_o <= bm_base_addr1;
@@ -874,8 +974,10 @@ else begin
 		s_dat_o <= {40'h0,map_out};
 	else if (cs_config)
 		s_dat_o <= cfg_out;
+	else if (irq)
+		s_dat_o <= {2{irq_msgdat}};
 	else
-		s_dat_o <= 'h0;
+		s_dat_o <= 64'h0;
 end
 
 //`ifdef USE_CLOCK_GATE
@@ -902,7 +1004,7 @@ edge_det edh1
 	.rst(rst_i),
 	.clk(vclk),
 	.ce(1'b1),
-	.i(hsync_i),
+	.i(hsync_o),
 	.pe(pe_hsync),
 	.ne(),
 	.ee()
@@ -911,7 +1013,7 @@ edge_det edh1
 edge_det edh2
 (
 	.rst(rst_i),
-	.clk(m_clk_i),
+	.clk(fbm.clk),
 	.ce(1'b1),
 	.i(hsync_i),
 	.pe(pe_hsync2),
@@ -924,7 +1026,7 @@ edge_det edv1
 	.rst(rst_i),
 	.clk(vclk),
 	.ce(1'b1),
-	.i(vsync_i),
+	.i(vsync_o),
 	.pe(pe_vsync),
 	.ne(),
 	.ee()
@@ -974,39 +1076,22 @@ BPP32:	bpp = 31;
 default:	bpp = 15;
 endcase
 
-reg [5:0] shifts;
+// Bytes per pixel.
+reg [2:0] bytpp;
 always_comb
-case(MDW)
-128:
-	case(color_depth2)
-	BPP8: 	shifts = 6'd16;
-	BPP16:	shifts = 6'd8;
-	BPP24:	shifts = 6'd5;
-	BPP32:	shifts = 6'd4;
-	default:  shifts = 6'd8;
-	endcase
-64:
-	case(color_depth2)
-	BPP8: 	shifts = 6'd8;
-	BPP16:	shifts = 6'd4;
-	BPP24:	shifts = 6'd2;
-	BPP32:	shifts = 6'd2;
-	default:  shifts = 6'd4;
-	endcase
-32:
-	case(color_depth2)
-	BPP8: 	shifts = 6'd4;
-	BPP16:	shifts = 6'd2;
-	BPP24:	shifts = 6'd1;
-	BPP32:	shifts = 6'd1;
-	default:  shifts = 6'd2;
-	endcase
-default:
-	begin
-	$display("rfFramBuffer_fta64: Bad master bus width");
-	$finish;
-	end
+case(color_depth2)
+BPP8:	bytpp = 1;
+BPP16:	bytpp = 2;
+BPP24:	bytpp = 3;
+BPP32:	bytpp = 4;
+default:	bytpp = 2;
 endcase
+
+modCalcShifts ucalcshft 
+(
+	.color_depth(color_depth2),
+	.shifts(shifts)
+);
 
 wire vFetch = !vblank;//pixelRow < windowHeight;
 reg fifo_rrst;
@@ -1016,15 +1101,20 @@ always_comb fifo_wrst = pe_hsync2 && vc==4'd1;
 
 wire[31:0] grAddr,xyAddr;
 reg [11:0] fetchCol;
-localparam CMS = MDW==128 ? 6 : MDW==64 ? 5 : 4;
+localparam CMS = MDW==256 ? 7 : MDW==128 ? 6 : MDW==64 ? 5 : 4;
 wire [CMS:0] mb,me,ce;
 reg [MDW-1:0] mem_strip;
 wire [MDW-1:0] mem_strip_o;
 
-// Compute fetch address
-gfx_calc_address #(.SW(MDW)) u1
+// Compute fetch address, this is the first address on a pixel row.
+gfx_calc_address 
+#(
+	.SW(MDW),
+	.BN(7)
+)
+u1
 (
-  .clk(m_clk_i),
+  .clk(fbm.clk),
 	.base_address_i(baseAddr),
 	.color_depth_i(color_depth2),
 	.bmp_width_i(bmpWidth),
@@ -1037,9 +1127,14 @@ gfx_calc_address #(.SW(MDW)) u1
 );
 
 // Compute address for get/set pixel
-gfx_calc_address #(.SW(MDW)) u2
+gfx_calc_address
+#(
+	.SW(MDW),
+	.BN(7)
+)
+u2
 (
-  .clk(m_clk_i),
+  .clk(fbm.clk),
 	.base_address_i(baseAddr),
 	.color_depth_i(color_depth2),
 	.bmp_width_i(bmpWidth),
@@ -1051,41 +1146,50 @@ gfx_calc_address #(.SW(MDW)) u2
 	.ce_o(ce)
 );
 
-always_ff @(posedge m_clk_i)
-if (pe_hsync2)
-  mapctr <= 12'hFFE;
-else begin
-  if (mapctr == map)
-    mapctr <= 12'd0;
-  else
-    mapctr <= mapctr + 12'd1;
-end
-wire memreq = mapctr==12'd0 && vc==4'd1;
+wire memreq,first_memreq;
+modMemReqGen umrgen1
+(
+	.rst(rst_i),
+	.clk(fbm.clk),
+	.burst_len(burst_len),
+	.max_nburst(max_nburst),
+	.pe_hsync(pe_hsync2),
+	.on(onoff | xonoff_i),
+	.vFetch(vFetch),
+	.ack(vm_cyc_o && vm_tid_o[3:0]==4'h0),
+	.vc(vc),
+	.burst_interval(burst_interval),
+	.memreq(memreq),
+	.first_memreq(first_memreq)
+);
 
 // The following bypasses loading the fifo when all the pixels from a scanline
 // are buffered in the fifo and the pixel row doesn't change. Since the fifo
 // pointers are reset at the beginning of a scanline, the fifo can be used like
 // a cache.
 wire blankEdge;
-edge_det ed2(.rst(rst_i), .clk(m_clk_i), .ce(1'b1), .i(blank_i), .pe(blankEdge), .ne(), .ee() );
+edge_det ed2(.rst(rst_i), .clk(fbm.clk), .ce(1'b1), .i(blank_i), .pe(blankEdge), .ne(), .ee() );
 reg do_loads;
 reg load_fifo = 1'b0;
-always_ff @(posedge m_clk_i)
+//always_ff @(posedge fbm.clk)
 	//load_fifo <= fifo_cnt < 10'd1000 && vFetch && onoff && xonoff && !m_cyc_o && do_loads;
-	load_fifo <= /*fifo_cnt < 8'd224 &&*/ vFetch && onoff && xonoff_i && (fetchCol < windowWidth) && memreq;
+//	load_fifo <= /*fifo_cnt < 8'd224 &&*/ vFetch && onoff && xonoff_i && (fetchCol < windowWidth) && memreq;
+
 // The following table indicates the number of pixel that will fit into the
-// video fifo. 
-reg [11:0] hCmp;
-always_comb
-case(color_depth2)
-BPP8:	hCmp = 12'd2048;
-BPP16:	hCmp = 12'd1024;
-BPP24:	hCmp = 12'd640;
-BPP32:	hCmp = 12'd512;
-default:	hCmp = 12'd1024;
-endcase
+// video fifo. The fifo contains 256 rows that are MDW bits wide.
+wire [15:0] hCmp;
+modPixelsInFifo 
+#(
+	.MDW(256),
+	.FIFO_DEPTH(256)
+)
+upif1
+(
+	.color_depth(color_depth2),
+	.pif(hCmp)
+);
 /*
-always @(posedge m_clk_i)
+always @(posedge fbm.clk)
 	// if windowWidth > hCmp we always load because the fifo isn't large enough to act as a cache.
 	if (!(windowWidth < hCmp))
 		do_loads <= 1'b1;
@@ -1095,29 +1199,25 @@ always @(posedge m_clk_i)
 	else if (blankEdge)
 		do_loads <= 1'b0;
 */
-always_comb m_req.bte = fta_bus_pkg::LINEAR;
-always_comb m_req.cti = fta_bus_pkg::CLASSIC;
-always_comb m_req.blen = 6'd63;
-always_comb m_req.stb = m_req.cyc;
-always_comb m_req.cid = 'd0;
-always_comb m_req.tid = 15'h1234;
+always_comb fbm.req.bte = fta_bus_pkg::LINEAR;
+always_comb fbm.req.cti = fta_bus_pkg::CLASSIC;
+always_comb fbm.req.stb = fbm.req.cyc;
+always_comb fbm.req.om = 2'd0;
+always_comb fbm.req.sz = 4'd0;
+always_comb fbm.req.asid = 16'd0;
+always_comb fbm.req.ctag = 1'b0;
+always_comb fbm.req.data2 = 256'd0;
+always_comb fbm.req.csr = 1'b0;
+always_comb fbm.req.key[0] = 20'd0;
+always_comb fbm.req.key[1] = 20'd0;
+always_comb fbm.req.key[2] = 20'd0;
+always_comb fbm.req.key[3] = 20'd0;
+always_comb fbm.req.pl = 8'h00;
+always_comb fbm.req.pri = 4'd7;
+always_comb fbm.req.cache = 4'd0;
 
-reg [31:0] adr;
-typedef enum logic [3:0] {
-	IDLE = 4'd0,
-	LOADCOLOR = 4'd2,
-	LOADSTRIP = 4'd3,
-	STORESTRIP = 4'd4,
-	ACKSTRIP = 4'd5,
-	WAITLOAD = 4'd6,
-	WAITRST = 4'd7,
-	ICOLOR1 = 4'd8,
-	ICOLOR2 = 4'd9,
-	ICOLOR3 = 4'd10,
-	ICOLOR4 = 4'd11,
-	LOAD_OOB = 4'd12
-} state_t;
-state_t state;
+wire [31:0] adr;
+fb_state_t state;
 reg [127:0] icolor1;
 
 function rastop;
@@ -1141,23 +1241,22 @@ default:	rastop = 1'b0;
 endcase
 endfunction
 
-always_ff @(posedge m_clk_i)
-	if (fifo_wrst)
-		adr <= grAddr;
-  else begin
-    if ((state==WAITLOAD && (m_resp.ack|tocnt[10])) || state==LOAD_OOB)
-    	case(MDW)
-    	32:		adr <= adr + 32'd4;
-    	64:		adr <= adr + 32'd8;
-    	default:	adr <= adr + 32'd16;
-    	endcase
-  end
+modAddrGen uaddrgen1
+(
+	.rst(fifo_wrst),
+	.clk(fbm.clk),
+	.state(state),
+	.grAddr(grAddr),
+	.ack(fbm.resp.ack),
+	.tocnt(tocnt),
+	.adr(adr)
+);
 
-always_ff @(posedge m_clk_i)
+always_ff @(posedge fbm.clk)
 	if (fifo_wrst)
 		fetchCol <= 12'd0;
   else begin
-    if ((state==WAITLOAD && (m_resp.ack|tocnt[10])) || state==LOAD_OOB)
+    if ((state==WAITLOAD && (fbm.resp.ack|tocnt[10])) || state==LOAD_OOB)
       fetchCol <= fetchCol + shifts;
   end
 
@@ -1171,87 +1270,90 @@ always_comb legal_y = ~&pixelRow[15:12] && pixelRow < bmpHeight;
 reg modd;
 always_comb
 	case(MDW)
-	32:	modd <= m_req.padr[5:2]==4'hF;
-	64:	modd <= m_req.padr[5:3]==3'h7;
-	default:	modd <= m_req.padr[5:4]==2'h3;
+	32:	modd <= fbm.req.padr[5:2]==4'hF;
+	64:	modd <= fbm.req.padr[5:3]==3'h7;
+	128:	modd <= fbm.req.padr[5:4]==2'h3;
+	256:	modd <= fbm.req.padr[5]==1'h1;
+	default:	modd <= fbm.req.padr[5]==1'h1;
 	endcase
 
-always_ff @(posedge m_clk_i)
-if (rst_i)
-	tocnt <= 'd0;
-else begin
-	if (m_req.cyc)
-		tocnt <= tocnt + 2'd1;
-	else
-		tocnt <= 'd0;
-end
+// Bus timeout counter
+modTocnt utocnt1
+(
+	.rst(rst_i),
+	.clk(fbm.clk),
+	.cyc(fbm.req.cyc),
+	.ack(fbm.resp.ack),
+	.tocnt(tocnt)
+);
 
-always_ff @(posedge m_clk_i, posedge rst_i)
-if (rst_i) begin
+reg [31:0] next_adr;
+
+always_ff @(posedge fbm.clk)
+if (fbm.rst) begin
+	vm_blen_o <= 6'd0;
+	vm_cmd_o <= fta_bus_pkg::CMD_LOADZ;
 	vm_cyc_o <= LOW;
-	m_req.we <= LOW;
-	m_req.sel <= 'd0;
-	vm_adr_o <= 'd0;
+	vm_we_o <= LOW;
+	vm_sel_o <= {MDW/8{1'b0}};
+	vm_adr_o <= 32'd0;
+	vm_tid_o <= {CORENO,CHANNEL,4'h0};
   rstcmd <= 1'b0;
-  state <= IDLE;
+  state <= FB_IDLE;
   rst_irq2 <= 1'b0;
+  next_adr <= 32'd0;
+	m_fst_o <= LOW;
 end
 else begin
   wb_nack();
   rst_irq2 <= 1'b0;
-	if (fifo_wrst)
+	if (fifo_wrst) begin
 		m_fst_o <= HIGH;
+	end
+
+	// For burst only a single request is submitted, but many repsonses may occur
+	if (memreq && !m_rst_busy_i) begin
+		m_fst_o <= LOW;
+		vm_blen_o <= burst_len;
+		vm_tid_o <= {CORENO,CHANNEL,4'h0};
+		vm_cmd_o <= fta_bus_pkg::CMD_LOADZ;
+    vm_cyc_o <= HIGH;
+    vm_we_o <= LOW;//m_fst_o;
+    vm_sel_o <= {MDW/8{1'b1}};
+    if (m_fst_o) begin
+	    vm_adr_o <= adr;
+    	next_adr <= adr + MDW/8;
+    end
+    else begin
+	    vm_adr_o <= next_adr;
+	    next_adr <= next_adr + ({10'd0,burst_len} + 2'd1) * (MDW/8);
+	  end
+	end
+
 	case(state)
   WAITRST:
-    if (pcmd==2'b00 && ~m_resp.ack) begin
+    if (pcmd==2'b00) begin
       rstcmd <= 1'b0;
-      state <= IDLE;
+      state <= FB_IDLE;
     end
     else
       rstcmd <= 1'b1;
-  IDLE:
+
+  // Wait for a plot pixel or get pixel command, then process.
+  FB_IDLE:
+/*
   	if (load_fifo && !(legal_x && legal_y))
  			state <= LOAD_OOB;
-    else if (load_fifo & ~m_resp.ack) begin
-      vm_cyc_o <= HIGH;
-      vm_adr_o <= adr;
-      m_req.sel <= 16'hFFFF;
-      state <= WAITLOAD;
-    end
-    // Send an IRQ message if needed.
-    else if (irq & ~m_resp.ack & MSIX) begin
-    	vm_cyc_o <= HIGH;
-    	vm_adr_o <= irq_msgadr;
-    	m_req.we <= HIGH;
-    	m_req.sel <= irq_msgadr[3] ? 16'hFF00 : 16'h00FF;
-    	m_req.data1 <= {2{irq_msgdat}};
-    	rst_irq2 <= 1'b1;
-    end
-    // The adr_o[5:3]==3'b111 causes the controller to wait until all eight
-    // 64 bit strips from the memory controller have been processed. Otherwise
-    // there would be cache thrashing in the memory controller and the memory
-    // bandwidth available would be greatly reduced. However fetches are also
-    // allowed when loads are not active or all strips for the current scan-
-    // line have been fetched.
-    else if (pcmd!=2'b00 && (modd || !(vFetch && onoff && xonoff_i && fetchCol < windowWidth))) begin
+*/    
+    if (pcmd!=2'b00 && !m_rst_busy_i) begin
+    	vm_blen_o <= 6'd0;
+			vm_tid_o <= {CORENO,CHANNEL,2'b0,pcmd[1:0]};
+			vm_cmd_o <= fta_bus_pkg::CMD_LOADZ;
       vm_cyc_o <= HIGH;
       vm_adr_o <= xyAddr;
-      m_req.sel <= 16'hFFFF;
-      state <= LOADSTRIP;
-    end
-  LOADSTRIP:
-    if (m_resp.ack|tocnt[10]) begin
-      wb_nack();
-      mem_strip <= m_resp.dat;
-      icolor1 <= {96'b0,color} << mb;
-      rstcmd <= 1'b1;
-      if (pcmd==2'b01)
-        state <= ICOLOR3;
-      else if (pcmd==2'b10)
-        state <= ICOLOR2;
-      else begin
-        state <= WAITRST;
-      end
+      vm_we_o <= LOW;
+      vm_sel_o <= {MDW/8{1'b1}};
+      state <= WAITLOAD;
     end
   // Registered inline mem2color
   ICOLOR3:
@@ -1263,64 +1365,70 @@ else begin
     begin
       for (n = 0; n < 32; n = n + 1)
         color_o[n] <= (n <= bpp) ? color_o[n] : 1'b0;
-      state <= pcmd == 2'b0 ? (~m_resp.ack ? IDLE : WAITRST) : WAITRST;
       if (pcmd==2'b00)
         rstcmd <= 1'b0;
+      state <= pcmd != 2'b0 ? WAITRST : FB_IDLE;
     end
   // Registered inline color2mem
   ICOLOR2:
     begin
       for (n = 0; n < MDW; n = n + 1)
-        m_req.data1[n] <= (n >= mb && n <= me)
+        fbm.req.data1[n] <= (n >= mb && n <= me)
         	? ((n <= ce) ?	rastop(raster_op, mem_strip[n], icolor1[n]) : icolor1[n])
         	: mem_strip[n];
       state <= STORESTRIP;
     end
   STORESTRIP:
-    if (~m_resp.ack) begin
+    if (!memreq && !m_rst_busy_i) begin
+    	vm_blen_o <= 6'd0;
+			vm_tid_o <= {CORENO,CHANNEL,4'h3};
+			vm_cmd_o <= fta_bus_pkg::CMD_STORE;
       vm_cyc_o <= HIGH;
-      m_req.we <= HIGH;
-      m_req.sel <= 16'hFFFF;
+      vm_we_o <= HIGH;
+      vm_sel_o <= {MDW/8{1'b1}};
       vm_adr_o <= xyAddr;
-      state <= ACKSTRIP;
-    end
-  ACKSTRIP:
-    if (m_resp.ack|tocnt[10]) begin
-      wb_nack();
-      state <= pcmd == 2'b0 ? IDLE : WAITRST;
-      if (pcmd==2'b00)
-        rstcmd <= 1'b0;
+      state <= pcmd != 2'b0 ? WAITRST : FB_IDLE;
     end
   WAITLOAD:
-    if (m_resp.ack|tocnt[10]) begin
-      wb_nack();
-      state <= IDLE;
-    end
+  	;
   LOAD_OOB:
-  	state <= IDLE;
-  default:	state <= IDLE;
+  	state <= FB_IDLE;
+  default:	state <= FB_IDLE;
   endcase
+
+	// Process responses from memory
+  if (fbm.resp.ack|tocnt[10]) begin
+  	case(fbm.resp.tid.tranid)
+  	4'd1:	// Get pixel
+  		begin
+	      mem_strip <= fbm.resp.dat;
+	      icolor1 <= {224'b0,color} << mb;
+	      rstcmd <= 1'b1;
+        state <= ICOLOR3;
+  		end
+  	4'd2:	// Plot pixesl (RMW cycle)
+  		begin
+	      mem_strip <= fbm.resp.dat;
+	      icolor1 <= {224'b0,color} << mb;
+	      rstcmd <= 1'b1;
+        state <= ICOLOR2;
+  		end
+  	default:	;
+  	endcase
+  end
 end
 
 task wb_nack;
 begin
-	m_fst_o <= LOW;
+	vm_cmd_o <= fta_bus_pkg::CMD_LOADZ;
 	vm_cyc_o <= LOW;
-	m_req.we <= LOW;
-	m_req.sel <= 16'h0000;
+	vm_we_o <= LOW;
+	vm_sel_o <= {MDW/8{1'b0}};
 end
 endtask
 
-reg [31:0] rgbo2,rgbo4;
-reg [MDW-1:0] rgbo3;
-always_ff @(posedge vclk)
-case(color_depth2)
-BPP8:	rgbo4 <= {24'h0,rgbo3[7:0]};		// feeds into palette
-BPP16:	rgbo4 <= {rgbo3[15:10],5'b0,rgbo3[9:5],5'b0,rgbo3[4:0],5'b0};
-BPP24:	rgbo4 <= {rgbo3[23:16],2'b0,rgbo3[15:8],2'b0,rgbo3[7:0],2'b0};
-BPP32:	rgbo4 <= {rgbo3[29:20],rgbo3[19:10],rgbo3[9:0]};
-default:	rgbo4 <= {rgbo3[15:10],5'b0,rgbo3[9:5],5'b0,rgbo3[4:0],5'b0};
-endcase
+reg [31:0] rgbo2;
+wire [31:0] rgbo3, rgbo4;
 
 reg rd_fifo,rd_fifo1,rd_fifo2;
 /*
@@ -1330,47 +1438,21 @@ always_ff @(posedge vclk)
 		de <= ~blank_i;
 */
 
-always_ff @(posedge vclk)
-	if (onoff && xonoff_i && !blank_i) begin
-		if (color_depth2==BPP8) begin
-			if (!greyscale)
-				zrgb <= pal_o;
-			else
-				zrgb <= {pal_o[31:30],pal_o[9:0],pal_o[9:0],pal_o[9:0]};
-		end
-		else
-			zrgb <= rgbo4;
-	end
-	else
-		zrgb <= 32'h00000000;
-always_ff @(posedge vclk)
-	if (zrgb==trans_color)
-		rgb_o <= rgb_i;
-	else
-		rgb_o <= zrgb;
-
 // Before the hrefdelay expires, pixelCol will be negative, which is greater
 // than windowWidth as the value is unsigned. That means that fifo reading is
 // active only during the display area 0 to windowWidth.
 reg shift1;
 always_comb shift1 = hc==hres;
-reg [5:0] shift_cnt;
-always_ff @(posedge vclk)
-if (pe_hsync)
-	shift_cnt <= 5'd1;
-else begin
-	if (shift1) begin
-		if (pixelCol==16'hFFFF)
-			shift_cnt <= shifts;
-		else if (!pixelCol[15]) begin
-			shift_cnt <= shift_cnt + 5'd1;
-			if (shift_cnt==shifts)
-				shift_cnt <= 5'd1;
-		end
-		else
-			shift_cnt <= 5'd1;
-	end
-end
+modShiftCntr ushftcnt1
+(
+	.clk(vclk),
+	.pe_hsync(pe_hsync),
+	.hc(hc),
+	.hres(hres),
+	.pixel_col(pixelCol),
+	.shifts(shifts),
+	.shift_cnt(shift_cnt)
+);
 
 reg next_strip;
 always_comb next_strip = (shift_cnt==shifts) && (hc==hres);
@@ -1381,19 +1463,41 @@ always_ff @(posedge vclk) shift2 <= shift1;
 always_ff @(posedge vclk) shift <= shift2;
 always_ff @(posedge vclk) rd_fifo2 <= next_strip;
 always_ff @(posedge vclk) rd_fifo <= rd_fifo2;
-always_ff @(posedge vclk)
-	if (rd_fifo)
-		rgbo3 <= lef ? rgbo1o : rgbo1e;
-	else if (shift) begin
-		case(color_depth2)
-		BPP8:	rgbo3 <= {8'h0,rgbo3[MDW-1:8]};
-		BPP16:	rgbo3 <= {16'h0,rgbo3[MDW-1:16]};
-		BPP24:	rgbo3 <= {24'h0,rgbo3[MDW-1:24]};
-		BPP32:	rgbo3 <= {32'h0,rgbo3[MDW-1:32]};
-		default: rgbo3 <= {16'h0,rgbo3[MDW-1:16]};
-		endcase
-	end
 
+modMuxRgbo3 #(.MDW(MDW)) umuxrgbo31
+(
+	.clk(vclk),
+	.rd_fifo(rd_fifo),
+	.lef(lef),
+	.rgbo1o(rgbo1o),
+	.rgbo1e(rgbo1e),
+	.shift(shift),
+	.color_depth(color_depth2),
+	.rgbo(rgbo3)
+);
+
+modMuxRgbo4 umuxrgbo41
+(
+	.clk(vclk),
+	.color_depth(color_depth2),
+	.rgbo3(rgbo3),
+	.rgbo4(rgbo4)
+);
+
+modMuxRgbo umuxrgbo1
+(
+	.clk(vclk),
+	.onoff(onoff),
+	.xonoff(xonoff_i),
+	.blank(blank_i),
+	.color_depth(color_depth2),
+	.greyscale(greyscale),
+	.pal_o(pal_o),
+	.trans_color(trans_color),
+	.rgbo4(rgbo4),
+	.rgb_i(rgb_i),
+	.rgb_o(rgb_o)
+);
 
 /* Debugging
 wire [127:0] dat;
@@ -1409,22 +1513,25 @@ assign dat[107:96] = pixelRow[8] ? 12'hEA4 : 12'h000;
 assign dat[119:108] = pixelRow[9] ? 12'hEA4 : 12'h000;
 */
 
-reg [MDW-1:0] oob_dat;
-always_comb
-case(color_depth2)
-BPP8:	oob_dat <= {MDW/8{oob_color[7:0]}};
-BPP16:	oob_dat <= {MDW/16{oob_color[15:0]}};
-BPP24:	oob_dat <= {MDW/24{oob_color[23:0]}};
-BPP32:	oob_dat <= {MDW/32{oob_color[31:0]}};
-default:	oob_dat <= {MDW/16{oob_color[15:0]}};
-endcase
+wire [MDW-1:0] oob_dat;
+modOobColor #(.MDW(MDW)) uoobdat1
+(
+	.color_depth(color_depth2),
+	.oob_color(oob_color),
+	.oob_dat(oob_dat)
+);
 
-rfVideoFifo #(MDW) uf1
+// Could maybe set pixel color here on timeout, otherwise likely random data
+// will be used for the color.
+
+rescan_fifo #(.WIDTH(MDW), .DEPTH(256)) uf1
 (
 	.wrst(fifo_wrst),
-	.wclk(m_clk_i),
-	.wr((((m_resp.ack|tocnt[10]) && state==WAITLOAD) || state==LOAD_OOB) && lef),
-	.di((state==LOAD_OOB) ? oob_dat : m_resp.dat),
+	.wclk(fbm.clk),
+//	.wr((((fbm.resp.ack|tocnt[10]) && state==WAITLOAD) || state==LOAD_OOB) && lef),
+//	.di((state==LOAD_OOB) ? oob_dat : fbm.resp.dat),
+	.wr(((fbm.resp.ack && fbm.resp.tid.tranid==4'h0)|tocnt[10]) && lef),
+	.din(fbm.resp.dat),
 	.rrst(fifo_rrst),
 	.rclk(vclk),
 	.rd(rd_fifo & lof),
@@ -1432,12 +1539,12 @@ rfVideoFifo #(MDW) uf1
 	.cnt()
 );
 
-rfVideoFifo #(MDW) uf2
+rescan_fifo #(.WIDTH(MDW), .DEPTH(256)) uf2
 (
 	.wrst(fifo_wrst),
-	.wclk(m_clk_i),
-	.wr((((m_resp.ack|tocnt[10]) && state==WAITLOAD) || state==LOAD_OOB) && lof),
-	.di((state==LOAD_OOB) ? oob_dat : m_resp.dat),
+	.wclk(fbm.clk),
+	.wr(((fbm.resp.ack && fbm.resp.tid.tranid==4'h0)|tocnt[10]) && lof),
+	.din(fbm.resp.dat),
 	.rrst(fifo_rrst),
 	.rclk(vclk),
 	.rd(rd_fifo & lef),
@@ -1478,6 +1585,359 @@ else begin
 		else
 			mq <= mq + 3'd1;
 	end
+end
+
+endmodule
+
+// Compute the number of shifts required to empty out pixels in the memory
+// strip.
+
+module modCalcShifts(color_depth, shifts);
+input color_depth_t color_depth;
+output reg [5:0] shifts;
+
+parameter MDW=256;
+
+always_comb
+case(MDW)
+256:
+	case(color_depth)
+	BPP8: 	shifts = 6'd32;
+	BPP16:	shifts = 6'd16;
+	BPP24:	shifts = 6'd10;
+	BPP32:	shifts = 6'd8;
+	default:  shifts = 6'd16;
+	endcase
+128:
+	case(color_depth)
+	BPP8: 	shifts = 6'd16;
+	BPP16:	shifts = 6'd8;
+	BPP24:	shifts = 6'd5;
+	BPP32:	shifts = 6'd4;
+	default:  shifts = 6'd8;
+	endcase
+64:
+	case(color_depth)
+	BPP8: 	shifts = 6'd8;
+	BPP16:	shifts = 6'd4;
+	BPP24:	shifts = 6'd2;
+	BPP32:	shifts = 6'd2;
+	default:  shifts = 6'd4;
+	endcase
+32:
+	case(color_depth)
+	BPP8: 	shifts = 6'd4;
+	BPP16:	shifts = 6'd2;
+	BPP24:	shifts = 6'd1;
+	BPP32:	shifts = 6'd1;
+	default:  shifts = 6'd2;
+	endcase
+default:
+	begin
+	$display("rfFramBuffer_fta64: Bad master bus width");
+	$finish;
+	end
+endcase
+
+endmodule
+
+
+// Figure out when to request a strip of pixels.
+// burst_interval may be set to zero for a continuous fetch.
+// Fetching always starts at the leading edge of horizontal sync.
+// The burst interval should be often enough that the line cache (fifo) is
+// filled before the data is needed.
+
+module modMemReqGen(rst, clk, max_nburst, burst_len, on, pe_hsync, vFetch, ack, vc, burst_interval,
+	memreq, first_memreq);
+input rst;
+input clk;
+input [5:0] max_nburst;				// maximum number of bursts per scan-line
+input [5:0] burst_len;
+input on;
+input pe_hsync;
+input vFetch;
+input ack;										// 1 if memory access has started
+input [2:0] vc;
+input [11:0] burst_interval;	// how often to request memory
+output reg memreq;
+output reg first_memreq;			// first memreq on line
+
+reg first;
+reg memreq1;
+reg [11:0] bi_ctr;
+wire [5:0] nburst;
+
+modBurstCntr ubc1
+(
+	.rst(rst|pe_hsync),
+	.clk(clk),
+	.memreq(memreq),
+	.nburst(nburst)
+);
+
+always_ff @(posedge clk)
+if (rst|pe_hsync)
+  bi_ctr <= 12'hFFE;
+else begin
+  if (bi_ctr==burst_interval)
+    bi_ctr <= 12'd0;
+  else
+    bi_ctr <= bi_ctr + 12'd1;
+end
+
+always_ff @(posedge clk)
+if (rst|pe_hsync)
+	memreq1 <= FALSE;
+else begin
+	// vc ties the request to the first row of pixels
+	if (bi_ctr==12'd0 && vc==3'd1 && vFetch && on)
+		memreq1 <= TRUE;
+	else if (ack)
+		memreq1 <= FALSE;
+end
+
+assign memreq = memreq1;
+
+always_ff @(posedge clk)
+if (rst|pe_hsync)
+	first <= TRUE;
+else begin
+	if (memreq)
+		first <= FALSE;
+end
+
+always_comb first_memreq = memreq & first;
+
+endmodule
+
+
+// The following table indicates the number of pixel that will fit into the
+// video fifo. The fifo contains 256 rows that are MDW bits wide.
+
+module modPixelsInFifo(color_depth, pif);
+parameter MDW = 256;
+parameter FIFO_DEPTH = 256;
+input color_depth_t color_depth;
+output reg [15:0] pif;
+
+always_comb
+case(color_depth)
+BPP8:	pif = FIFO_DEPTH * MDW/8;
+BPP16:	pif = FIFO_DEPTH * MDW/16;
+BPP24:	pif = FIFO_DEPTH * (MDW/24);
+BPP32:	pif = FIFO_DEPTH * MDW/32;
+default:	pif = FIFO_DEPTH * MDW/16;
+endcase
+
+endmodule
+
+module modAddrGen(rst, clk, state, grAddr, ack, tocnt, adr);
+parameter MDW=256;
+input rst;
+input clk;
+input fb_state_t state;
+input [31:0] grAddr;
+input ack;
+input [11:0] tocnt;
+output reg [31:0] adr;
+
+always_ff @(posedge clk)
+if (rst)
+	adr <= grAddr;
+else begin
+  if ((state==WAITLOAD && (ack|tocnt[10])) || state==LOAD_OOB)
+  	case(MDW)
+  	32:		adr <= adr + 32'd4;
+  	64:		adr <= adr + 32'd8;
+  	128:	adr <= adr + 32'd16;
+  	256:	adr <= adr + 32'd32;
+  	default:	adr <= adr + 32'd32;
+  	endcase
+end
+
+endmodule
+
+module modTocnt(rst, clk, cyc, ack, tocnt);
+input rst;
+input clk;
+input cyc;
+input ack;
+output reg [11:0] tocnt;
+
+reg tocnt_act;
+
+always_ff @(posedge clk)
+if (rst)
+	tocnt_act <= FALSE;
+else begin
+	if (cyc)
+		tocnt_act <= TRUE;
+	else if (ack)
+		tocnt_act <= FALSE;
+end
+
+always_ff @(posedge clk)
+if (rst)
+	tocnt <= 12'd0;
+else begin
+	if (tocnt_act)
+		tocnt <= tocnt + 2'd1;
+	else
+		tocnt <= 12'd0;
+end
+
+endmodule
+
+module modShiftCntr(clk, pe_hsync, hc, hres, pixel_col, shifts, shift_cnt);
+input clk;
+input pe_hsync;
+input [2:0] hc;
+input [2:0] hres;
+input [15:0] pixel_col;
+input [5:0] shifts;
+output reg [5:0] shift_cnt;
+
+reg shift1;
+always_comb shift1 = hc==hres;
+
+always_ff @(posedge clk)
+if (pe_hsync)
+	shift_cnt <= 5'd1;
+else begin
+	if (shift1) begin
+		if (pixel_col==16'hFFFF)
+			shift_cnt <= shifts;
+		else if (!pixel_col[15]) begin
+			shift_cnt <= shift_cnt + 5'd1;
+			if (shift_cnt==shifts)
+				shift_cnt <= 5'd1;
+		end
+		else
+			shift_cnt <= 5'd1;
+	end
+end
+
+endmodule
+
+// This mux extracts pixels from the memory strip.
+
+module modMuxRgbo3(clk, rd_fifo, lef, rgbo1o, rgbo1e, shift, color_depth, rgbo);
+parameter MDW=256;
+input clk;
+input rd_fifo;
+input lef;
+input [MDW-1:0] rgbo1e;
+input [MDW-1:0] rgbo1o;
+input shift;
+input color_depth_t color_depth;
+output reg [31:0] rgbo;
+
+reg [MDW-1:0] rgbo3;
+
+always_ff @(posedge clk)
+	if (rd_fifo)
+		rgbo3 <= lef ? rgbo1o : rgbo1e;
+	else if (shift) begin
+		case(color_depth)
+		BPP8:	rgbo3 <= {8'h0,rgbo3[MDW-1:8]};
+		BPP16:	rgbo3 <= {16'h0,rgbo3[MDW-1:16]};
+		BPP24:	rgbo3 <= {24'h0,rgbo3[MDW-1:24]};
+		BPP32:	rgbo3 <= {32'h0,rgbo3[MDW-1:32]};
+		default: rgbo3 <= {16'h0,rgbo3[MDW-1:16]};
+		endcase
+	end
+
+always_comb rgbo = rgbo3[31:0];
+
+endmodule
+
+// This mux takes the color bits and converts them into a 32-bit value.
+
+module modMuxRgbo4(clk, color_depth, rgbo3, rgbo4);
+input clk;
+input color_depth_t color_depth;
+input [31:0] rgbo3;
+output reg [31:0] rgbo4;
+
+always_ff @(posedge clk)
+case(color_depth)
+BPP8:	rgbo4 <= {24'h0,rgbo3[7:0]};		// feeds into palette
+BPP16:	rgbo4 <= {rgbo3[14:10],5'b0,rgbo3[9:5],5'b0,rgbo3[4:0],5'b0};
+BPP24:	rgbo4 <= {rgbo3[23:16],2'b0,rgbo3[15:8],2'b0,rgbo3[7:0],2'b0};
+BPP32:	rgbo4 <= {rgbo3[29:20],rgbo3[19:10],rgbo3[9:0]};
+default:	rgbo4 <= {rgbo3[15:10],5'b0,rgbo3[9:5],5'b0,rgbo3[4:0],5'b0};
+endcase
+
+endmodule
+
+module modMuxRgbo(clk, onoff, xonoff, blank, color_depth, greyscale, pal_o, trans_color, rgbo4, rgb_i, rgb_o);
+input clk;
+input onoff;
+input xonoff;
+input blank;
+input color_depth_t color_depth;
+input greyscale;
+input [31:0] pal_o;
+input [31:0] trans_color;
+input [31:0] rgbo4;
+input [31:0] rgb_i;
+output reg [31:0] rgb_o;
+
+reg [31:0] zrgb;
+
+always_ff @(posedge clk)
+	if (onoff && xonoff && !blank) begin
+		if (color_depth==BPP8) begin
+			if (!greyscale)
+				zrgb <= pal_o;
+			else
+				zrgb <= {pal_o[31:30],pal_o[9:0],pal_o[9:0],pal_o[9:0]};
+		end
+		else
+			zrgb <= rgbo4;
+	end
+	else
+		zrgb <= 32'h00000000;
+
+always_ff @(posedge clk)
+	if (zrgb==trans_color)
+		rgb_o <= rgb_i;
+	else
+		rgb_o <= zrgb;
+
+endmodule
+
+module modOobColor(color_depth, oob_color, oob_dat);
+parameter MDW=256;
+input color_depth_t color_depth;
+input [31:0] oob_color;
+output reg [MDW-1:0] oob_dat;
+
+always_comb
+case(color_depth)
+BPP8:	oob_dat <= {MDW/8{oob_color[7:0]}};
+BPP16:	oob_dat <= {MDW/16{oob_color[15:0]}};
+BPP24:	oob_dat <= {MDW/24{oob_color[23:0]}};
+BPP32:	oob_dat <= {MDW/32{oob_color[31:0]}};
+default:	oob_dat <= {MDW/16{oob_color[15:0]}};
+endcase
+
+endmodule
+
+// Burst counter
+module modBurstCntr(rst, clk, memreq, nburst);
+input rst;
+input clk;
+input memreq;
+output reg [5:0] nburst;
+
+always_ff @(posedge clk)
+if (rst)
+	nburst <= 6'd0;
+else begin
+ 	if (memreq)
+		nburst <= nburst + 2'd1;
 end
 
 endmodule
