@@ -110,8 +110,8 @@
 //`define SUPPORT_AAM	1
 import fta_bus_pkg::*;
 
-module rfTextController_fta64(
-	rst_i, clk_i, cs_config_i, req, resp,
+module rfTextController_fta64 (
+	rst_i, clk_i, rst_busy_o, cs_config_i, req_i, resp_o,
 	dot_clk_i, hsync_i, vsync_i, blank_i, border_i, zrgb_i, zrgb_o, xonoff_i,
 	hsync_o, vsync_o, blank_o, border_o
 );
@@ -199,12 +199,13 @@ parameter pvTotal = 795;		//  795 total scan lines
 // Syscon
 input  rst_i;			// reset
 input  clk_i;			// clock
+output rst_busy_o;
 
 input cs_config_i;
 
 // Slave signals
-input fta_cmd_request64_t req;
-output fta_cmd_response64_t resp;
+input fta_cmd_request64_t req_i;
+output fta_cmd_response64_t resp_o;
 
 // Video signals
 input dot_clk_i;		// video dot clock
@@ -222,11 +223,11 @@ output reg border_o;
 
 integer n2,n3;
 
-assign resp.next = 1'b0;
-assign resp.stall = 1'b0;
-assign resp.err = fta_bus_pkg::OKAY;
-assign resp.rty = 1'b0;
-assign resp.pri = 4'd7;
+assign resp_o.next = 1'b0;
+assign resp_o.stall = 1'b0;
+assign resp_o.err = fta_bus_pkg::OKAY;
+assign resp_o.rty = 1'b0;
+assign resp_o.pri = 4'd7;
 
 reg controller_enable;
 reg [31:0] bkColor40, bkColor40d, bkColor40d2, bkColor40d3;	// background color
@@ -235,6 +236,7 @@ reg [31:0] fgColor40, fgColor40d, fgColor40d2, fgColor40d3;	// foreground color
 wire [1:0] pix;				// pixel value from character generator 1=on,0=off
 
 reg por;
+assign rst_busy_o = por;
 wire vclk;
 
 reg [63:0] rego;
@@ -291,11 +293,13 @@ reg  [30:0] txtTcCode;	// transparent color code
 reg [30:0] tileColor1;
 reg [30:0] tileColor2;
 reg  bgt, bgtd, bgtd2;
+wire [31:0] curout;			// hold cursor pattern
+wire [31:0] curout1;
 
 wire [63:0] tdat_o;
 wire [63:0] chdat_o;
 reg [63:0] cfg_dat [0:31];
-reg [63:0] cfg_out;
+fta_cmd_response64_t cfg_resp;
 
 function [63:0] fnRbo;
 input n;
@@ -309,6 +313,7 @@ endfunction
 // I/O range Dx
 //--------------------------------------------------------------------
 // Register the inputs
+fta_cmd_request64_t reqd;
 reg cs_config;
 reg cs_rom, cs_reg, cs_text;
 reg cs_rom1, cs_reg1, cs_text1;
@@ -325,9 +330,11 @@ reg [31:0] tc_reg_addr;
 wire ack;
 
 always_ff @(posedge clk_i)
-	erc <= req.cti==fta_bus_pkg::ERC;
+	reqd <= req_i;
 always_ff @(posedge clk_i)
-	cs_config <= req.cyc & req.stb & cs_config_i;
+	erc <= req_i.cti==fta_bus_pkg::ERC;
+always_ff @(posedge clk_i)
+	cs_config <= req_i.cyc & req_i.stb & cs_config_i;
 always_comb
 	cs_rom1 <= cs_rom2;
 always_comb
@@ -341,29 +348,31 @@ always_comb
 always_comb
 	cs_text <= cs_text1;
 always_ff @(posedge clk_i)
-	wrs_i <= (BUSWID==64) ? {8{req.we}} & req.sel :
-		req.padr[2] ? {{4{req.we}} & req.sel,4'h0} : {4'h0,{4{req.we}} & req.sel};
+	wrs_i <= (BUSWID==64) ? {8{req_i.we}} & req_i.sel :
+		req_i.padr[2] ? {{4{req_i.we}} & req_i.sel,4'h0} : {4'h0,{4{req_i.we}} & req_i.sel};
 always_ff @(posedge clk_i)
-	rwr_i <= req.we;
+	rwr_i <= req_i.we;
 always_ff @(posedge clk_i)
-	rsel_i <= req.sel;
+	rsel_i <= req_i.sel;
 always_ff @(posedge clk_i)
-	radr_i <= req.padr;
+	radr_i <= req_i.padr;
 always_ff @(posedge clk_i)
-	rdat_i <= req.dat;
+	rdat_i <= req_i.dat;
 
 // Register outputs
 always_ff @(posedge clk_i)
-if (ack) begin
+if (cfg_resp.ack)
+	resp_o.dat <= cfg_resp.dat;
+else if (ack) begin
 	casez({cs_rom,cs_reg,cs_text})
-	3'b1??:	resp.dat <= chdat_o;
-	3'b01?:	resp.dat <= rego;
-	3'b001:	resp.dat <= tdat_o;
-	default:	resp.dat <= 64'h0;
+	3'b1??:	resp_o.dat <= chdat_o;
+	3'b01?:	resp_o.dat <= rego;
+	3'b001:	resp_o.dat <= tdat_o;
+	default:	resp_o.dat <= 64'h0;
 	endcase
 end
 else
-	resp.dat <= 'd0;
+	resp_o.dat <= 'd0;
 
 //always @(posedge clk_i)
 //	if (cs_text) begin
@@ -377,16 +386,16 @@ else
 //   ack a write
 
 vtdl #(.WID(1), .DEP(16)) urdyd1 (.clk(clk_i), .ce(1'b1), .a(4'd3), .d(cs_rom|cs_reg|cs_text|cs_config), .q(ack));
-vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(clk_i), .ce(1'b1), .a(4'd4), .d((cs_rom|cs_reg|cs_text|cs_config)&(erc|~rwr_i)), .q(resp.ack));
+vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(clk_i), .ce(1'b1), .a(4'd4), .d((cs_rom|cs_reg|cs_text|cs_config)&(erc|~rwr_i)), .q(resp_o.ack));
 //vtdl #(.WID(6), .DEP(16)) urdyd3 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req.cid), .q(resp.cid));
-vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req.tid), .q(resp.tid));
-vtdl #(.WID($bits(fta_address_t)), .DEP(16)) urdyd5 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req.padr), .q(resp.adr));
+vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req_i.tid), .q(resp_o.tid));
+vtdl #(.WID($bits(fta_address_t)), .DEP(16)) urdyd5 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req_i.padr), .q(resp_o.adr));
 
 //--------------------------------------------------------------------
 // config
 //--------------------------------------------------------------------
 
-pci64_config #(
+ddbb64_config #(
 	.CFG_BUS(CFG_BUS),
 	.CFG_DEVICE(CFG_DEVICE),
 	.CFG_FUNC(CFG_FUNC),
@@ -415,17 +424,12 @@ ucfg1
 	.rst_i(rst_i),
 	.clk_i(clk_i),
 	.irq_i(1'b0),
-	.irq_o(),
-	.cs_config_i(cs_config), 
-	.we_i(rwr_i),
-	.sel_i(rsel_i),
-	.adr_i(radr_i),
-	.dat_i(rdat_i),
-	.dat_o(cfg_out),
+	.cs_i(cs_config), 
+	.req_i(reqd),
+	.resp_o(cfg_resp),
 	.cs_bar0_o(cs_text2),
 	.cs_bar1_o(cs_rom2),
-	.cs_bar2_o(cs_reg2),
-	.irq_en_o()
+	.cs_bar2_o(cs_reg2)
 );
 
 //--------------------------------------------------------------------
@@ -534,52 +538,18 @@ regReadbackMem #(.WID(8)) rrm3H
   .o(rrm_o[63:56])
 );
 
+wire [15:0] light_blue = {5'h8,6'h4,5'h1F};
+wire [15:0] dark_blue = {5'h0,6'h0,5'h0E};
+
 wire [26:0] lfsr1_o;
 lfsr27 #(.WID(27)) ulfsr1(rst_i, dot_clk_i, 1'b1, 1'b0, lfsr1_o);
-wire [63:0] lfsr_o = {6'h10,
+wire [63:0] lfsr_o = {6'h10,10'h00,
 //												lfsr1_o[26:24],4'b0,lfsr1_o[23:21],4'b0,lfsr1_o[20:18],4'b0,
 //												lfsr1_o[17:15],4'b0,lfsr1_o[14:12],4'b0,lfsr1_o[11:9],4'b0,
-												3'd1,4'b0,3'd0,4'b0,3'd7,4'b0,
-												3'd0,4'b0,3'd0,4'b0,3'd3,4'b0,
+												light_blue,	// light blue
+												dark_blue,
 												7'h00,lfsr1_o[8:0]
 										};
-wire [63:0] lfsr_o2 = {6'h10,
-//												lfsr1_o[26:24],4'b0,lfsr1_o[23:21],4'b0,lfsr1_o[20:18],4'b0,
-//												lfsr1_o[17:15],4'b0,lfsr1_o[14:12],4'b0,lfsr1_o[11:9],4'b0,
-												4'b0,lfsr1_o[26:24],4'b0,lfsr1_o[23:21],lfsr1_o[20:18],4'b0,
-												4'b0,lfsr1_o[17:15],4'b0,lfsr1_o[14:12],lfsr1_o[11:9],4'b0,
-												7'h00,lfsr1_o[8:0]
-										};
-wire [63:0] lfsr_o1 = {lfsr1_o[3:0],2'b00,
-//												lfsr1_o[26:24],4'b0,lfsr1_o[23:21],4'b0,lfsr1_o[20:18],4'b0,
-//												lfsr1_o[17:15],4'b0,lfsr1_o[14:12],4'b0,lfsr1_o[11:9],4'b0,
-												4'b0,lfsr1_o[26:24],4'b0,lfsr1_o[23:21],lfsr1_o[20:18],4'b0,
-												4'b0,lfsr1_o[17:15],lfsr1_o[14:12],4'b0,4'b0,lfsr1_o[11:9],
-												7'h00,lfsr1_o[8:0]
-										};
-
-/* This snippit of code for performing burst accesses, under construction.
-wire pe_cs;
-edge_det u1(.rst(rst_i), .clk(clk_i), .ce(1'b1), .i(cs_text), .pe(pe_cs), .ne(), .ee() );
-
-reg [14:0] ctr;
-always @(posedge clk_i)
-	if (pe_cs) begin
-		if (cti_i==3'b000)
-			ctr <= adr_i[16:3];
-		else
-			ctr <= adr_i[16:3] + 12'd1;
-		cnt <= 3'b000;
-	end
-	else if (cs_text && cnt[2:0]!=3'b100 && cti_i!=3'b000) begin
-		ctr <= ctr + 2'd1;
-		cnt <= cnt + 3'd1;
-	end
-
-reg [13:0] radr;
-always @(posedge clk_i)
-	radr <= pe_cs ? adr_i[16:3] : ctr;
-*/
 
 //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // text screen RAM
@@ -634,9 +604,9 @@ reg [23:0] txtBkCode1;
 reg [23:0] txtFgCode1;
 reg [5:0] txtZorder1;
 always_ff @(posedge vclk)
-	if (ld_shft) txtBkCode1 <= {screen_ram_out[36:30],1'b0,screen_ram_out[29:23],1'b0,screen_ram_out[22:16],1'b0};
+	if (ld_shft) txtBkCode1 <= {screen_ram_out[31:27],3'b0,screen_ram_out[26:21],2'b0,screen_ram_out[20:16],3'b0};
 always_ff @(posedge vclk)
-	if (ld_shft) txtFgCode1 <= {screen_ram_out[57:51],1'b0,screen_ram_out[50:44],1'b0,screen_ram_out[43:37],1'b0};
+	if (ld_shft) txtFgCode1 <= {screen_ram_out[47:43],3'b0,screen_ram_out[42:37],2'b0,screen_ram_out[36:32],3'b0};
 always_ff @(posedge vclk)
 	if (ld_shft) txtZorder1 <= 6'd0;
 
@@ -801,53 +771,17 @@ always_ff @(posedge clk_i)
 		end
 	end
 
-
-//--------------------------------------------------------------------
-// Cursor image is computed based on the font size, so the available
-// hardware cursors are really simple. More sophisticated hardware
-// cursors can be had via the sprite controller.
-//--------------------------------------------------------------------
-
-reg [31:0] curout;
-wire [31:0] curout1;
-always_ff @(posedge vclk)
-if (ld_shft) begin
-	curout = 'd0;
-	case(cursorType)
-	// No cursor
-	3'd0:	;
-	// "Box" cursor
-	3'd1:
-		begin
-			case(rowscan)
-			maxRowScan,5'd0: curout = 32'hFFFFFFFF;
-			/*
-			maxRowScan-1:
-				if (rowscan==maxRowScan-1) begin
-					curout[maxScanpix[5:1]] = 1'b1;
-					curout[maxScanpix[5:1]+1] = 1'b1;
-				end
-			*/
-			default:
-				begin
-					curout[maxScanpix] = 1'b1;
-					curout[0] = 1'b1;
-				end
-			endcase
-		end
-	// Vertical Line cursor
-	3'd2:	curout[maxScanpix] = 1'b1;
-	// Underline cursor
-	3'd3:
-		if (rowscan==fontAscent)
-			curout = 32'hFFFFFFFF;
-	// Checker cursor
-	3'd4:	curout = rowscan[1] ? 32'h33333333 : 32'hCCCCCCCC;
-	// Solid cursor
-	3'd7:	curout = 32'hFFFFFFFF;
-	default:	curout = 32'hFFFFFFFF;
-	endcase
-end
+modCursorImage ucursor1
+(
+	.clk(vclk),
+	.ld(ld_shft),
+	.cursorType(cursorType),
+	.rowscan(rowscan),
+	.maxRowScan(maxRowScan),
+	.maxScanpix(maxScanpix),
+	.fontAscent(fontAscent),
+	.curout(curout)
+);
 
 ft_delay
 #(
@@ -1300,6 +1234,65 @@ else begin
 		else if (inc)
 			q <= q + amt;
 	end
+end
+
+endmodule
+
+//--------------------------------------------------------------------
+// Cursor image is computed based on the font size, so the available
+// hardware cursors are really simple. More sophisticated hardware
+// cursors can be had via the sprite controller.
+//--------------------------------------------------------------------
+
+module modCursorImage(clk, ld, cursorType, rowscan, maxRowScan, maxScanpix,
+	fontAscent, curout
+);
+input clk;
+input ld;
+input [2:0] cursorType;
+input [5:0] rowscan;
+input [5:0] maxRowScan;
+input [5:0] maxScanpix;
+input [5:0] fontAscent;
+output reg [31:0] curout;
+
+always_ff @(posedge clk)
+if (ld) begin
+	curout = 'd0;
+	case(cursorType)
+	// No cursor
+	3'd0:	;
+	// "Box" cursor
+	3'd1:
+		begin
+			case(rowscan)
+			maxRowScan,6'd0: curout = 32'hFFFFFFFF;
+			/*
+			maxRowScan-1:
+				if (rowscan==maxRowScan-1) begin
+					curout[maxScanpix[5:1]] = 1'b1;
+					curout[maxScanpix[5:1]+1] = 1'b1;
+				end
+			*/
+			default:
+				begin
+					curout[maxScanpix] = 1'b1;
+					curout[0] = 1'b1;
+				end
+			endcase
+		end
+	// Vertical Line cursor
+	3'd2:	curout[maxScanpix] = 1'b1;
+	// Underline cursor
+	3'd3:
+		if (rowscan==fontAscent)
+			curout = 32'hFFFFFFFF;
+	// Checker cursor
+	3'd4:	curout = rowscan[1] ? 32'h33333333 : 32'hCCCCCCCC;
+	// Solid cursor
+	3'd7:	curout = 32'hFFFFFFFF;
+	default:	curout = 32'hFFFFFFFF;
+	endcase
 end
 
 endmodule
