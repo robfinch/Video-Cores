@@ -1,6 +1,6 @@
 // ============================================================================
 //        __
-//   \\__/ o\    (C) 2023-2024  Robert Finch, Waterloo
+//   \\__/ o\    (C) 2023-2025  Robert Finch, Waterloo
 //    \  __ /    All rights reserved.
 //     \/_//     robfinch<remove>@finitron.ca
 //       ||
@@ -81,20 +81,20 @@ reg [19:0] q,d400;
 reg [31:0] m400;
 reg [15:0] c;
 always_comb
-	d400 = ({16'h0,s.req.padr} * 16'd2621) >> 20;
+	d400 = ({16'h0,s.req.adr} * 16'd2621) >> 20;
 always_comb
-	m400 = s.req.padr - ({10'd0,d400} * 10'd400);
+	m400 = s.req.adr - ({10'd0,d400} * 10'd400);
 always_comb
 	p = m400 >> 5;
 always_comb
-	q = ({16'd0,s.req.padr} * 16'd78) >> 20;		// /(32*400)
+	q = ({16'd0,s.req.adr} * 16'd78) >> 20;		// /(32*400)
 always_comb
 	c = {1'b0,5'h1F,q[4:0],p[4:0]};
 
 vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(clk), .ce(1'b1), .a(lfsr31o[3:0]), .d(s.req.cyc), .q(s.resp.ack));
 //vtdl #(.WID(6), .DEP(16)) urdyd3 (.clk(clk), .ce(1'b1), .a(lfsr31o[3:0]), .d(req.cid), .q(resp.cid));
 vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(clk), .ce(1'b1), .a(lfsr31o[3:0]), .d(s.req.tid), .q(s.resp.tid));
-vtdl #(.WID($bits(s.resp.adr)), .DEP(16)) urdyd5 (.clk(clk), .ce(1'b1), .a(lfsr31o[3:0]), .d(s.req.padr), .q(s.resp.adr));
+vtdl #(.WID($bits(s.resp.adr)), .DEP(16)) urdyd5 (.clk(clk), .ce(1'b1), .a(lfsr31o[3:0]), .d(s.req.adr), .q(s.resp.adr));
 vtdl #(.WID($bits(s.resp.dat)), .DEP(16)) urdyd6 (.clk(clk), .ce(1'b1), .a(lfsr31o[3:0]), .d({16{c}}), .q(s.resp.dat));
 
 always_ff @(posedge clk)

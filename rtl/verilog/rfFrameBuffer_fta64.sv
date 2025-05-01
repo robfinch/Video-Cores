@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 // ============================================================================
 //        __
-//   \\__/ o\    (C) 2008-2024  Robert Finch, Waterloo
+//   \\__/ o\    (C) 2008-2025  Robert Finch, Waterloo
 //    \  __ /    All rights reserved.
 //     \/_//     robfinch<remove>@finitron.ca
 //       ||
@@ -312,7 +312,7 @@ always_ff @(posedge s_clk_i)
 always_ff @(posedge s_clk_i)
 	sel <= s_req_i.sel;
 always_ff @(posedge s_clk_i)
-	adri <= s_req_i.padr;
+	adri <= s_req_i.adr;
 always_ff @(posedge s_clk_i)
 	dat <= s_req_i.dat;
 
@@ -345,7 +345,7 @@ end
 vtdl #(.WID(1), .DEP(16)) urdyd1 (.clk(s_clk_i), .ce(1'b1), .a(4'd3), .d(cs_map|cs_reg|cs_config), .q(ack));
 vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(s_clk_i), .ce(1'b1), .a(4'd4), .d(cs_map|cs_reg|cs_config), .q(s_resp1.ack));
 vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(s_clk_i), .ce(1'b1), .a(4'd5), .d(s_req_i.tid), .q(s_resp1.tid));
-vtdl #(.WID(32), .DEP(16)) urdyd5 (.clk(s_clk_i), .ce(1'b1), .a(4'd5), .d(s_req_i.padr), .q(s_resp1.adr));
+vtdl #(.WID(32), .DEP(16)) urdyd5 (.clk(s_clk_i), .ce(1'b1), .a(4'd5), .d(s_req_i.adr), .q(s_resp1.adr));
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -609,8 +609,8 @@ delay3 #(1) udly1 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_cyc_o), .o(m_bus_o.req.cy
 delay3 #(1) udly2 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_we_o), .o(m_bus_o.req.we));
 delay3 #(MDW/8) udly3 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_sel_o), .o(m_bus_o.req.sel));
 delay3 #(32) udly4 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_adr_o), .o(m_bus_o.req.vadr));
-delay3 #(13) udly5 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_adr_o[12:0]), .o(m_bus_o.req.padr[12:0]));
-delay1 #(32) udly8 (.clk(m_bus_o.clk), .ce(1'b1), .i({1'b0,map_page}), .o(m_bus_o.req.padr[31:13]));
+delay3 #(13) udly5 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_adr_o[12:0]), .o(m_bus_o.req.adr[12:0]));
+delay1 #(32) udly8 (.clk(m_bus_o.clk), .ce(1'b1), .i({1'b0,map_page}), .o(m_bus_o.req.adr[31:13]));
 delay3 #(13) udly6 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_tid_o), .o(m_bus_o.req.tid));
 delay3 #(6) udly7 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_blen_o), .o(m_bus_o.req.blen));
 
@@ -1282,11 +1282,11 @@ always_comb legal_y = ~&pixelRow[15:12] && pixelRow < bmpHeight;
 reg modd;
 always_comb
 	case(MDW)
-	32:	modd <= m_bus_o.req.padr[5:2]==4'hF;
-	64:	modd <= m_bus_o.req.padr[5:3]==3'h7;
-	128:	modd <= m_bus_o.req.padr[5:4]==2'h3;
-	256:	modd <= m_bus_o.req.padr[5]==1'h1;
-	default:	modd <= m_bus_o.req.padr[5]==1'h1;
+	32:	modd <= m_bus_o.req.adr[5:2]==4'hF;
+	64:	modd <= m_bus_o.req.adr[5:3]==3'h7;
+	128:	modd <= m_bus_o.req.adr[5:4]==2'h3;
+	256:	modd <= m_bus_o.req.adr[5]==1'h1;
+	default:	modd <= m_bus_o.req.adr[5]==1'h1;
 	endcase
 
 // Bus timeout counter

@@ -1,6 +1,6 @@
 // ============================================================================
 //        __
-//   \\__/ o\    (C) 2023  Robert Finch, Waterloo
+//   \\__/ o\    (C) 2023-2025  Robert Finch, Waterloo
 //    \  __ /    All rights reserved.
 //     \/_//     robfinch<remove>@finitron.ca
 //       ||
@@ -40,6 +40,8 @@
 //                                                                          
 // ============================================================================
 
+import fta_bus_pkg::*;
+
 module VideoTPG(rst, clk, en, vSync, req, resp, ex_resp);
 input rst;
 input clk;
@@ -77,20 +79,20 @@ reg [19:0] q,d400;
 reg [31:0] m400;
 reg [15:0] c;
 always_comb
-	d400 = ({16'h0,req.padr} * 16'd2621) >> 20;
+	d400 = ({16'h0,req.adr} * 16'd2621) >> 20;
 always_comb
-	m400 = req.padr - ({10'd0,d400} * 10'd400);
+	m400 = req.adr - ({10'd0,d400} * 10'd400);
 always_comb
 	p = m400 >> 5;
 always_comb
-	q = ({16'd0,req.padr} * 16'd78) >> 20;		// /(32*400)
+	q = ({16'd0,req.adr} * 16'd78) >> 20;		// /(32*400)
 always_comb
 	c = {1'b0,5'h1F,q[4:0],p[4:0]};
 
 vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(clk), .ce(1'b1), .a(lfsr31o[3:0]), .d(req.cyc), .q(resp.ack));
-vtdl #(.WID(6), .DEP(16)) urdyd3 (.clk(clk), .ce(1'b1), .a(lfsr31o[3:0]), .d(req.cid), .q(resp.cid));
+//vtdl #(.WID(6), .DEP(16)) urdyd3 (.clk(clk), .ce(1'b1), .a(lfsr31o[3:0]), .d(req.cid), .q(resp.cid));
 vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(clk), .ce(1'b1), .a(lfsr31o[3:0]), .d(req.tid), .q(resp.tid));
-vtdl #(.WID($bits(fta_address_t)), .DEP(16)) urdyd5 (.clk(clk), .ce(1'b1), .a(lfsr31o[3:0]), .d(req.padr), .q(resp.adr));
+vtdl #(.WID($bits(fta_address_t)), .DEP(16)) urdyd5 (.clk(clk), .ce(1'b1), .a(lfsr31o[3:0]), .d(req.adr), .q(resp.adr));
 vtdl #(.WID(128), .DEP(16)) urdyd6 (.clk(clk), .ce(1'b1), .a(lfsr31o[3:0]), .d(en ? {8{c}} : ex_resp.dat), .q(resp.dat));
 
 always_ff @(posedge clk)
@@ -102,7 +104,7 @@ begin
 	*/
 	resp.stall <= 1'b0;
 	resp.next <= 1'b0;
-	resp.err <= 1'b0;
+	resp.err <= fta_bus_pkg::OKAY;
 	resp.rty <= 1'b0;
 	resp.pri <= 4'd7;
 	/*
