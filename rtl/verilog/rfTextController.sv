@@ -118,7 +118,7 @@ parameter num = 4'd1;
 parameter COLS = 8'd64;
 parameter ROWS = 8'd32;
 parameter BUSWID = 32;
-parameter TEXT_CELL_COUNT = 8192;
+parameter TEXT_CELL_COUNT = 16384;
 
 parameter RAM_ADDR = 32'hFD000001;
 parameter CBM_ADDR = 32'hFD040001;
@@ -198,9 +198,9 @@ reg [ 5:0] maxRowScan;
 reg [ 5:0] maxScanpix;
 reg [1:0] tileWidth;		// width of tile in bytes (0=1,1=2,2=4,3=8)
 reg [ 5:0] cursorStart, cursorEnd;
-reg [17:0] cursorPos;
+reg [15:0] cursorPos;
 reg [2:0] cursorType;
-reg [17:0] startAddress;
+reg [15:0] startAddress;
 reg [15:0] fontAddress;
 reg font_locked;
 reg [5:0] fontAscent;
@@ -748,13 +748,13 @@ always_ff @(posedge clk_i)
 					end
 					if (rsel_i[4]) cursorPos[7:0] <= rdat_i[39:32];
 					if (rsel_i[5]) cursorPos[15:8] <= rdat_i[47:40];
-					if (rsel_i[6]) cursorPos[17:16] <= rdat_i[49:48];
+//					if (rsel_i[6]) cursorPos[17:16] <= rdat_i[49:48];
 				end
 			4'd5:	// Page flipping / scrolling
 				begin
 					if (rsel_i[0]) startAddress[7:0] <= rdat_i[7:0];
 					if (rsel_i[1]) startAddress[15:8] <= rdat_i[15:8];
-					if (rsel_i[2]) startAddress[17:16] <= rdat_i[17:16];
+//					if (rsel_i[2]) startAddress[17:16] <= rdat_i[17:16];
 				end
 			4'd6:	// 
 				begin
