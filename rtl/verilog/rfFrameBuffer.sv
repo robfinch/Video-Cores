@@ -55,11 +55,13 @@
 
 import const_pkg::*;
 `define ABITS	31:0
+`define BUSMWID256	1'b1;
+`define BUSMWID 256;
 
 import wishbone_pkg::*;
 import gfx_pkg::*;
-import Thor2023Pkg::*;
-import Thor2023Mmupkg::*;
+//import Thor2023Pkg::*;
+//import Thor2023Mmupkg::*;
 
 module rfFrameBuffer(
 	rst_i,
@@ -78,6 +80,7 @@ module rfFrameBuffer(
 `endif
 );
 parameter BUSWID = 32;
+parameter BUSMWID = `BUSMWID;
 
 parameter FBC_ADDR = 32'hFED40001;
 parameter FBC_ADDR_MASK = 32'h00FF0000;
@@ -109,7 +112,7 @@ parameter IRQ_MSGDAT = 64'h1;
 parameter PHYS_ADDR_BITS = 32;
 localparam BITS_IN_ADDR_MAP = PHYS_ADDR_BITS - 16;
 
-parameter MDW = 128;		// Bus master data width
+parameter MDW = `BUSMWID;		// Bus master data width
 parameter MAP = 12'd0;
 parameter BM_BASE_ADDR1 = 32'h00200000;
 parameter BM_BASE_ADDR2 = 32'h00280000;
@@ -206,8 +209,13 @@ output reg [BUSWID-1:0] s_dat_o;
 // Used to read memory via burst access
 input m_clk_i;				// system bus interface clock
 output reg m_fst_o;		// first access on scanline
+`ifdef BUSMWID256
+output wb_cmd_request256_t wbm_req;
+input wb_cmd_response256_t wbm_resp;
+`else
 output wb_cmd_request128_t wbm_req;
 input wb_cmd_response128_t wbm_resp;
+`endif
 
 // Video
 input dot_clk_i;		// Video clock 80 MHz
@@ -352,7 +360,7 @@ generate begin : gConfigSpace
 			.CFG_VENDOR_ID(CFG_VENDOR_ID),
 			.CFG_DEVICE_ID(CFG_DEVICE_ID),
 			.CFG_BAR0(FBC_ADDR),
-			.CFG_BAR0_ALLOC(FBC_ADDR_MASK),
+			.CFG_BAR0_MASK(FBC_ADDR_MASK),
 			.CFG_SUBSYSTEM_VENDOR_ID(CFG_SUBSYSTEM_VENDOR_ID),
 			.CFG_SUBSYSTEM_ID(CFG_SUBSYSTEM_ID),
 			.CFG_ROM_ADDR(CFG_ROM_ADDR),
@@ -391,7 +399,7 @@ generate begin : gConfigSpace
 			.CFG_VENDOR_ID(CFG_VENDOR_ID),
 			.CFG_DEVICE_ID(CFG_DEVICE_ID),
 			.CFG_BAR0(FBC_ADDR),
-			.CFG_BAR0_ALLOC(FBC_ADDR_MASK),
+			.CFG_BAR0_MASK(FBC_ADDR_MASK),
 			.CFG_SUBSYSTEM_VENDOR_ID(CFG_SUBSYSTEM_VENDOR_ID),
 			.CFG_SUBSYSTEM_ID(CFG_SUBSYSTEM_ID),
 			.CFG_ROM_ADDR(CFG_ROM_ADDR),
@@ -546,7 +554,7 @@ wire [15:0] map_page;
    );
 
 always_comb
-	wbm_req.adr <= {map_page,vm_adr_o[15:0]};
+	wbm_req.padr <= {map_page,vm_adr_o[15:0]};
 	
    // End of xpm_memory_tdpram_inst instantiation
 				
@@ -869,7 +877,7 @@ else begin
 		  {REG_IRQ_MSGADR,1'b1}:	s_dat_o <= irq_msgadr[63:32];
 		  {REG_IRQ_MSGDAT,1'b0}:	s_dat_o <= irq_msgdat[31:0];
 		  {REG_IRQ_MSGDAT,1'b1}:	s_dat_o <= irq_msgdat[63:32];
-		  11'b1?_????_????_?0:	s_dat_o <= pal_wo;
+		  12'b1?_????_????_?0:	s_dat_o <= pal_wo;
 		  default:        s_dat_o <= 'd0;
 		  endcase
 	end
@@ -975,70 +983,86 @@ always_ff @(posedge vclk)
 reg [4:0] bpp;
 always_comb
 case(color_depth2)
-BPP6: bpp = 5;
+//BPP6: bpp = 5;
 BPP8:	bpp = 7;
-BPP12: bpp = 11;
+//BPP12: bpp = 11;
 BPP16:	bpp = 15;
-BPP18:	bpp = 17;
-BPP21:	bpp = 20;
+//BPP18:	bpp = 17;
+//BPP21:	bpp = 20;
 BPP24:	bpp = 23;
-BPP27:	bpp = 26;
+//BPP27:	bpp = 26;
 BPP32:	bpp = 31;
-BPP33:	bpp = 32;
-BPP36:	bpp = 35;
-BPP40:	bpp = 39;
+//BPP33:	bpp = 32;
+//BPP36:	bpp = 35;
+//BPP40:	bpp = 39;
 default:	bpp = 15;
 endcase
 
 reg [5:0] shifts;
 always_comb
 case(MDW)
+256:
+	case(color_depth2)
+//	BPP6:   shifts = 6'd21;
+	BPP8: 	shifts = 6'd32;
+//	BPP12:	shifts = 6'd10;
+	BPP16:	shifts = 6'd16;
+//	BPP18:	shifts = 6'd7;
+//	BPP21:	shifts = 6'd6;
+	BPP24:	shifts = 6'd10;
+//	BPP27:	shifts = 6'd4;
+	BPP32:	shifts = 6'd8;
+//	BPP33:	shifts = 6'd3;
+//	BPP36:	shifts = 6'd3;
+//	BPP40:	shifts = 6'd3;
+	default:  shifts = 6'd16;
+	endcase
 128:
 	case(color_depth2)
-	BPP6:   shifts = 6'd21;
+//	BPP6:   shifts = 6'd21;
 	BPP8: 	shifts = 6'd16;
-	BPP12:	shifts = 6'd10;
+//	BPP12:	shifts = 6'd10;
 	BPP16:	shifts = 6'd8;
-	BPP18:	shifts = 6'd7;
-	BPP21:	shifts = 6'd6;
+//	BPP18:	shifts = 6'd7;
+//	BPP21:	shifts = 6'd6;
 	BPP24:	shifts = 6'd5;
-	BPP27:	shifts = 6'd4;
+//	BPP27:	shifts = 6'd4;
 	BPP32:	shifts = 6'd4;
-	BPP33:	shifts = 6'd3;
-	BPP36:	shifts = 6'd3;
-	BPP40:	shifts = 6'd3;
+//	BPP33:	shifts = 6'd3;
+//	BPP36:	shifts = 6'd3;
+//	BPP40:	shifts = 6'd3;
 	default:  shifts = 6'd8;
 	endcase
 64:
 	case(color_depth2)
-	BPP6:   shifts = 6'd10;
+//	BPP6:   shifts = 6'd10;
 	BPP8: 	shifts = 6'd8;
-	BPP12:	shifts = 6'd5;
+//	BPP12:	shifts = 6'd5;
 	BPP16:	shifts = 6'd4;
-	BPP18:	shifts = 6'd3;
-	BPP21:	shifts = 6'd3;
+//	BPP18:	shifts = 6'd3;
+//	BPP21:	shifts = 6'd3;
 	BPP24:	shifts = 6'd2;
-	BPP27:	shifts = 6'd2;
+//	BPP27:	shifts = 6'd2;
 	BPP32:	shifts = 6'd2;
-	BPP33:	shifts = 6'd1;
-	BPP36:	shifts = 6'd1;
-	BPP40:	shifts = 6'd1;
+//	BPP33:	shifts = 6'd1;
+//	BPP36:	shifts = 6'd1;
+//	BPP40:	shifts = 6'd1;
 	default:  shifts = 6'd4;
 	endcase
 32:
 	case(color_depth2)
-	BPP6:   shifts = 6'd5;
+//	BPP6:   shifts = 6'd5;
 	BPP8: 	shifts = 6'd4;
-	BPP12:	shifts = 6'd2;
+//	BPP12:	shifts = 6'd2;
 	BPP16:	shifts = 6'd2;
-	BPP18:	shifts = 6'd1;
-	BPP21:	shifts = 6'd1;
+//	BPP18:	shifts = 6'd1;
+//	BPP21:	shifts = 6'd1;
 	BPP24:	shifts = 6'd1;
-	BPP27:	shifts = 6'd1;
+//	BPP27:	shifts = 6'd1;
 	BPP32:	shifts = 6'd1;
-	BPP33:	shifts = 6'd1;
-	BPP36:	shifts = 6'd1;
-	BPP40:	shifts = 6'd1;
+//	BPP33:	shifts = 6'd1;
+//	BPP36:	shifts = 6'd1;
+//	BPP40:	shifts = 6'd1;
 	default:  shifts = 6'd2;
 	endcase
 default:
@@ -1056,7 +1080,7 @@ always_comb fifo_wrst = pe_hsync2 && vc==4'd1;
 
 wire[31:0] grAddr,xyAddr;
 reg [11:0] fetchCol;
-localparam CMS = MDW==128 ? 6 : MDW==64 ? 5 : 4;
+localparam CMS = MDW==256 ? 7 : MDW==128 ? 6 : MDW==64 ? 5 : 4;
 wire [CMS:0] mb,me,ce;
 reg [MDW-1:0] mem_strip;
 wire [MDW-1:0] mem_strip_o;
@@ -1118,18 +1142,18 @@ always_ff @(posedge m_clk_i)
 reg [11:0] hCmp;
 always_comb
 case(color_depth2)
-BPP6: hCmp = 12'd2688;    // must be 12 bits
+//BPP6: hCmp = 12'd2688;    // must be 12 bits
 BPP8:	hCmp = 12'd2048;
-BPP12: hCmp = 12'd1536;
+//BPP12: hCmp = 12'd1536;
 BPP16:	hCmp = 12'd1024;
-BPP18:	hCmp = 12'd896;
-BPP21:	hCmp = 12'd768;
+//BPP18:	hCmp = 12'd896;
+//BPP21:	hCmp = 12'd768;
 BPP24:	hCmp = 12'd640;
-BPP27:	hCmp = 12'd512;
+//BPP27:	hCmp = 12'd512;
 BPP32:	hCmp = 12'd512;
-BPP33:	hCmp = 12'd384;
-BPP36:	hCmp = 12'd384;
-BPP40:	hCmp = 12'd384;
+//BPP33:	hCmp = 12'd384;
+//BPP36:	hCmp = 12'd384;
+//BPP40:	hCmp = 12'd384;
 default:	hCmp = 12'd1024;
 endcase
 /*
@@ -1143,11 +1167,11 @@ always @(posedge m_clk_i)
 	else if (blankEdge)
 		do_loads <= 1'b0;
 */
-always_comb wbm_req.bte = LINEAR;
-always_comb wbm_req.cti = CLASSIC;
+always_comb wbm_req.bte = wishbone_pkg::LINEAR;
+always_comb wbm_req.cti = wishbone_pkg::CLASSIC;
 always_comb wbm_req.blen = 6'd63;
 always_comb wbm_req.stb = wbm_req.cyc;
-always_comb wbm_req.sel = MDW==128 ? 16'hFFFF : MDW==64 ? 8'hFF : 4'hF;
+always_comb wbm_req.sel = MDW==256 ? 32'hFFFFFFFF : MDW==128 ? 16'hFFFF : MDW==64 ? 8'hFF : 4'hF;
 always_comb wbm_req.cid = 4'd0;
 
 reg [31:0] adr;
@@ -1197,6 +1221,8 @@ always_ff @(posedge m_clk_i)
     	case(MDW)
     	32:		adr <= adr + 32'd4;
     	64:		adr <= adr + 32'd8;
+    	128:	adr <= adr + 32'd16;
+    	256:	adr <= adr + 32'd32;
     	default:	adr <= adr + 32'd16;
     	endcase
   end
@@ -1219,9 +1245,11 @@ always_comb legal_y = ~&pixelRow[15:12] && pixelRow < bmpHeight;
 reg modd;
 always_comb
 	case(MDW)
-	32:	modd <= wbm_req.adr[5:2]==4'hF;
-	64:	modd <= wbm_req.adr[5:3]==3'h7;
-	default:	modd <= wbm_req.adr[5:4]==2'h3;
+	32:	modd <= wbm_req.padr[5:2]==4'hF;
+	64:	modd <= wbm_req.padr[5:3]==3'h7;
+	128:	modd <= wbm_req.padr[5:4]==2'h3;
+	256:	modd <= wbm_req.padr[5]==1'b1;
+	default:	modd <= wbm_req.padr[5:4]==2'h3;
 	endcase
 
 always @(posedge m_clk_i)
@@ -1317,7 +1345,7 @@ else begin
   ICOLOR2:
     begin
       for (n = 0; n < MDW; n = n + 1)
-        wbm_req.data1[n] <= (n >= mb && n <= me)
+        wbm_req.dat[n] <= (n >= mb && n <= me)
         	? ((n <= ce) ?	rastop(raster_op, mem_strip[n], icolor1[n]) : icolor1[n])
         	: mem_strip[n];
       state <= STORESTRIP;
@@ -1361,18 +1389,18 @@ reg [40:0] rgbo2,rgbo4;
 reg [MDW-1:0] rgbo3;
 always_ff @(posedge vclk)
 case(color_depth2)
-BPP6:	rgbo4 <= {rgbo3[5:3],1'b0,33'd0,rgbo3[2:0]};	// feeds into palette
+//BPP6:	rgbo4 <= {rgbo3[5:3],1'b0,33'd0,rgbo3[2:0]};	// feeds into palette
 BPP8:	rgbo4 <= {rgbo3[7:5],1'b0,31'h0,rgbo3[4:0]};		// feeds into palette
-BPP12:	rgbo4 <= {rgbo3[11:9],1'b0,rgbo3[8:6],9'd0,rgbo3[5:3],9'd0,rgbo3[2:0],9'd0};
+//BPP12:	rgbo4 <= {rgbo3[11:9],1'b0,rgbo3[8:6],9'd0,rgbo3[5:3],9'd0,rgbo3[2:0],9'd0};
 BPP16:	rgbo4 <= {rgbo3[15:13],1'b0,rgbo3[11:8],8'b0,rgbo3[7:4],8'b0,rgbo3[3:0],8'b0};
-BPP18:	rgbo4 <= {rgbo3[17:15],1'b0,rgbo3[14:10],7'b0,rgbo3[9:5],7'b0,rgbo3[4:0],7'b0};
-BPP21:	rgbo4 <= {rgbo3[20:18],1'b0,rgbo3[17:12],6'b0,rgbo3[11:6],6'b0,rgbo3[5:0],6'b0};
+//BPP18:	rgbo4 <= {rgbo3[17:15],1'b0,rgbo3[14:10],7'b0,rgbo3[9:5],7'b0,rgbo3[4:0],7'b0};
+//BPP21:	rgbo4 <= {rgbo3[20:18],1'b0,rgbo3[17:12],6'b0,rgbo3[11:6],6'b0,rgbo3[5:0],6'b0};
 BPP24:	rgbo4 <= {rgbo3[23:21],1'b0,rgbo3[20:14],5'b0,rgbo3[13:7],5'b0,rgbo3[6:0],5'b0};
-BPP27:	rgbo4 <= {rgbo3[26:24],1'b0,rgbo3[23:16],4'b0,rgbo3[15:8],4'b0,rgbo3[7:0],4'b0};
+//BPP27:	rgbo4 <= {rgbo3[26:24],1'b0,rgbo3[23:16],4'b0,rgbo3[15:8],4'b0,rgbo3[7:0],4'b0};
 BPP32:	rgbo4 <= {rgbo3[30:27],rgbo3[26:18],3'b0,rgbo3[17:9],3'b0,rgbo3[8:0],3'b0};
-BPP33:	rgbo4 <= {rgbo3[32:30],1'b0,rgbo3[29:20],2'b0,rgbo3[19:10],2'b0,rgbo3[9:0],2'b0};
-BPP36:	rgbo4 <= {rgbo3[35:33],1'b0,rgbo3[32:22],1'b0,rgbo3[21:11],1'b0,rgbo3[10:0],1'b0};
-BPP40:	rgbo4 <= {rgbo3[39:36],rgbo3[35:24],rgbo3[23:12],rgbo3[11:0]};
+//BPP33:	rgbo4 <= {rgbo3[32:30],1'b0,rgbo3[29:20],2'b0,rgbo3[19:10],2'b0,rgbo3[9:0],2'b0};
+//BPP36:	rgbo4 <= {rgbo3[35:33],1'b0,rgbo3[32:22],1'b0,rgbo3[21:11],1'b0,rgbo3[10:0],1'b0};
+//BPP40:	rgbo4 <= {rgbo3[39:36],rgbo3[35:24],rgbo3[23:12],rgbo3[11:0]};
 default:	rgbo4 <= {rgbo3[15:13],1'b0,rgbo3[11:8],8'b0,rgbo3[7:4],8'b0,rgbo3[3:0],8'b0};
 endcase
 
@@ -1384,7 +1412,7 @@ always_ff @(posedge vclk)
 
 always_ff @(posedge vclk)
 	if (onoff && xonoff_i && !blank_i) begin
-		if (color_depth2==BPP6||color_depth2==BPP8) begin
+		if (/*color_depth2==BPP6||*/color_depth2==BPP8) begin
 			if (!greyscale)
 				zrgb_o <= {pal_o[30:27],pal_o[26:18],3'b0,pal_o[17:9],3'b0,pal_o[8:0],3'b0};
 			else
@@ -1433,18 +1461,18 @@ always_ff @(posedge vclk)
 		rgbo3 <= lef ? rgbo1o : rgbo1e;
 	else if (shift) begin
 		case(color_depth2)
-		BPP6:	rgbo3 <= {4'h0,rgbo3[MDW-1:6]};
+//		BPP6:	rgbo3 <= {4'h0,rgbo3[MDW-1:6]};
 		BPP8:	rgbo3 <= {8'h0,rgbo3[MDW-1:8]};
-		BPP12: rgbo3 <= {12'h0,rgbo3[MDW-1:12]};
+//		BPP12: rgbo3 <= {12'h0,rgbo3[MDW-1:12]};
 		BPP16:	rgbo3 <= {16'h0,rgbo3[MDW-1:16]};
-		BPP18:	rgbo3 <= {18'h0,rgbo3[MDW-1:18]};
-		BPP21:	rgbo3 <= {21'h0,rgbo3[MDW-1:21]};
+//		BPP18:	rgbo3 <= {18'h0,rgbo3[MDW-1:18]};
+//		BPP21:	rgbo3 <= {21'h0,rgbo3[MDW-1:21]};
 		BPP24:	rgbo3 <= {24'h0,rgbo3[MDW-1:24]};
-		BPP27:	rgbo3 <= {27'h0,rgbo3[MDW-1:27]};
+//		BPP27:	rgbo3 <= {27'h0,rgbo3[MDW-1:27]};
 		BPP32:	rgbo3 <= {32'h0,rgbo3[MDW-1:32]};
-		BPP33:	rgbo3 <= {33'h0,rgbo3[MDW-1:33]};
-		BPP36:	rgbo3 <= {33'h0,rgbo3[MDW-1:36]};
-		BPP40:	rgbo3 <= {33'h0,rgbo3[MDW-1:40]};
+//		BPP33:	rgbo3 <= {33'h0,rgbo3[MDW-1:33]};
+//		BPP36:	rgbo3 <= {33'h0,rgbo3[MDW-1:36]};
+//		BPP40:	rgbo3 <= {33'h0,rgbo3[MDW-1:40]};
 		default: rgbo3 <= {16'h0,rgbo3[MDW-1:16]};
 		endcase
 	end
@@ -1467,18 +1495,18 @@ assign dat[119:108] = pixelRow[9] ? 12'hEA4 : 12'h000;
 reg [MDW-1:0] oob_dat;
 always_comb
 case(color_depth2)
-BPP6:	oob_dat <= {MDW/6{oob_color[5:0]}};
+//BPP6:	oob_dat <= {MDW/6{oob_color[5:0]}};
 BPP8:	oob_dat <= {MDW/8{oob_color[7:0]}};
-BPP12:	oob_dat <= {MDW/12{oob_color[11:0]}};
+//BPP12:	oob_dat <= {MDW/12{oob_color[11:0]}};
 BPP16:	oob_dat <= {MDW/16{oob_color[15:0]}};
-BPP18:	oob_dat <= {MDW/18{oob_color[17:0]}};
-BPP21:	oob_dat <= {MDW/21{oob_color[20:0]}};
+//BPP18:	oob_dat <= {MDW/18{oob_color[17:0]}};
+//BPP21:	oob_dat <= {MDW/21{oob_color[20:0]}};
 BPP24:	oob_dat <= {MDW/24{oob_color[23:0]}};
-BPP27:	oob_dat <= {MDW/27{oob_color[26:0]}};
+//BPP27:	oob_dat <= {MDW/27{oob_color[26:0]}};
 BPP32:	oob_dat <= {MDW/32{oob_color[31:0]}};
-BPP33:	oob_dat <= {MDW/33{oob_color[32:0]}};
-BPP36:	oob_dat <= {MDW/33{oob_color[35:0]}};
-BPP40:	oob_dat <= {MDW/33{oob_color[39:0]}};
+//BPP33:	oob_dat <= {MDW/33{oob_color[32:0]}};
+//BPP36:	oob_dat <= {MDW/33{oob_color[35:0]}};
+//BPP40:	oob_dat <= {MDW/33{oob_color[39:0]}};
 default:	oob_dat <= {MDW/16{oob_color[15:0]}};
 endcase
 

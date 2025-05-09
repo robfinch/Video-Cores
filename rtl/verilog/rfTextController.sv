@@ -1,6 +1,6 @@
 // ============================================================================
 //        __
-//   \\__/ o\    (C) 2006-2023  Robert Finch, Waterloo
+//   \\__/ o\    (C) 2006-2025  Robert Finch, Waterloo
 //    \  __ /    All rights reserved.
 //     \/_//     robfinch<remove>@finitron.ca
 //       ||
@@ -93,8 +93,10 @@
 //  12- 8               sssss  cursor start
 //  15-13									ttt	 cursor image type (none, box, underline, sidebar, checker, solid
 //  47-32   aaaaaaaa aaaaaaaa	 cursor position
+//  63-48   -------- ------aa
 // 28h
 //  15- 0   aaaaaaaa aaaaaaaa  start address (index into display memory)
+//  17-16   -------- ------aa
 // 30h
 //  15- 0   aaaaaaaa aaaaaaaa  font address in char bitmap memory
 //  31-24              dddddd  font ascent
@@ -118,12 +120,12 @@ parameter ROWS = 8'd32;
 parameter BUSWID = 32;
 parameter TEXT_CELL_COUNT = 8192;
 
-parameter RAM_ADDR = 32'hFEC00001;
-parameter CBM_ADDR = 32'hFEC40001;
-parameter REG_ADDR = 32'hFEC80001;
-parameter RAM_ADDR_MASK = 32'h00FC0000;
-parameter CBM_ADDR_MASK = 32'h00FC0000;
-parameter REG_ADDR_MASK = 32'h00FF0000;
+parameter RAM_ADDR = 32'hFD000001;
+parameter CBM_ADDR = 32'hFD040001;
+parameter REG_ADDR = 32'hFD080001;
+parameter RAM_ADDR_MASK = 32'hFFFC0000;
+parameter CBM_ADDR_MASK = 32'hFFFF0000;
+parameter REG_ADDR_MASK = 32'hFFFF0000;
 
 parameter CFG_BUS = 8'd0;
 parameter CFG_DEVICE = 5'd1;
@@ -196,9 +198,9 @@ reg [ 5:0] maxRowScan;
 reg [ 5:0] maxScanpix;
 reg [1:0] tileWidth;		// width of tile in bytes (0=1,1=2,2=4,3=8)
 reg [ 5:0] cursorStart, cursorEnd;
-reg [15:0] cursorPos;
+reg [17:0] cursorPos;
 reg [2:0] cursorType;
-reg [15:0] startAddress;
+reg [17:0] startAddress;
 reg [15:0] fontAddress;
 reg font_locked;
 reg [5:0] fontAscent;
@@ -258,9 +260,9 @@ endfunction
 reg cs_config;
 reg cs_rom, cs_reg, cs_text, cs_any;
 reg cs_rom1, cs_reg1, cs_text1;
-reg cs_rom2, cs_reg2, cs_text2;
+wire cs_rom2, cs_reg2, cs_text2;
 reg cs_tc;
-reg [17:0] radr_i;
+reg [31:0] radr_i;
 reg [63:0] rdat_i;
 reg rwr_i;
 reg [7:0] rsel_i;
@@ -357,11 +359,11 @@ pci64_config #(
 	.CFG_VENDOR_ID(CFG_VENDOR_ID),
 	.CFG_DEVICE_ID(CFG_DEVICE_ID),
 	.CFG_BAR0(RAM_ADDR),
-	.CFG_BAR0_ALLOC(RAM_ADDR_MASK),
+	.CFG_BAR0_MASK(RAM_ADDR_MASK),
 	.CFG_BAR1(CBM_ADDR),
-	.CFG_BAR1_ALLOC(CBM_ADDR_MASK),
+	.CFG_BAR1_MASK(CBM_ADDR_MASK),
 	.CFG_BAR2(REG_ADDR),
-	.CFG_BAR2_ALLOC(REG_ADDR_MASK),
+	.CFG_BAR2_MASK(REG_ADDR_MASK),
 	.CFG_SUBSYSTEM_VENDOR_ID(CFG_SUBSYSTEM_VENDOR_ID),
 	.CFG_SUBSYSTEM_ID(CFG_SUBSYSTEM_ID),
 	.CFG_ROM_ADDR(CFG_ROM_ADDR),
@@ -386,7 +388,7 @@ ucfg1
 	.adr_i(radr_i),
 	.dat_i(rdat_i),
 	.dat_o(cfg_out),
-	.cs_bar0_o(cs_ram2),
+	.cs_bar0_o(cs_text2),
 	.cs_bar1_o(cs_rom2),
 	.cs_bar2_o(cs_reg2),
 	.irq_en_o()
@@ -628,7 +630,7 @@ always_ff @(posedge clk_i)
     yscroll 		 <= 5'd0;
     txtTcCode    <= 24'h1ff;
     bdrColor     <= 32'hFFBF2020;
-    startAddress <= 16'h0000;
+    startAddress <= 18'h00000;
     fontAddress  <= 16'h0008;
     font_locked  <= 1'b1;
     fontAscent   <= 6'd12;
@@ -746,11 +748,13 @@ always_ff @(posedge clk_i)
 					end
 					if (rsel_i[4]) cursorPos[7:0] <= rdat_i[39:32];
 					if (rsel_i[5]) cursorPos[15:8] <= rdat_i[47:40];
+					if (rsel_i[6]) cursorPos[17:16] <= rdat_i[49:48];
 				end
 			4'd5:	// Page flipping / scrolling
 				begin
 					if (rsel_i[0]) startAddress[7:0] <= rdat_i[7:0];
 					if (rsel_i[1]) startAddress[15:8] <= rdat_i[15:8];
+					if (rsel_i[2]) startAddress[17:16] <= rdat_i[17:16];
 				end
 			4'd6:	// 
 				begin
