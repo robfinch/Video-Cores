@@ -243,7 +243,7 @@ output reg xal_o;		// external access line (sprite access)
 // IO registers
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 reg irq;
-reg rst_irq;
+reg rst_irq,rst_irq1;
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -629,7 +629,7 @@ if (rst_i)
 else begin
 	if (hctr_o==12'd02 && rastcmp==vctr_o)
 		irq <= HIGH;
-	else if (rst_irq)
+	else if (rst_irq|rst_irq1)
 		irq <= LOW;
 end
 
@@ -682,7 +682,7 @@ if (rst_i) begin
 	map <= MAP;
 	pcmd <= 2'b00;
 	rstcmd1 <= 1'b0;
-	rst_irq <= 1'b0;
+	rst_irq1 <= 1'b0;
 	rastcmp <= 12'hFFF;
 	oob_color <= 40'h00003C00;
 	irq_msgadr <= IRQ_MSGADR;
@@ -691,7 +691,7 @@ end
 else begin
 	color_depth2 <= color_depth;
 	rstcmd1 <= rstcmd;
-	rst_irq <= 1'b0;
+	rst_irq1 <= 1'b0;
   if (rstcmd & ~rstcmd1)
     pcmd <= 2'b00;
 	if (cs_edge) begin
@@ -737,7 +737,7 @@ else begin
 				begin
 					if (sel[0]) rastcmp[7:0] <= dat[7:0];
 					if (sel[1]) rastcmp[11:8] <= dat[11:8];
-					if (sel[7]) rst_irq <= dat[63];
+					if (sel[7]) rst_irq1 <= dat[63];
 				end
 			REG_BMPSIZE:
 				begin
@@ -1190,7 +1190,7 @@ typedef enum logic [3:0] {
 	LOAD_OOB = 4'd12
 } state_t;
 state_t state;
-reg [127:0] icolor1;
+reg [MDW-1:0] icolor1;
 
 function rastop;
 input [3:0] op;
@@ -1298,7 +1298,7 @@ else begin
     	vm_adr_o <= irq_msgadr;
     	wbm_req.we <= HIGH;
     	wbm_req.sel <= irq_msgadr[3] ? 16'hFF00 : 16'h00FF;
-    	wbm_req.data1 <= {2{irq_msgdat}};
+    	wbm_req.dat <= {2{irq_msgdat}};
     	rst_irq <= 1'b1;
     end
     // The adr_o[5:3]==3'b111 causes the controller to wait until all eight
@@ -1317,7 +1317,7 @@ else begin
     if (wbm_resp.ack|tocnt[10]) begin
       wb_nack();
       mem_strip <= wbm_resp.dat;
-      icolor1 <= {96'b0,color} << mb;
+      icolor1 <= {{MDW-32{1'b0}},color} << mb;
       rstcmd <= 1'b1;
       if (pcmd==2'b01)
         state <= ICOLOR3;

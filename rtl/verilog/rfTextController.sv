@@ -50,7 +50,17 @@
 //	The core includes an embedded dual port RAM to hold the screen
 //	characters.
 //
-//  The controller expects a 256kB memory region to be reserved.
+//  The controller expects a 1MB memory region to be reserved.
+//
+//  The controller may be configured to use either a 32 or a 64-bit slave bus.
+//  Two formats for text cells are supported. The first is 32-bit, the second
+//  64-bit. The character to display is in the low order 13-bits for both
+//  formats. For the 32-bit format bits 16 to 23 are the foreground color as
+//	an RGB332 color, bits 24 to 31 are the background color as an RGB332 color.
+//	Bit 13 to 15 determine the screen display priority.
+//  For the 64-bit format bits 16 to 36 are the foreground color (RGB777) and
+//  bits 37 to 57 are the background color as RGB777.
+//	Bits 58 to 63 determine the screen display priority.
 //
 //  Memory Map:
 //  00000-3FFFF   display ram
@@ -93,10 +103,10 @@
 //  12- 8               sssss  cursor start
 //  15-13									ttt	 cursor image type (none, box, underline, sidebar, checker, solid
 //  47-32   aaaaaaaa aaaaaaaa	 cursor position
-//  63-48   -------- ------aa
+//  63-48   -------- --------
 // 28h
 //  15- 0   aaaaaaaa aaaaaaaa  start address (index into display memory)
-//  17-16   -------- ------aa
+//  17-16   -------- --------
 // 30h
 //  15- 0   aaaaaaaa aaaaaaaa  font address in char bitmap memory
 //  31-24              dddddd  font ascent
@@ -111,14 +121,15 @@
 
 module rfTextController(
 	rst_i, clk_i, cs_config_i, cs_io_i,
-	cti_i, cyc_i, stb_i, ack_o, wr_i, sel_i, adr_i, dat_i, dat_o,
+	core_i, core_o, cti_i, cyc_i, stb_i, ack_o, wr_i, sel_i, adr_i, dat_i, dat_o,
 	dot_clk_i, hsync_i, vsync_i, blank_i, border_i, zrgb_i, zrgb_o, xonoff_i
 );
 parameter num = 4'd1;
 parameter COLS = 8'd64;
 parameter ROWS = 8'd32;
 parameter BUSWID = 32;
-parameter TEXT_CELL_COUNT = 16384;
+parameter TEXT_CELL_COUNT = 32768;
+parameter SCREEN_FORMAT = 1;		// 32-bit character cells
 
 parameter RAM_ADDR = 32'hFD000001;
 parameter CBM_ADDR = 32'hFD040001;
@@ -155,6 +166,8 @@ input cs_config_i;
 input cs_io_i;
 
 // Slave signals
+input [5:0] core_i;
+output reg [5:0] core_o;
 input  [2:0] cti_i;
 input  cyc_i;				// valid bus cycle
 input  stb_i;       // data strobe
@@ -231,7 +244,6 @@ wire ld_shft = nxt_col & nhp;
 // display and timing signals
 reg [15:0] txtAddr;		// index into memory
 reg [15:0] penAddr;
-wire [63:0] screen_ram_out;		// character code
 wire [20:0] txtBkColor;	// background color code
 wire [20:0] txtFgColor;	// foreground color code
 wire [5:0] txtZorder;
@@ -298,6 +310,8 @@ always_ff @(posedge clk_i)
 	radr_i <= adr_i;
 always_ff @(posedge clk_i)
 	rdat_i <= (BUSWID==64) ? dat_i : (BUSWID==32) ? {2{dat_i}} : {4{dat_i}};
+always_ff @(posedge clk_i)
+	core_o <= core_i;
 
 // Register outputs
 always_ff @(posedge clk_i)
@@ -306,7 +320,7 @@ if (BUSWID==64)
 	4'b1???:	dat_o <= cfg_out;
 	4'b01??:	dat_o <= chdat_o;
 	4'b001?:	dat_o <= rego;
-	4'b0001:	dat_o <= tdat_o;
+	4'b0001:	dat_o <= SCREEN_FORMAT==1 ? {2{tdat_o[31:0]}} : tdat_o;
 	default:	dat_o <= 'h0;
 	endcase
 else if (BUSWID==32)
@@ -314,7 +328,7 @@ else if (BUSWID==32)
 	4'b1???:	dat_o <= radr_i[2] ? cfg_out[63:32] : cfg_out[31:0];
 	4'b01??:	dat_o <= radr_i[2] ? chdat_o[63:32] : chdat_o[31:0];
 	4'b001?:	dat_o <= radr_i[2] ? rego[63:32] : rego[31:0];
-	4'b0001:	dat_o <= radr_i[2] ? tdat_o[63:32] : tdat_o[31:0];
+	4'b0001:	dat_o <= radr_i[2] ? (SCREEN_FORMAT==1 ? tdat_o[31:0] : tdat_o[63:32]) : tdat_o[31:0];
 	default:	dat_o <= 'd0;
 	endcase
 else
@@ -504,6 +518,28 @@ regReadbackMem #(.WID(8)) rrm3H
 
 wire [26:0] lfsr1_o;
 lfsr27 #(.WID(27)) ulfsr1(rst_i, dot_clk_i, 1'b1, 1'b0, lfsr1_o);
+generate begin : gLFSR
+case(SCREEN_FORMAT)
+1:
+	begin
+wire [31:0] lfsr_o = {
+												lfsr1_o[25:23],lfsr1_o[22:20],lfsr1_o[19:18],
+												lfsr1_o[17:15],lfsr1_o[14:12],lfsr1_o[11:10],
+												3'h0,4'h00,lfsr1_o[8:0]
+										};
+wire [31:0] lfsr_o2 = {6'h10,
+												lfsr1_o[25:23],lfsr1_o[22:20],lfsr1_o[19:18],
+												lfsr1_o[17:15],lfsr1_o[14:12],lfsr1_o[11:10],
+												3'h0,4'h00,lfsr1_o[8:0]
+										};
+wire [31:0] lfsr_o1 = {
+												lfsr1_o[25:23],lfsr1_o[22:20],lfsr1_o[19:18],
+												lfsr1_o[17:15],lfsr1_o[14:12],lfsr1_o[11:10],
+												lfsr_o[2:0],4'h00,lfsr1_o[8:0]
+										};
+	end
+default:
+	begin
 wire [63:0] lfsr_o = {6'h10,
 												lfsr1_o[26:24],4'b0,lfsr1_o[23:21],4'b0,lfsr1_o[20:18],4'b0,
 												lfsr1_o[17:15],4'b0,lfsr1_o[14:12],4'b0,lfsr1_o[11:9],4'b0,
@@ -523,6 +559,10 @@ wire [63:0] lfsr_o1 = {lfsr1_o[3:0],2'b00,
 												4'b0,lfsr1_o[17:15],lfsr1_o[14:12],4'b0,4'b0,lfsr1_o[11:9],
 												7'h00,lfsr1_o[8:0]
 										};
+	end
+  endcase
+end
+endgenerate
 
 /* This snippit of code for performing burst accesses, under construction.
 wire pe_cs;
@@ -550,26 +590,61 @@ always @(posedge clk_i)
 //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // text screen RAM
 //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-rfTextScreenRam #(
-	.TEXT_CELL_COUNT(TEXT_CELL_COUNT)
-)
-screen_ram1
-(
-	.clka_i(clk_i),
-	.csa_i(cs_text),
-	.wea_i(rwr_i),
-	.sela_i(rsel_i),
-	.adra_i(radr_i[16:3]),
-	.data_i(rdat_i),
-	.data_o(tdat_o),
-	.clkb_i(vclk),
-	.csb_i(ld_shft|por),
-	.web_i(por),
-	.selb_i(8'hFF),
-	.adrb_i(txtAddr[13:0]),
-	.datb_i(lfsr_o),//txtAddr[12:0] > 13'd1664 ? lfsr_o1 : lfsr_o), 
-	.datb_o(screen_ram_out)
-);
+wire [63:0] screen_ram_out;
+generate begin : gScreenRAM
+case(SCREEN_FORMAT)
+1:
+begin
+	rfTextScreenRam #(
+		.WID(32),
+		.TEXT_CELL_COUNT(TEXT_CELL_COUNT)
+	)
+	screen_ram1
+	(
+		.clka_i(clk_i),
+		.csa_i(cs_text),
+		.wea_i(rwr_i),
+		.sela_i(rsel_i[7:4]|rsel_i[3:0]),
+		.adra_i(radr_i[16:2]),
+		.data_i(rdat_i[31:0]),
+		.data_o(tdat_o[31:0]),
+		.clkb_i(vclk),
+		.csb_i(ld_shft|por),
+		.web_i(por),
+		.selb_i(4'hF),
+		.adrb_i(txtAddr[14:0]),
+		.datb_i(lfsr_o),//txtAddr[12:0] > 13'd1664 ? lfsr_o1 : lfsr_o), 
+		.datb_o(screen_ram_out[31:0])
+	);
+	assign screen_ram_out[63:32] = 32'd0;
+end
+default:
+begin
+	rfTextScreenRam #(
+		.WID(64),
+		.TEXT_CELL_COUNT(TEXT_CELL_COUNT)
+	)
+	screen_ram1
+	(
+		.clka_i(clk_i),
+		.csa_i(cs_text),
+		.wea_i(rwr_i),
+		.sela_i(rsel_i),
+		.adra_i(radr_i[16:3]),
+		.data_i(rdat_i),
+		.data_o(tdat_o),
+		.clkb_i(vclk),
+		.csb_i(ld_shft|por),
+		.web_i(por),
+		.selb_i(8'hFF),
+		.adrb_i(txtAddr[13:0]),
+		.datb_i(lfsr_o),//txtAddr[12:0] > 13'd1664 ? lfsr_o1 : lfsr_o), 
+		.datb_o(screen_ram_out)
+	);
+end
+endcase
+end
+endgenerate
 
 //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // Character bitmap RAM
@@ -599,12 +674,38 @@ rfTextCharRam charRam0
 reg [20:0] txtBkCode1;
 reg [20:0] txtFgCode1;
 reg [5:0] txtZorder1;
-always @(posedge vclk)
-	if (ld_shft) txtBkCode1 <= screen_ram_out[36:16];
-always @(posedge vclk)
-	if (ld_shft) txtFgCode1 <= screen_ram_out[57:37];
-always @(posedge vclk)
-	if (ld_shft) txtZorder1 <= screen_ram_out[63:58];
+
+generate begin : gColorCodes
+case(SCREEN_FORMAT)
+1:
+	begin
+		always @(posedge vclk)
+			if (ld_shft) txtBkCode1 <= {
+				screen_ram_out[23:21],4'd0,
+				screen_ram_out[20:18],4'd0,
+				screen_ram_out[17:16],5'd0
+			};
+		always @(posedge vclk)
+			if (ld_shft) txtFgCode1 <= {
+				screen_ram_out[31:29],4'b0,
+				screen_ram_out[28:26],4'b0,
+				screen_ram_out[25:24],5'b0
+			};
+		always @(posedge vclk)
+			if (ld_shft) txtZorder1 <= {screen_ram_out[15:13],3'b0};
+	end
+default:
+	begin
+		always @(posedge vclk)
+			if (ld_shft) txtBkCode1 <= screen_ram_out[36:16];
+		always @(posedge vclk)
+			if (ld_shft) txtFgCode1 <= screen_ram_out[57:37];
+		always @(posedge vclk)
+			if (ld_shft) txtZorder1 <= screen_ram_out[63:58];
+	end
+endcase
+end
+endgenerate
 
 //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // Register read port

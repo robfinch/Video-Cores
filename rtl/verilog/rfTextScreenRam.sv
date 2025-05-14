@@ -1,6 +1,6 @@
 // ============================================================================
 //        __
-//   \\__/ o\    (C) 2018-2024  Robert Finch, Waterloo
+//   \\__/ o\    (C) 2018-2025  Robert Finch, Waterloo
 //    \  __ /    All rights reserved.
 //     \/_//     robfinch<remove>@finitron.ca
 //       ||
@@ -38,22 +38,23 @@
 
 module rfTextScreenRam(rsta_i, clka_i, csa_i, wea_i, sela_i, adra_i, data_i, data_o,
 	rstb_i, clkb_i, csb_i, web_i, selb_i, adrb_i, datb_i, datb_o);
+parameter WID=64;
 input rsta_i;
 input clka_i;
 input csa_i;
 input wea_i;
-input [7:0] sela_i;
-input [15:3] adra_i;
-input [63:0] data_i;
-output [63:0] data_o;
+input [WID/8-1:0] sela_i;
+input [16:WID==64?3:2] adra_i;
+input [WID-1:0] data_i;
+output [WID-1:0] data_o;
 input rstb_i;
 input clkb_i;
 input csb_i;
 input web_i;
-input [7:0] selb_i;
-input [15:3] adrb_i;
-input [63:0] datb_i;
-output [63:0] datb_o;
+input [WID/8-1:0] selb_i;
+input [16:WID==64?3:2] adrb_i;
+input [WID-1:0] datb_i;
+output [WID-1:0] datb_o;
 parameter TEXT_CELL_COUNT = 16384;
 localparam AWID = $clog2(TEXT_CELL_COUNT);
 
@@ -77,10 +78,10 @@ wire rstb = rstb_i;
 	  .MEMORY_INIT_PARAM("0"),        // String
 	  .MEMORY_OPTIMIZATION("true"),   // String
 	  .MEMORY_PRIMITIVE("block"),      // String
-	  .MEMORY_SIZE(TEXT_CELL_COUNT*64),
+	  .MEMORY_SIZE(TEXT_CELL_COUNT*WID),
 	  .MESSAGE_CONTROL(0),
-	  .READ_DATA_WIDTH_A(64),
-	  .READ_DATA_WIDTH_B(64),
+	  .READ_DATA_WIDTH_A(WID),
+	  .READ_DATA_WIDTH_B(WID),
 	  .READ_LATENCY_A(2),
 	  .READ_LATENCY_B(1),
 	  .READ_RESET_VALUE_A("0"),       // String
@@ -91,8 +92,8 @@ wire rstb = rstb_i;
 	  .USE_EMBEDDED_CONSTRAINT(0),    // DECIMAL
 	  .USE_MEM_INIT(1),
 	  .WAKEUP_TIME("disable_sleep"),  // String
-	  .WRITE_DATA_WIDTH_A(64),
-	  .WRITE_DATA_WIDTH_B(64),
+	  .WRITE_DATA_WIDTH_A(WID),
+	  .WRITE_DATA_WIDTH_B(WID),
 	  .WRITE_MODE_A("no_change"),     // String
 	  .WRITE_MODE_B("no_change")      // String
 	)
