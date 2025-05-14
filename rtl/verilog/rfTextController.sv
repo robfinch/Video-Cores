@@ -517,22 +517,26 @@ regReadbackMem #(.WID(8)) rrm3H
 );
 
 wire [26:0] lfsr1_o;
+wire [63:0] lfsr_o;
+wire [63:0] lfsr_o2;
+wire [63:0] lfsr_o1;
+
 lfsr27 #(.WID(27)) ulfsr1(rst_i, dot_clk_i, 1'b1, 1'b0, lfsr1_o);
 generate begin : gLFSR
 case(SCREEN_FORMAT)
 1:
 	begin
-wire [31:0] lfsr_o = {
+assign lfsr_o = { 32'd0,
 												lfsr1_o[25:23],lfsr1_o[22:20],lfsr1_o[19:18],
 												lfsr1_o[17:15],lfsr1_o[14:12],lfsr1_o[11:10],
 												3'h0,4'h00,lfsr1_o[8:0]
 										};
-wire [31:0] lfsr_o2 = {6'h10,
+assign lfsr_o2 = {32'd0,
 												lfsr1_o[25:23],lfsr1_o[22:20],lfsr1_o[19:18],
 												lfsr1_o[17:15],lfsr1_o[14:12],lfsr1_o[11:10],
 												3'h0,4'h00,lfsr1_o[8:0]
 										};
-wire [31:0] lfsr_o1 = {
+assign lfsr_o1 = { 32'd0,
 												lfsr1_o[25:23],lfsr1_o[22:20],lfsr1_o[19:18],
 												lfsr1_o[17:15],lfsr1_o[14:12],lfsr1_o[11:10],
 												lfsr_o[2:0],4'h00,lfsr1_o[8:0]
@@ -540,19 +544,19 @@ wire [31:0] lfsr_o1 = {
 	end
 default:
 	begin
-wire [63:0] lfsr_o = {6'h10,
+assign lfsr_o = {6'h10,
 												lfsr1_o[26:24],4'b0,lfsr1_o[23:21],4'b0,lfsr1_o[20:18],4'b0,
 												lfsr1_o[17:15],4'b0,lfsr1_o[14:12],4'b0,lfsr1_o[11:9],4'b0,
 												7'h00,lfsr1_o[8:0]
 										};
-wire [63:0] lfsr_o2 = {6'h10,
+assign lfsr_o2 = {6'h10,
 //												lfsr1_o[26:24],4'b0,lfsr1_o[23:21],4'b0,lfsr1_o[20:18],4'b0,
 //												lfsr1_o[17:15],4'b0,lfsr1_o[14:12],4'b0,lfsr1_o[11:9],4'b0,
 												4'b0,lfsr1_o[26:24],4'b0,lfsr1_o[23:21],lfsr1_o[20:18],4'b0,
 												4'b0,lfsr1_o[17:15],4'b0,lfsr1_o[14:12],lfsr1_o[11:9],4'b0,
 												7'h00,lfsr1_o[8:0]
 										};
-wire [63:0] lfsr_o1 = {lfsr1_o[3:0],2'b00,
+assign lfsr_o1 = {lfsr1_o[3:0],2'b00,
 //												lfsr1_o[26:24],4'b0,lfsr1_o[23:21],4'b0,lfsr1_o[20:18],4'b0,
 //												lfsr1_o[17:15],4'b0,lfsr1_o[14:12],4'b0,lfsr1_o[11:9],4'b0,
 												4'b0,lfsr1_o[26:24],4'b0,lfsr1_o[23:21],lfsr1_o[20:18],4'b0,
@@ -613,7 +617,7 @@ begin
 		.web_i(por),
 		.selb_i(4'hF),
 		.adrb_i(txtAddr[14:0]),
-		.datb_i(lfsr_o),//txtAddr[12:0] > 13'd1664 ? lfsr_o1 : lfsr_o), 
+		.datb_i(lfsr_o[31:0]),
 		.datb_o(screen_ram_out[31:0])
 	);
 	assign screen_ram_out[63:32] = 32'd0;
