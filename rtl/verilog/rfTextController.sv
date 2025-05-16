@@ -121,7 +121,7 @@
 
 module rfTextController(
 	rst_i, clk_i, cs_config_i, cs_io_i,
-	core_i, core_o, cti_i, cyc_i, stb_i, ack_o, wr_i, sel_i, adr_i, dat_i, dat_o,
+	cti_i, cyc_i, stb_i, ack_o, wr_i, sel_i, adr_i, dat_i, dat_o,
 	dot_clk_i, hsync_i, vsync_i, blank_i, border_i, zrgb_i, zrgb_o, xonoff_i
 );
 parameter num = 4'd1;
@@ -166,8 +166,6 @@ input cs_config_i;
 input cs_io_i;
 
 // Slave signals
-input [5:0] core_i;
-output reg [5:0] core_o;
 input  [2:0] cti_i;
 input  cyc_i;				// valid bus cycle
 input  stb_i;       // data strobe
@@ -206,6 +204,7 @@ reg [11:0] windowLeft;
 reg [ 7:0] numCols;
 reg [ 7:0] numRows;
 reg [ 7:0] charOutDelay;
+reg [ 7:0] gm;
 reg [ 1:0] mode;
 reg [ 5:0] maxRowScan;
 reg [ 5:0] maxScanpix;
@@ -310,8 +309,6 @@ always_ff @(posedge clk_i)
 	radr_i <= adr_i;
 always_ff @(posedge clk_i)
 	rdat_i <= (BUSWID==64) ? dat_i : (BUSWID==32) ? {2{dat_i}} : {4{dat_i}};
-always_ff @(posedge clk_i)
-	core_o <= core_i;
 
 // Register outputs
 always_ff @(posedge clk_i)
@@ -605,6 +602,7 @@ begin
 	)
 	screen_ram1
 	(
+		.rsta_i(1'b0),
 		.clka_i(clk_i),
 		.csa_i(cs_text),
 		.wea_i(rwr_i),
@@ -612,6 +610,7 @@ begin
 		.adra_i(radr_i[16:2]),
 		.data_i(rdat_i[31:0]),
 		.data_o(tdat_o[31:0]),
+		.rstb_i(1'b0),
 		.clkb_i(vclk),
 		.csb_i(ld_shft|por),
 		.web_i(por),
@@ -630,6 +629,7 @@ begin
 	)
 	screen_ram1
 	(
+		.rsta_i(1'b0),
 		.clka_i(clk_i),
 		.csa_i(cs_text),
 		.wea_i(rwr_i),
@@ -637,6 +637,7 @@ begin
 		.adra_i(radr_i[16:3]),
 		.data_i(rdat_i),
 		.data_o(tdat_o),
+		.rstb_i(1'b0),
 		.clkb_i(vclk),
 		.csb_i(ld_shft|por),
 		.web_i(por),
@@ -654,7 +655,8 @@ endgenerate
 // Character bitmap RAM
 // - room for 8160 8x8 characters
 //- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-wire [63:0] char_bmp;		// character ROM output
+reg [63:0] char_bmp;
+wire [63:0] char_bmp1;		// character ROM output
 rfTextCharRam charRam0
 (
 	.clk_i(clk_i),
@@ -671,8 +673,40 @@ rfTextCharRam charRam0
 	.maxScanpix_i(maxScanpix),
 	.maxscanline_i(maxScanlinePlusOne),
 	.scanline_i(rowscan[5:0]),
-	.bmp_o(char_bmp)
+	.bmp_o(char_bmp1)
 );
+
+reg [7:0] char_bmp2;
+always_ff @(posedge clk_i)
+	case({rowscan[2:1]})
+	2'b00:	char_bmp2 <= 
+						{	screen_ram_out[3],screen_ram_out[3],
+							screen_ram_out[2],screen_ram_out[2],
+							screen_ram_out[1],screen_ram_out[1],
+							screen_ram_out[0],screen_ram_out[0]
+						};
+	2'b01:	char_bmp2 <= 
+						{	screen_ram_out[7],screen_ram_out[7],
+							screen_ram_out[6],screen_ram_out[6],
+							screen_ram_out[5],screen_ram_out[5],
+							screen_ram_out[4],screen_ram_out[4]
+						};
+	2'b10:	char_bmp2 <= 
+						{	screen_ram_out[11],screen_ram_out[11],
+							screen_ram_out[10],screen_ram_out[10],
+							screen_ram_out[9],screen_ram_out[9],
+							screen_ram_out[8],screen_ram_out[8]
+						};
+	2'b11:	char_bmp2 <= 
+						{	screen_ram_out[15],screen_ram_out[15],
+							screen_ram_out[14],screen_ram_out[14],
+							screen_ram_out[13],screen_ram_out[13],
+							screen_ram_out[12],screen_ram_out[12]
+						};
+	endcase
+
+always_comb
+	char_bmp = gm==8'h01 ? {8{char_bmp2}} : char_bmp1;
 
 // pipeline delay - sync color with character bitmap output
 reg [20:0] txtBkCode1;
@@ -743,6 +777,7 @@ always_ff @(posedge clk_i)
     cursorEnd    <= 5'd31;
     cursorPos    <= 16'h0003;
     cursorType 	 <= 3'd4;	// checker
+    gm <= 8'h00;
 // 104x63
 /*
 		windowTop    <= 12'd26;
@@ -793,9 +828,10 @@ always_ff @(posedge clk_i)
 			$display("TC Write: r%d=%h", rrm_adr, rdat_i);
 			case(rrm_adr)
 			4'd0:	begin
-					if (rsel_i[0]) numCols    <= rdat_i[7:0];
-					if (rsel_i[1]) numRows    <= rdat_i[15:8];
+					if (rsel_i[0]) numCols <= rdat_i[7:0];
+					if (rsel_i[1]) numRows <= rdat_i[15:8];
 					if (rsel_i[2]) charOutDelay <= rdat_i[23:16];
+					if (rsel_i[3]) gm <= rdat_i[31:24];
 					if (rsel_i[4]) windowLeft[7:0] <= rdat_i[39:32];
 					if (rsel_i[5]) windowLeft[11:8] <= rdat_i[43:40];
 					if (rsel_i[6]) windowTop[7:0]  <= rdat_i[55:48];
@@ -1208,7 +1244,7 @@ endfunction
 // controllers would not be visible if the clock were gated off.
 always_ff @(posedge dot_clk_i)
 	casez({controller_enable&xonoff_i,blank_i,iblank,border_i,bpix,mcm,aam,pix})
-	9'b01???????:	zrgb_o <= 40'h00000000;
+	9'b01???????:	zrgb_o <= zrgb_i;
 	9'b11???????:	zrgb_o <= 40'h00000000;
 	9'b1001?????:	zrgb_o <= {bdrColor[30:27],bdrColor[26:18],3'b0,bdrColor[17:9],3'b0,bdrColor[8:0],3'b0};
 `ifdef SUPPORT_AAM	
