@@ -55,6 +55,9 @@ import const_pkg::*;
 import fta_bus_pkg::*;
 import gfx_pkg::*;
 
+//`define BUSWID64	1'b1
+`define BUSWID32	1'b1
+
 module rfFrameBuffer_fta64 (
 	rst_i,
 	xonoff_i,
@@ -251,8 +254,14 @@ output vblank_o;
 
 
 wire s_clk_i = s_bus_i.clk;
+`ifdef BUSWID64
 fta_cmd_request64_t s_req_i = s_bus_i.req;
 fta_cmd_response64_t s_resp_o;
+`endif
+`ifdef BUSWID32
+fta_cmd_request32_t s_req_i = s_bus_i.req;
+fta_cmd_response32_t s_resp_o;
+`endif
 assign s_bus_i.resp = s_resp_o;
 
 wire dot_clk_i = video_i.clk;		// video clock (40 MHz)
@@ -299,9 +308,16 @@ reg [63:0] dat;
 wire irq_en;
 reg [63:0] s_dat_o;
 wire ack;
+`ifdef BUSWID64
 fta_cmd_request64_t reqd;
 fta_cmd_response64_t s_resp1;
 fta_cmd_response64_t cfg_resp;
+`endif
+`ifdef BUSWID32
+fta_cmd_request32_t reqd;
+fta_cmd_response32_t s_resp1;
+fta_cmd_response32_t cfg_resp;
+`endif
 reg [5:0] max_nburst;
 reg [5:0] burst_len;
 
@@ -310,11 +326,11 @@ always_ff @(posedge s_clk_i)
 always_ff @(posedge s_clk_i)
 	we <= s_req_i.we;
 always_ff @(posedge s_clk_i)
-	sel <= s_req_i.sel;
+	sel <= (BUSWID==32)  ? (s_req_i.adr[2] ? {s_req_i.sel,4'b0} : {4'b0,s_req_i.sel}) : s_req_i.sel;
 always_ff @(posedge s_clk_i)
 	adri <= s_req_i.adr;
 always_ff @(posedge s_clk_i)
-	dat <= s_req_i.dat;
+	dat <= (BUSWID==32) ? {2{s_req_i.dat}} : s_req_i.dat;
 
 always_ff @(posedge s_clk_i)
 	cs_config <= cs_config_i;
@@ -338,7 +354,7 @@ else begin
 		s_resp_o.rty <= 1'b0;
 		s_resp_o.pri <= 4'd7;
 		s_resp_o.adr <= s_resp1.adr;
-		s_resp_o.dat <= s_dat_o;
+		s_resp_o.dat <= (BUSWID==32) ? (s_resp1.adr[2] ? s_dat_o[63:32] : s_dat_o[31:0]) : s_dat_o;
 	end
 end
 
@@ -438,9 +454,9 @@ generate begin : gConfigSpace
 			.rst_i(rst_i),
 			.clk_i(s_clk_i),
 			.irq_i(irq),
-			.cs(cs_config), 
-			.req(reqd),
-			.resp(cfg_resp),
+			.cs_i(cs_config), 
+			.req_i(reqd),
+			.resp_o(cfg_resp),
 			.cs_bar0_o(cs_fbc),
 			.cs_bar1_o(),
 			.cs_bar2_o()
@@ -539,7 +555,7 @@ wire [BITS_IN_ADDR_MAP-1:0] map_out;
                                        // on the data output of port B.
 
       .addra(adri[13:3]),              // ADDR_WIDTH_A-bit input: Address for port A write and read operations.
-      .addrb(vm_adr_o[23:13]),         // ADDR_WIDTH_B-bit input: Address for port B write and read operations.
+      .addrb(vm_adr_o[24:14]),         // ADDR_WIDTH_B-bit input: Address for port B write and read operations.
       .clka(s_clk_i),                  // 1-bit input: Clock signal for port A. Also clocks port B when
                                        // parameter CLOCKING_MODE is "common_clock".
 
@@ -608,9 +624,9 @@ delay3 #(3) udly0 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_cmd_o), .o(m_bus_o.req.cm
 delay3 #(1) udly1 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_cyc_o), .o(m_bus_o.req.cyc));
 delay3 #(1) udly2 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_we_o), .o(m_bus_o.req.we));
 delay3 #(MDW/8) udly3 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_sel_o), .o(m_bus_o.req.sel));
-delay3 #(32) udly4 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_adr_o), .o(m_bus_o.req.vadr));
-delay3 #(13) udly5 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_adr_o[12:0]), .o(m_bus_o.req.adr[12:0]));
-delay1 #(32) udly8 (.clk(m_bus_o.clk), .ce(1'b1), .i({1'b0,map_page}), .o(m_bus_o.req.adr[31:13]));
+//delay3 #(32) udly4 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_adr_o), .o(m_bus_o.req.adr));
+delay3 #(14) udly5 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_adr_o[12:0]), .o(m_bus_o.req.adr[13:0]));
+delay1 #(18) udly8 (.clk(m_bus_o.clk), .ce(1'b1), .i({1'b0,map_page}), .o(m_bus_o.req.adr[31:14]));
 delay3 #(13) udly6 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_tid_o), .o(m_bus_o.req.tid));
 delay3 #(6) udly7 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_blen_o), .o(m_bus_o.req.blen));
 
@@ -1211,12 +1227,12 @@ always @(posedge m_bus_o.clk)
 	else if (blankEdge)
 		do_loads <= 1'b0;
 */
+always_comb m_bus_o.req.seg = 13'd0;
+always_comb m_bus_o.req.pv = 1'b0;
 always_comb m_bus_o.req.bte = fta_bus_pkg::LINEAR;
 always_comb m_bus_o.req.cti = fta_bus_pkg::CLASSIC;
-always_comb m_bus_o.req.stb = m_bus_o.req.cyc;
 always_comb m_bus_o.req.om = 2'd0;
 always_comb m_bus_o.req.sz = 4'd0;
-always_comb m_bus_o.req.asid = 16'd0;
 always_comb m_bus_o.req.ctag = 1'b0;
 always_comb m_bus_o.req.data2 = 256'd0;
 always_comb m_bus_o.req.csr = 1'b0;
@@ -1230,7 +1246,7 @@ always_comb m_bus_o.req.cache = 4'd0;
 
 wire [31:0] adr;
 fb_state_t state;
-reg [127:0] icolor1;
+reg [MDW-1:0] icolor1;
 
 function rastop;
 input [3:0] op;
@@ -1323,7 +1339,7 @@ else begin
 		m_fst_o <= HIGH;
 	end
 
-	// For burst only a single request is submitted, but many repsonses may occur
+	// For burst only a single request is submitted, but many responses may occur
 	if (memreq && !m_rst_busy_i) begin
 		m_fst_o <= LOW;
 		vm_blen_o <= burst_len;
