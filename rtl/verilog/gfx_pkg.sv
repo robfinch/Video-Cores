@@ -1,6 +1,6 @@
 // ============================================================================
 //        __
-//   \\__/ o\    (C) 2015-2022  Robert Finch, Waterloo
+//   \\__/ o\    (C) 2015-2025  Robert Finch, Waterloo
 //    \  __ /    All rights reserved.
 //     \/_//     robfinch<remove>@finitron.ca
 //       ||
@@ -44,7 +44,7 @@ typedef enum logic [1:0] {
 	BPP8 = 2'd0,		// 8
 	BPP16 = 2'd1,		// 1-5-5-5
 	BPP24 = 2'd2,		// 1-8-8-7
-	BPP32 = 2'd3		// 1-10-11-10
+	BPP32 = 2'd3		// 2-10-10-10
 } color_depth_t;
 
 typedef enum logic [3:0] {
@@ -60,7 +60,10 @@ typedef enum logic [3:0] {
 	ICOLOR2 = 4'd9,
 	ICOLOR3 = 4'd10,
 	ICOLOR4 = 4'd11,
-	LOAD_OOB = 4'd12
+	LOAD_OOB = 4'd12,
+	PCMD1 = 4'd13,
+	PCMD2 = 4'd14,
+	PCMD3 = 4'd15
 } fb_state_t;
 
 endpackage
