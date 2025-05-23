@@ -95,7 +95,7 @@ gfx_calc_address ugfxca1
 	.ce_o()
 );
 wire [7:0] zmb;
-gfx_calc_address ugfxca1
+gfx_calc_address ugfxca2
 (
 	.clk(clk_i),
 	.base_address_i(zbuffer_base_i),

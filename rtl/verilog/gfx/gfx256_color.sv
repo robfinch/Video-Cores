@@ -21,7 +21,7 @@ Components for aligning colored pixels to memory and the inverse
 
 */
 
-module color_to_memory256(color_depth_i, color_i, mb_e, mem_o, sel_o);
+module color_to_memory256(color_depth_i, color_i, mb_i, mem_o, sel_o);
 input  [1:0]  color_depth_i;
 input  [31:0] color_i;
 input [7:0] mb_i;
@@ -38,7 +38,7 @@ always_comb
 	endcase
 
 always_comb
-	sel_o = {28'd0,sel1} << mb[7:3];
+	sel_o = {28'd0,sel1} << mb_i[7:3];
 
 reg [31:0] mask;
 always_comb
@@ -49,7 +49,7 @@ case(color_depth_i)
 2'b11:	mask = 32'hFFFFFFFF;
 endcase
 
-assign mem_o = {32'd0,color_i & mask} << mb;
+assign mem_o = {32'd0,color_i & mask} << mb_i;
 
 endmodule
 

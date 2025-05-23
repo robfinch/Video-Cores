@@ -110,7 +110,7 @@ typedef enum logic [2:0] {
 	wait_state = 3'd0,
 	delay1_state,
 	delay2_state,
-	delay3_state
+	delay3_state,
 	z_read_state,
 	write_pixel_state
 } clip_state_e;
