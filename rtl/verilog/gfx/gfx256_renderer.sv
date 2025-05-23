@@ -75,51 +75,86 @@ input      ack_i;
 
 // Define memory address
 // Addr[31:2] = Base + (Y*width + X) * ppb
-reg [31:0] pixel_offset;
-always_comb
-	pixel_offset = fnPixelOffset(color_depth_i,(target_size_x_i*pixel_y_i + pixel_x_i));
+//reg [31:0] pixel_offset;
+//always_comb
+//	pixel_offset = fnPixelOffset(color_depth_i,(target_size_x_i*pixel_y_i + pixel_x_i));
+wire [31:5] target_addr;
+wire [31:5] zbuffer_addr;
+wire [7:0] tmb;
+gfx_calc_address ugfxca1
+(
+	.clk(clk_i),
+	.base_address_i(target_base_i),
+	.color_depth_i(color_depth_i),
+	.bmp_width_i(target_size_x_i),
+	.x_coord_i(pixel_x_i),
+	.y_coord_i(pixel_y_i),
+	.address_o(target_addr),
+	.mb_o(tmb),
+	.me_o(),
+	.ce_o()
+);
+wire [7:0] zmb;
+gfx_calc_address ugfxca1
+(
+	.clk(clk_i),
+	.base_address_i(zbuffer_base_i),
+	.color_depth_i(color_depth_i),
+	.bmp_width_i(target_size_x_i),
+	.x_coord_i(pixel_x_i),
+	.y_coord_i(pixel_y_i),
+	.address_o(zbuffer_addr),
+	.mb_o(zmb),
+	.me_o(),
+	.ce_o()
+);
 
-wire [31:5] target_addr = target_base_i + pixel_offset[31:5];
-wire [31:5] zbuffer_addr = zbuffer_base_i + pixel_offset[31:5];
+//wire [31:5] target_addr = target_base_i + pixel_offset[31:5];
+//wire [31:5] zbuffer_addr = zbuffer_base_i + pixel_offset[31:5];
 
 // Color to memory converter
 color_to_memory256 color_proc(
 .color_depth_i  (color_depth_i),
 .color_i        (color_i),
-.x_lsb_i        (pixel_x_i[4:0]),
+.mb_i(tmb),
 .mem_o          (target_dat),
 .sel_o          (target_sel)
 );
-
-
 
 // Color to memory converter
 color_to_memory256 depth_proc(
 .color_depth_i  (2'b01),
 // Note: Padding because z_i is only [15:0]
 .color_i        ({ {point_width{1'b0}}, pixel_z_i[point_width-1:0] }),
-.x_lsb_i        (pixel_x_i[4:0]),
+.mb_i(zmb),
 .mem_o          (zbuffer_dat),
 .sel_o          (zbuffer_sel)
 );
 
 // State machine
-reg [1:0] state;
-parameter wait_state        = 2'b00,
-          write_pixel_state = 2'b01,
-          write_z_state     = 2'b10;
+typedef enum logic [2:0] {
+	wait_state = 3'd0,
+	delay1_state,
+	delay2_state,
+	delay3_state,
+	write_pixel_state,
+	write_pixel_ack_state,
+	write_z_state
+} render_state_e;
+
+render_state_e state;
 
 // Acknowledge when a command has completed
-always_ff @(posedge clk_i or posedge rst_i)
+always_ff @(posedge clk_i)
 begin
   //  reset, init component
   if(rst_i)
   begin
-    write_o       <= 1'b0;
-    ack_o         <= 1'b0;
+    write_o <= 1'b0;
+    ack_o <= 1'b0;
     render_addr_o <= 1'b0;
-    render_sel_o  <= 1'b0;
-    render_dat_o  <= 1'b0;
+    render_sel_o <= 1'b0;
+    render_dat_o <= 1'b0;
   end
   // Else, set outputs for next cycle
   else
@@ -127,19 +162,18 @@ begin
     case (state)
 
       wait_state:
-      begin
-        ack_o   <= 1'b0;
-        if(write_i)
+        ack_o <= 1'b0;
+
+			write_pixel_state:
         begin
           render_addr_o <= target_addr;
-          render_sel_o  <= target_sel;
-          render_dat_o  <= target_dat;
+          render_sel_o <= target_sel;
+          render_dat_o <= target_dat;
           write_o <= 1'b1;
         end
-      end
 
       // Write pixel to memory. If depth buffering is enabled, write z value too
-      write_pixel_state:
+      write_pixel_ack_state:
       begin
         if(ack_i)
         begin
@@ -147,17 +181,17 @@ begin
           render_sel_o  <= zbuffer_sel;
           render_dat_o  <= zbuffer_dat;
 
-          write_o       <= zbuffer_enable_i;
-          ack_o         <= ~zbuffer_enable_i;
+          write_o <= zbuffer_enable_i;
+          ack_o <= ~zbuffer_enable_i;
         end
         else
-          write_o       <= 1'b0;
+          write_o <= 1'b0;
       end
 
       write_z_state:
       begin
-        write_o       <= 1'b0;
-        ack_o         <= ack_i;
+        write_o <= 1'b0;
+        ack_o <= ack_i;
       end
 
     endcase
@@ -165,7 +199,7 @@ begin
 end
 
 // State machine
-always_ff @(posedge clk_i or posedge rst_i)
+always_ff @(posedge clk_i)
 begin
   // reset, init component
   if(rst_i)
@@ -176,9 +210,20 @@ begin
 
       wait_state:
         if(write_i)
+          state <= delay1_state;
+
+      delay1_state:
+      	state <= delay2_state;
+      delay2_state:
+      	state <= delay3_state;
+      delay3_state:
+        if(write_i)
           state <= write_pixel_state;
 
-      write_pixel_state:
+			write_pixel_state:
+				state <= write_pixel_ack_state;
+
+      write_pixel_ack_state:
         if(ack_i & zbuffer_enable_i)
           state <= write_z_state;
         else if(ack_i)

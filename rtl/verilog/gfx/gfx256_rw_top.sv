@@ -762,7 +762,7 @@ gfx256_wbm_readwrite_arbiter wbm_arbiter (
   .m2_ack_o          (wbmreader_blender_target_ack),
   // Interface against masters (textblit)
   .m3_read_request_i(textblit_read_request),
-  .m3_addr_i				(textblit_adr_o[31:4]),
+  .m3_addr_i				(textblit_adr_o[31:5]),
   .m3_sel_i					(textblit_sel_o),
   .m3_dat_o				  (textblit_dat_i),
   .m3_ack_o					(textblit_ack_i)

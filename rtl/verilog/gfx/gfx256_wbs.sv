@@ -202,6 +202,7 @@ module gfx256_wbs(
   // variable declarations
   //
 
+	reg [31:0] dato;
   wire [REG_ADR_HIBIT:0] REG_ADR  = {wbs_req.padr[REG_ADR_HIBIT : 2], 2'b00};
 
   // Declaration of local registers
@@ -244,35 +245,26 @@ module gfx256_wbs(
   assign reg_wacc = reg_acc & wbs_req.we;
 
   // Generate wishbone ack
-  reg rdy1, rdy2, rdy3;
-  always_ff @(posedge wbs_clk_i or posedge rst_i)
-  if (rst_i)
-  	rdy1 <= 1'b0;
-  else
-  	rdy1 <= acc;
-  always_ff @(posedge wbs_clk_i or posedge rst_i)
-  if (rst_i)
-  	rdy2 <= 1'b0;
-  else
-  	rdy2 <= rdy1;
-  always_ff @(posedge wbs_clk_i or posedge rst_i)
-  if (rst_i)
-  	rdy3 <= 1'b0;
-  else
-  	rdy3 <= rdy2;
-  assign wbs_resp.ack = (acc & wbs_req.we) ? 1'b1 : rdy3;
-  assign wbs_resp.rty = 1'b0;
-  assign wbs_resp.err = acc & ~acc32;
+  wire rdy3;
+  delay3 #(.WID(1)) udly1 (.clk(wbs_clk_i), .ce(1'b1), .i(acc), .o(rdy3));
+  always_comb
+  begin
+  	wbs_resp = {$bits(wb_cmd_response32_t){1'b0}};
+  	wbs_resp.ack = (acc & wbs_req.we) ? 1'b1 : acc & rdy3;
+  	wbs_resp.rty = 1'b0;
+  	wbs_resp.err = acc & ~acc32 ? wishbone_pkg::ERR : wishbone_pkg::OKAY;
+  	wbs_resp.dat = acc ? dato : 32'd0;
+	end
 
   // generate interrupt request signal
-  always_ff @(posedge wbs_clk_i or posedge rst_i)
+  always_ff @(posedge wbs_clk_i)
   if(rst_i)
     inta_o <= 1'b0;
   else
     inta_o <= writer_sint_i | reader_sint_i; // | other_int | (int_enable & int) | ...
 
   // generate registers
-  always_ff @(posedge wbs_clk_i or posedge rst_i)
+  always_ff @(posedge wbs_clk_i)
   begin : gen_regs
     if (rst_i)
       begin
@@ -395,7 +387,7 @@ module gfx256_wbs(
   end
 
   // generate status register
-  always_ff @(posedge wbs_clk_i or posedge rst_i)
+  always_ff @(posedge wbs_clk_i)
   if (rst_i)
     status_reg <= 32'h00000000;
   else
@@ -495,68 +487,68 @@ module gfx256_wbs(
   // decode status register TODO
 
   // assign output from wishbone reads. Note that this does not account for pending writes in the fifo!
-  always_ff @(posedge wbs_clk_i or posedge rst_i)
+  always_ff @(posedge wbs_clk_i)
     if(rst_i)
-      wbs_resp.dat[31:0] <= 'd0;
+      dato[31:0] <= 32'd0;
     else if (acc)
       case (REG_ADR) // synopsis full_case parallel_case
-        GFX_CONTROL       : wbs_resp.dat <= {4{control_reg}};
-        GFX_STATUS        : wbs_resp.dat <= {4{status_reg}};
-        GFX_TARGET_BASE   : wbs_resp.dat <= {4{target_base_reg}};
-        GFX_TARGET_SIZE_X : wbs_resp.dat <= {4{target_size_x_reg}};
-        GFX_TARGET_SIZE_Y : wbs_resp.dat <= {4{target_size_y_reg}};
-        GFX_TARGET_X0     : wbs_resp.dat <= {4{target_x0_reg}};
-        GFX_TARGET_Y0     : wbs_resp.dat <= {4{target_y0_reg}};
-        GFX_TARGET_X1     : wbs_resp.dat <= {4{target_x1_reg}};
-        GFX_TARGET_Y1     : wbs_resp.dat <= {4{target_y1_reg}};
-        GFX_TEX0_BASE     : wbs_resp.dat <= {4{tex0_base_reg}};
-        GFX_TEX0_SIZE_X   : wbs_resp.dat <= {4{tex0_size_x_reg}};
-        GFX_TEX0_SIZE_Y   : wbs_resp.dat <= {4{tex0_size_y_reg}};
-        GFX_SRC_PIXEL0_X  : wbs_resp.dat <= {4{src_pixel_pos_0_x_reg}};
-        GFX_SRC_PIXEL0_Y  : wbs_resp.dat <= {4{src_pixel_pos_0_y_reg}};
-        GFX_SRC_PIXEL1_X  : wbs_resp.dat <= {4{src_pixel_pos_1_x_reg}};
-        GFX_SRC_PIXEL1_Y  : wbs_resp.dat <= {4{src_pixel_pos_1_y_reg}};
-        GFX_DEST_PIXEL_X  : wbs_resp.dat <= {4{dest_pixel_pos_x_reg}};
-        GFX_DEST_PIXEL_Y  : wbs_resp.dat <= {4{dest_pixel_pos_y_reg}};
-        GFX_DEST_PIXEL_Z  : wbs_resp.dat <= {4{dest_pixel_pos_z_reg}};
-        GFX_AA            : wbs_resp.dat <= {4{aa_reg}};
-        GFX_AB            : wbs_resp.dat <= {4{ab_reg}};
-        GFX_AC            : wbs_resp.dat <= {4{ac_reg}};
-        GFX_TX            : wbs_resp.dat <= {4{tx_reg}};
-        GFX_BA            : wbs_resp.dat <= {4{ba_reg}};
-        GFX_BB            : wbs_resp.dat <= {4{bb_reg}};
-        GFX_BC            : wbs_resp.dat <= {4{bc_reg}};
-        GFX_TY            : wbs_resp.dat <= {4{ty_reg}};
-        GFX_CA            : wbs_resp.dat <= {4{ca_reg}};
-        GFX_CB            : wbs_resp.dat <= {4{cb_reg}};
-        GFX_CC            : wbs_resp.dat <= {4{cc_reg}};
-        GFX_TZ            : wbs_resp.dat <= {4{tz_reg}};
-        GFX_CLIP_PIXEL0_X : wbs_resp.dat <= {4{clip_pixel_pos_0_x_reg}};
-        GFX_CLIP_PIXEL0_Y : wbs_resp.dat <= {4{clip_pixel_pos_0_y_reg}};
-        GFX_CLIP_PIXEL1_X : wbs_resp.dat <= {4{clip_pixel_pos_1_x_reg}};
-        GFX_CLIP_PIXEL1_Y : wbs_resp.dat <= {4{clip_pixel_pos_1_y_reg}};
-        GFX_COLOR0        : wbs_resp.dat <= {4{color0_reg}};
-        GFX_COLOR1        : wbs_resp.dat <= {4{color1_reg}};
-        GFX_COLOR2        : wbs_resp.dat <= {4{color2_reg}};
-        GFX_U0            : wbs_resp.dat <= {4{u0_reg}};
-        GFX_V0            : wbs_resp.dat <= {4{v0_reg}};
-        GFX_U1            : wbs_resp.dat <= {4{u1_reg}};
-        GFX_V1            : wbs_resp.dat <= {4{v1_reg}};
-        GFX_U2            : wbs_resp.dat <= {4{u2_reg}};
-        GFX_V2            : wbs_resp.dat <= {4{v2_reg}};
-        GFX_ALPHA         : wbs_resp.dat <= {4{alpha_reg}};
-        GFX_COLORKEY      : wbs_resp.dat <= {4{colorkey_reg}};
-        GFX_ZBUFFER_BASE  : wbs_resp.dat <= {4{zbuffer_base_reg}};
-        GFX_FONT_TABLE_BASE: wbs_resp.dat <= {4{font_table_base_reg}};
-        GFX_FONT_ID				: wbs_resp.dat <= {4{font_id_reg}};
-        GFX_CHAR_CODE			: wbs_resp.dat <= {4{char_code_reg}};
-        default           : wbs_resp.dat <= 'd0;
+        GFX_CONTROL       : dato <= {{control_reg}};
+        GFX_STATUS        : dato <= {{status_reg}};
+        GFX_TARGET_BASE   : dato <= {{target_base_reg}};
+        GFX_TARGET_SIZE_X : dato <= {{target_size_x_reg}};
+        GFX_TARGET_SIZE_Y : dato <= {{target_size_y_reg}};
+        GFX_TARGET_X0     : dato <= {{target_x0_reg}};
+        GFX_TARGET_Y0     : dato <= {{target_y0_reg}};
+        GFX_TARGET_X1     : dato <= {{target_x1_reg}};
+        GFX_TARGET_Y1     : dato <= {{target_y1_reg}};
+        GFX_TEX0_BASE     : dato <= {{tex0_base_reg}};
+        GFX_TEX0_SIZE_X   : dato <= {{tex0_size_x_reg}};
+        GFX_TEX0_SIZE_Y   : dato <= {{tex0_size_y_reg}};
+        GFX_SRC_PIXEL0_X  : dato <= {{src_pixel_pos_0_x_reg}};
+        GFX_SRC_PIXEL0_Y  : dato <= {{src_pixel_pos_0_y_reg}};
+        GFX_SRC_PIXEL1_X  : dato <= {{src_pixel_pos_1_x_reg}};
+        GFX_SRC_PIXEL1_Y  : dato <= {{src_pixel_pos_1_y_reg}};
+        GFX_DEST_PIXEL_X  : dato <= {{dest_pixel_pos_x_reg}};
+        GFX_DEST_PIXEL_Y  : dato <= {{dest_pixel_pos_y_reg}};
+        GFX_DEST_PIXEL_Z  : dato <= {{dest_pixel_pos_z_reg}};
+        GFX_AA            : dato <= {{aa_reg}};
+        GFX_AB            : dato <= {{ab_reg}};
+        GFX_AC            : dato <= {{ac_reg}};
+        GFX_TX            : dato <= {{tx_reg}};
+        GFX_BA            : dato <= {{ba_reg}};
+        GFX_BB            : dato <= {{bb_reg}};
+        GFX_BC            : dato <= {{bc_reg}};
+        GFX_TY            : dato <= {{ty_reg}};
+        GFX_CA            : dato <= {{ca_reg}};
+        GFX_CB            : dato <= {{cb_reg}};
+        GFX_CC            : dato <= {{cc_reg}};
+        GFX_TZ            : dato <= {{tz_reg}};
+        GFX_CLIP_PIXEL0_X : dato <= {{clip_pixel_pos_0_x_reg}};
+        GFX_CLIP_PIXEL0_Y : dato <= {{clip_pixel_pos_0_y_reg}};
+        GFX_CLIP_PIXEL1_X : dato <= {{clip_pixel_pos_1_x_reg}};
+        GFX_CLIP_PIXEL1_Y : dato <= {{clip_pixel_pos_1_y_reg}};
+        GFX_COLOR0        : dato <= {{color0_reg}};
+        GFX_COLOR1        : dato <= {{color1_reg}};
+        GFX_COLOR2        : dato <= {{color2_reg}};
+        GFX_U0            : dato <= {{u0_reg}};
+        GFX_V0            : dato <= {{v0_reg}};
+        GFX_U1            : dato <= {{u1_reg}};
+        GFX_V1            : dato <= {{v1_reg}};
+        GFX_U2            : dato <= {{u2_reg}};
+        GFX_V2            : dato <= {{v2_reg}};
+        GFX_ALPHA         : dato <= {{alpha_reg}};
+        GFX_COLORKEY      : dato <= {{colorkey_reg}};
+        GFX_ZBUFFER_BASE  : dato <= {{zbuffer_base_reg}};
+        GFX_FONT_TABLE_BASE: dato <= {{font_table_base_reg}};
+        GFX_FONT_ID				: dato <= {{font_id_reg}};
+        GFX_CHAR_CODE			: dato <= {{char_code_reg}};
+        default           : dato <= 32'd0;
       endcase
     else
-			wbs_resp.dat <= 32'd0;
+			dato <= 32'd0;
 
   // State machine
-  always_ff @(posedge clk_i or posedge rst_i)
+  always_ff @(posedge clk_i)
   if(rst_i)
     state <= wait_state;
   else
@@ -588,7 +580,7 @@ module gfx256_wbs(
   wire [REG_ADR_HIBIT:0] instruction_fifo_q_adr;
   wire    [fifo_depth:0] instruction_fifo_count;
 
-  always_ff @(posedge wbs_clk_i or posedge rst_i)
+  always_ff @(posedge wbs_clk_i)
     if(rst_i)
       fifo_read_ack <= 1'b0;
     else
@@ -597,7 +589,7 @@ module gfx256_wbs(
   wire ready_next_cycle = (state == wait_state) & ~rect_write_o & ~line_write_o & ~triangle_write_o & ~forward_point_o & ~transform_point_o;
   assign instruction_fifo_rreq = instruction_fifo_valid_out & ~fifo_read_ack & ready_next_cycle;
 
-  always_ff @(posedge wbs_clk_i or posedge rst_i)
+  always_ff @(posedge wbs_clk_i)
     if(rst_i)
       fifo_write_ack <= 1'b0;
     else

@@ -80,10 +80,18 @@ output reg                   write_o;
 input                        ack_i;
 
 // State machine
-reg [1:0] state;
-parameter wait_state = 2'b00,
-          target_read_state = 2'b01,
-          write_pixel_state = 2'b10;
+typedef enum logic [2:0] {
+	wait_state = 3'd0,
+	delay1_state,
+	delay2_state,
+	delay3_state,
+	target_read_state,
+	target_read_ack_state,
+	write_pixel_state,
+	write_pixel_ack_state
+} blender_state_e;
+
+blender_state_e state;
 
 // Calculate alpha
 reg [15:0] combined_alpha_reg;
@@ -91,11 +99,25 @@ wire [7:0] alpha = combined_alpha_reg[15:8];
 
 // Calculate address of target pixel
 // Addr[31:2] = Base + (Y*width + X) * ppb
-reg [31:0] pixel_offset;
-always_comb
-	pixel_offset = fnPixelOffset(color_depth_i,(target_size_x_i*y_counter_i + {16'h0, x_counter_i}));
+//reg [31:0] pixel_offset;
+wire [7:0] mb;
+gfx_calc_address ugfxca1
+(
+	.clk(clk_i),
+	.base_address_i(target_base_i),
+	.color_depth_i(color_depth_i),
+	.bmp_width_i(target_size_x_i),
+	.x_coord_i(x_counter_i),
+	.y_coord_i(y_counter_i),
+	.address_o(target_addr_o),
+	.mb_o(mb),
+	.me_o(),
+	.ce_o()
+);
+//always_comb
+//	pixel_offset = fnPixelOffset(color_depth_i,(target_size_x_i*y_counter_i + {16'h0, x_counter_i}));
 
-assign target_addr_o = target_base_i + pixel_offset[31:4];
+//assign target_addr_o = target_base_i + pixel_offset[31:4];
 
 function [9:0] R;
 input [1:0] color_depth;
@@ -151,7 +173,7 @@ wire [31:0] dest_color;
 memory_to_color256 memory_proc(
 .color_depth_i (color_depth_i),
 .mem_i (target_data_i),
-.mem_lsb_i (x_counter_i[4:0]),
+.mb_i(mb),
 .color_o (dest_color),
 .sel_o ()
 );
@@ -203,10 +225,10 @@ begin
         if(target_ack_i)
         begin
           // When we receive an ack from memory, calculate the combined color and send the pixel forward in the pipeline (go to write state)
-          write_o          <= 1'b1;
-          pixel_x_o        <= x_counter_i;
-          pixel_y_o        <= y_counter_i;
-          pixel_z_o        <= z_i;
+          write_o <= 1'b1;
+          pixel_x_o <= x_counter_i;
+          pixel_y_o <= y_counter_i;
+          pixel_z_o <= z_i;
           target_request_o <= 1'b0;
 
       	  // Recombine colors
@@ -220,8 +242,17 @@ begin
         else
           target_request_o <= !wbm_busy_i | target_request_o;
 
+			write_pixel_state:
+        begin
+          pixel_x_o <= x_counter_i;
+          pixel_y_o <= y_counter_i;
+          pixel_z_o <= z_i;
+          pixel_color_o <= pixel_color_i;
+          write_o <= 1'b1;
+        end
+
       // Ack and return to wait state
-      write_pixel_state:
+      write_pixel_ack_state:
       begin
         write_o <= 1'b0;
         if(ack_i)
@@ -247,12 +278,28 @@ begin
           state <= target_read_state;
         else if(write_i)
           state <= write_pixel_state;
+          
+      delay1_state:
+      	state <= delay2_state;
+      delay2_state:
+      	state <= delay3_state;
+      delay3_state:
+        if(write_i & blending_enable_i)
+          state <= target_read_state;
+        else if(write_i)
+          state <= write_pixel_state;
 
-      target_read_state:
+			target_read_state:
+				state <= target_read_ack_state;
+
+      target_read_ack_state:
         if(target_ack_i)
           state <= write_pixel_state;
 
-      write_pixel_state:
+			write_pixel_state:
+				state <= write_pixel_ack_state;
+
+      write_pixel_ack_state:
         if(ack_i)
           state <= wait_state;
 

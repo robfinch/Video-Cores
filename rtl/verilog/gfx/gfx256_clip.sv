@@ -106,15 +106,36 @@ input ack_i;
 // 
 
 // State machine
-reg [1:0] state;
-parameter wait_state = 2'b00, z_read_state = 2'b01, write_pixel_state = 2'b10;
+typedef enum logic [2:0] {
+	wait_state = 3'd0,
+	delay1_state,
+	delay2_state,
+	delay3_state
+	z_read_state,
+	write_pixel_state
+} clip_state_e;
+clip_state_e state;
 
 // Calculate address of target pixel
 // Addr[31:2] = Base + (Y*width + X) * ppb
-reg [31:0] pixel_offset;
-always_comb
-	pixel_offset = fnPixelOffset(color_depth_i,(target_size_x_i*cuvz_pixel_y_i + {16'h0,cuvz_pixel_x_i}));
-assign z_addr_o = zbuffer_base_i + pixel_offset[31:5];
+wire [31:0] pixel_offset;
+wire [7:0] mb;
+gfx_calc_address ugfxca1
+(
+	.clk(clk_i),
+	.base_address_i(zbuffer_base_i),
+	.color_depth_i(color_depth_i),
+	.bmp_width_i(target_size_x_i),
+	.x_coord_i(cuvz_pixel_x_i),
+	.y_coord_i(cuvz_pixel_y_i),
+	.address_o(z_addr_o),
+	.mb_o(mb),
+	.me_o(),
+	.ce_o()
+);
+//always_comb
+//	pixel_offset = fnPixelOffset(color_depth_i,(target_size_x_i*cuvz_pixel_y_i + {16'h0,cuvz_pixel_x_i}));
+//assign z_addr_o = zbuffer_base_i + pixel_offset[31:5];
 
 wire [31:0] z_value_at_target32;
 wire signed [point_width-1:0] z_value_at_target = z_value_at_target32[point_width-1:0];
@@ -123,13 +144,13 @@ wire signed [point_width-1:0] z_value_at_target = z_value_at_target32[point_widt
 memory_to_color256 memory_proc(
 .color_depth_i (2'b01),
 .mem_i         (z_data_i),
-.mem_lsb_i     (cuvz_pixel_x_i[4:0]),
+.mb_i(mb),
 .color_o       (z_value_at_target32),
 .sel_o         ()
 );
 
 // Forward texture coordinates, color, alpha etc
-always @(posedge clk_i or posedge rst_i)
+always @(posedge clk_i)
 if(rst_i)
 begin
   u_o              <= 1'b0;
@@ -189,14 +210,14 @@ wire discard_pixel  = outside_target | (clipping_enable_i & outside_clip);
 wire write_i        = raster_write_i | cuvz_write_i;
 
 // Acknowledge when a command has completed
-always @(posedge clk_i or posedge rst_i)
+always_ff @(posedge clk_i)
 // reset, init component
 if(rst_i)
 begin
-  ack_o            <= 1'b0;
-  write_o          <= 1'b0;
-  z_request_o      <= 1'b0;
-  z_sel_o          <= 32'hFFFFFFFF;
+  ack_o <= 1'b0;
+  write_o <= 1'b0;
+  z_request_o <= 1'b0;
+  z_sel_o <= 32'hFFFFFFFF;
 end
 // Else, set outputs for next cycle
 else
@@ -206,23 +227,23 @@ begin
     wait_state:
     begin
       if(write_i)
-        ack_o         <= discard_pixel;
+        ack_o <= discard_pixel;
       else
-        ack_o         <= 1'b0;
-
-      if(write_i & zbuffer_enable_i)
-        z_request_o   <= ~discard_pixel;
-      else if(write_i)
-        write_o       <= ~discard_pixel;
-        
+        ack_o <= 1'b0;
     end
+
+    delay3_state:
+      if(zbuffer_enable_i)
+        z_request_o <= ~discard_pixel;
+      else
+        write_o <= ~discard_pixel;
 
     // Do a depth check. If it fails, discard pixel, ack and go back to wait. If it succeeds, go to write state
     z_read_state:
       if(z_ack_i)
       begin
-        write_o     <= ~fail_z_check;
-        ack_o       <= fail_z_check;
+        write_o <= ~fail_z_check;
+        ack_o <= fail_z_check;
         z_request_o <= 1'b0;
       end
       else
@@ -241,7 +262,7 @@ begin
 end
 
 // State machine
-always @(posedge clk_i or posedge rst_i)
+always_ff @(posedge clk_i)
 // reset, init component
 if(rst_i)
   state <= wait_state;
@@ -251,12 +272,18 @@ else
 
     wait_state:
       if(write_i & ~discard_pixel)
-      begin
-        if(zbuffer_enable_i)
-          state <= z_read_state;
-        else 
-          state <= write_pixel_state;
-      end
+      	state <= delay1_state;
+
+		// Three cycle delay is for address calc.      
+    delay1_state:
+    	state <= delay2_state;
+    delay2_state:
+    	state <= delay3_state;
+    delay3_state:
+      if(zbuffer_enable_i)
+        state <= z_read_state;
+      else 
+        state <= write_pixel_state;
 
     z_read_state:
       if(z_ack_i)

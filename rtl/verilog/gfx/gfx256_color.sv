@@ -21,12 +21,12 @@ Components for aligning colored pixels to memory and the inverse
 
 */
 
-module color_to_memory256(color_depth_i, color_i, x_lsb_i, mem_o, sel_o);
+module color_to_memory256(color_depth_i, color_i, mb_e, mem_o, sel_o);
 input  [1:0]  color_depth_i;
 input  [31:0] color_i;
-input  [4:0]  x_lsb_i;
+input [7:0] mb_i;
 output [255:0] mem_o;
-output reg [31:0]  sel_o;
+output reg [31:0] sel_o;
 
 reg [3:0] sel1;
 always_comb
@@ -38,11 +38,7 @@ always_comb
 	endcase
 
 always_comb
-	sel_o = {28'd0,sel1} << x_lsb_i;
-
-reg [7:0] shftcnt;
-always_comb
-	shftcnt = {x_lsb_i,3'd0};
+	sel_o = {28'd0,sel1} << mb[7:3];
 
 reg [31:0] mask;
 always_comb
@@ -53,14 +49,14 @@ case(color_depth_i)
 2'b11:	mask = 32'hFFFFFFFF;
 endcase
 
-assign mem_o = {32'd0,color_i & mask} << shftcnt;
+assign mem_o = {32'd0,color_i & mask} << mb;
 
 endmodule
 
-module memory_to_color256(color_depth_i, mem_i, mem_lsb_i, color_o, sel_o);
+module memory_to_color256(color_depth_i, mem_i, mb_i, color_o, sel_o);
 input  [1:0]  color_depth_i;
 input  [255:0] mem_i;
-input  [4:0]  mem_lsb_i;
+input [7:0] mb_i;
 output reg [31:0] color_o;
 output reg [31:0]  sel_o;
 
@@ -74,11 +70,7 @@ always_comb
 	endcase
 
 always_comb
-	sel_o = {28'd0,sel1} << mem_lsb_i;
-
-reg [7:0] shftcnt;
-always_comb
-	shftcnt = {mem_lsb_i,3'd0};
+	sel_o = {28'd0,sel1} << mb_i[7:3];
 
 reg [31:0] mask;
 always_comb
@@ -91,6 +83,6 @@ default:	mask = 32'h00000000;
 endcase
 
 always_comb
-	color_o = (mem_i >> shftcnt) & mask;
+	color_o = (mem_i >> mb_i) & mask;
 
 endmodule

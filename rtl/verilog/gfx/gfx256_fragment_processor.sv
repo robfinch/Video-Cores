@@ -84,14 +84,37 @@ input            [31:0] colorkey_i;
 reg              [31:0] pixel_offset;
 
 // Calculate the memory address of the texel to read 
-always_comb
-	pixel_offset = fnPixelOffset(color_depth_i,(tex0_size_x_i*v_i + {16'h0, u_i}));
+wire [7:0] mb;
+gfx_calc_address ugfxca1
+(
+	.clk(clk_i),
+	.base_address_i(tex0_base_i),
+	.color_depth_i(color_depth_i),
+	.bmp_width_i(tex0_size_x_i),
+	.x_coord_i(u_i),
+	.y_coord_i(v_i),
+	.address_o(texture_addr_o),
+	.mb_o(mb),
+	.me_o(),
+	.ce_o()
+);
+//always_comb
+//	pixel_offset = fnPixelOffset(color_depth_i,(tex0_size_x_i*v_i + {16'h0, u_i}));
 
-assign texture_addr_o = tex0_base_i + pixel_offset[31:5];
+//assign texture_addr_o = tex0_base_i + pixel_offset[31:5];
 
 // State machine
-reg [1:0] state;
-parameter wait_state = 2'b00, texture_read_state = 2'b01, write_pixel_state = 2'b10;
+typedef enum logic [2:0] {
+	wait_state = 3'd0,
+	delay1_state,
+	delay2_state,
+	delay3_state,
+	texture_read_state,
+	texture_read_ack_state,
+	write_pixel_state,
+	write_pixel_ack_state
+} tex_state_e;
+tex_state_e state;
 
 wire [31:0] mem_conv_color_o;
 
@@ -99,7 +122,7 @@ wire [31:0] mem_conv_color_o;
 memory_to_color256 color_proc(
 .color_depth_i (color_depth_i),
 .mem_i         (texture_data_i),
-.mem_lsb_i     (u_i[3:0]),
+.mb_i(mb),
 .color_o       (mem_conv_color_o),
 .sel_o         ()
 );
@@ -124,20 +147,20 @@ wire bezier_eval = bezier_factor0_squared[2*point_width-1:point_width] > bezier_
 wire bezier_draw = bezier_inside_i ^ bezier_eval; // inside xor eval
 
 // Acknowledge when a command has completed
-always_ff @(posedge clk_i or posedge rst_i)
+always_ff @(posedge clk_i)
 begin
   // reset, init component
   if(rst_i)
   begin
-    ack_o             <= 1'b0;
-    write_o           <= 1'b0;
-    pixel_x_o         <= 1'b0;
-    pixel_y_o         <= 1'b0;
-    pixel_z_o         <= 1'b0;
-    pixel_color_o     <= 1'b0;
-    pixel_alpha_o     <= 1'b0;
+    ack_o <= 1'b0;
+    write_o <= 1'b0;
+    pixel_x_o <= 1'b0;
+    pixel_y_o <= 1'b0;
+    pixel_z_o <= 1'b0;
+    pixel_color_o <= 1'b0;
+    pixel_alpha_o <= 1'b0;
     texture_request_o <= 1'b0;
-    texture_sel_o     <= 32'hFFFFFFFF;
+    texture_sel_o <= 32'hFFFFFFFF;
   end
   // Else, set outputs for next cycle
   else
@@ -146,42 +169,45 @@ begin
 
       wait_state:
       begin
-        ack_o   <= write_i & curve_write_i & ~bezier_draw;
+        ack_o <= write_i & curve_write_i & ~bezier_draw;
 
         if(write_i & texture_enable_i & (~curve_write_i | bezier_draw))
-          texture_request_o <= 1'b1;
+          ;
         else if(write_i & (~curve_write_i | bezier_draw))
         begin
-          pixel_x_o         <= x_counter_i;
-          pixel_y_o         <= y_counter_i;
-          pixel_z_o         <= z_i;
-          pixel_color_o     <= pixel_color_i;
-          pixel_alpha_o     <= pixel_alpha_i;
-          write_o           <= 1'b1; // Note, colorkey only supported for texture reads
+          pixel_x_o <= x_counter_i;
+          pixel_y_o <= y_counter_i;
+          pixel_z_o <= z_i;
+          pixel_color_o <= pixel_color_i;// Note, colorkey only supported for texture reads
+          pixel_alpha_o <= pixel_alpha_i;
         end
       end
 
-
-      texture_read_state:
+			texture_read_state:
+        texture_request_o <= 1'b1;
+			
+      texture_read_ack_state:
         if(texture_ack_i)
         begin
-          pixel_x_o         <= x_counter_i;
-          pixel_y_o         <= y_counter_i;
-          pixel_z_o         <= z_i;
-          pixel_color_o     <= mem_conv_color_o;
-          pixel_alpha_o     <= pixel_alpha_i;
-          texture_request_o <= 1'b0;
+          pixel_x_o <= x_counter_i;
+          pixel_y_o <= y_counter_i;
+          pixel_z_o <= z_i;
+          pixel_color_o <= mem_conv_color_o;
+          pixel_alpha_o <= pixel_alpha_i;
+          texture_request_o <= 1'b0;	// clear this after one cycle??
           if(colorkey_enable_i & transparent_pixel)
-            ack_o           <= 1'b1; // Colorkey enabled: Only write if the pixel doesn't match the colorkey
+            ack_o <= 1'b1; // Colorkey enabled: Only write if the pixel doesn't match the colorkey
           else
-            write_o         <= 1'b1;
+            write_o <= 1'b1;
         end
 
-
-      write_pixel_state:
+			write_pixel_state:
+				write_o <= 1'b1;
+				
+      write_pixel_ack_state:
       begin
-        write_o  <= 1'b0;
-        ack_o    <= ack_i;
+        write_o <= 1'b0;
+        ack_o <= ack_i;
       end
 
     endcase
@@ -189,7 +215,7 @@ begin
 end
 
 // State machine
-always_ff @(posedge clk_i or posedge rst_i)
+always_ff @(posedge clk_i)
 begin
   // reset, init component
   if(rst_i)
@@ -200,18 +226,34 @@ begin
 
       wait_state:
         if(write_i & texture_enable_i & (~curve_write_i | bezier_draw))
+          state <= delay1_state;
+        else if(write_i & (~curve_write_i | bezier_draw))
+          state <= delay1_state;
+
+      delay1_state:
+      	state <= delay2_state;
+      delay2_state:
+      	state <= delay3_state;
+      delay3_state:
+        if(write_i & texture_enable_i & (~curve_write_i | bezier_draw))
           state <= texture_read_state;
         else if(write_i & (~curve_write_i | bezier_draw))
           state <= write_pixel_state;
 
-      texture_read_state:
+			texture_read_state:
+				state <= texture_read_ack_state;
+
+      texture_read_ack_state:
         // Check for texture ack. If we have colorkeying enabled, only goto the write state if the texture doesn't match the colorkey
         if(texture_ack_i & colorkey_enable_i)
           state <= transparent_pixel ? wait_state : write_pixel_state;
         else if(texture_ack_i)
           state <= write_pixel_state;
 
-      write_pixel_state:
+			write_pixel_state:
+				state <= write_pixel_ack_state;
+
+      write_pixel_ack_state:
         if(ack_i)
           state <= wait_state;
 
@@ -219,4 +261,3 @@ begin
 end
 
 endmodule
-
