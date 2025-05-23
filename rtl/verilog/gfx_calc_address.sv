@@ -58,14 +58,14 @@ output reg [BN:0] ce_o;			// color bits end
 // This coefficient is a fixed point fraction representing the inverse of the
 // number of pixels per strip. The inverse (reciprocal) is used for a high
 // speed divide operation.
-reg [15:0] coeff;
+reg [23:0] coeff;
 always_comb
 	case(color_depth_i)
-	BPP8:	coeff = 65536*8/SW;
-	BPP16:	coeff = 65536*16/SW;
-	BPP24:	coeff = 65536*24/SW;
-	BPP32:	coeff = 65536*32/SW;
-	default:	coeff = 65536*16/SW;
+	BPP8:	coeff = 8*65536/SW;
+	BPP16:	coeff = 16*65536/SW;
+	BPP24:	coeff = 24*65536/SW;
+	BPP32:	coeff = 32*65536/SW;
+	default:	coeff = 16*65536/SW;
 	endcase
 
 // Bits per pixel minus one.
@@ -87,7 +87,7 @@ always_comb
 	BPP16:	cbpp = 15;
 	BPP24:	cbpp = 23;
 	BPP32:	cbpp = 29;
-	default:	cbpp = 11;
+	default:	cbpp = 15;
 	endcase
 
 // This coefficient is the number of bits used by all pixels in the strip. 

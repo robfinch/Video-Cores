@@ -44,7 +44,7 @@ input clka_i;
 input csa_i;
 input wea_i;
 input [WID/8-1:0] sela_i;
-input [16:WID==64?3:2] adra_i;
+input [17:WID==64?3:2] adra_i;
 input [WID-1:0] data_i;
 output [WID-1:0] data_o;
 input rstb_i;
@@ -52,10 +52,10 @@ input clkb_i;
 input csb_i;
 input web_i;
 input [WID/8-1:0] selb_i;
-input [16:WID==64?3:2] adrb_i;
+input [17:WID==64?3:2] adrb_i;
 input [WID-1:0] datb_i;
 output [WID-1:0] datb_o;
-parameter TEXT_CELL_COUNT = 16384;
+parameter TEXT_CELL_COUNT = 49152;
 localparam AWID = $clog2(TEXT_CELL_COUNT);
 
 wire rsta = rsta_i;
@@ -162,14 +162,14 @@ wire rstb = rstb_i;
 	                                   // parameter READ_RESET_VALUE_B.
 
 	  .sleep(1'b0),                   // 1-bit input: sleep signal to enable the dynamic power saving feature.
-	  .wea({8{wea_i}} & sela_i),         							// WRITE_DATA_WIDTH_A/BYTE_WRITE_WIDTH_A-bit input: Write enable vector
+	  .wea({WID/8{wea_i}} & sela_i),         							// WRITE_DATA_WIDTH_A/BYTE_WRITE_WIDTH_A-bit input: Write enable vector
 	                                   // for port A input data port dina. 1 bit wide when word-wide writes are
 	                                   // used. In byte-wide write configurations, each bit controls the
 	                                   // writing one byte of dina to address addra. For example, to
 	                                   // synchronously write only bits [15-8] of dina when WRITE_DATA_WIDTH_A
 	                                   // is 32, wea would be 4'b0010.
 
-	  .web({8{web_i}} & selb_i)        // WRITE_DATA_WIDTH_B/BYTE_WRITE_WIDTH_B-bit input: Write enable vector
+	  .web({WID/8{web_i}} & selb_i)        // WRITE_DATA_WIDTH_B/BYTE_WRITE_WIDTH_B-bit input: Write enable vector
 	                                   // for port B input data port dinb. 1 bit wide when word-wide writes are
 	                                   // used. In byte-wide write configurations, each bit controls the
 	                                   // writing one byte of dinb to address addrb. For example, to

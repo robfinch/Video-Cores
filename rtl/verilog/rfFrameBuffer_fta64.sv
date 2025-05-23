@@ -46,7 +46,9 @@
 
 //`define USE_CLOCK_GATE	1'b1
 //`define VGA640x480	1'b1
-`define WXGA800x600		1'b1
+//`define WXGA800x600		1'b1
+`define WXGA1920x1080		1'b1
+//`define WXGA1280x720		1'b1
 //`define WXGA1366x768	1'b1
 
 import const_pkg::*;
@@ -109,9 +111,9 @@ parameter PHYS_ADDR_BITS = 32;
 localparam BITS_IN_ADDR_MAP = 18;
 
 parameter MDW = 256;			// Bus master data width
-parameter BURST_INTERVAL = 12'hDFF;
+parameter BURST_INTERVAL = 12'd600;
 parameter BM_BASE_ADDR1 = 32'h00000000;
-parameter BM_BASE_ADDR2 = 32'h00200000;
+parameter BM_BASE_ADDR2 = 32'h00400000;
 parameter REG_CTRL = 11'd0;
 parameter REG_REFDELAY = 11'd1;
 parameter REG_PAGE1ADDR = 11'd2;
@@ -210,6 +212,66 @@ parameter pvBorderOn = 628;		//  600 display
 //parameter pvBorderOn = 584;		//  512 display
 parameter pvBlankOn = 628;  	//   44 border	0
 parameter pvTotal = 628;		//  628 total scan lines
+`endif
+
+// 148.5 MHz clock
+// -hsync, -vsync
+`ifdef WXGA1920x1080
+parameter phSyncOn  = 88;		//   88 front porch
+parameter phSyncOff = 132;		//  44 sync
+parameter phBlankOff = 280;	//256	//   148 back porch
+parameter phBorderOff = 280;	//   0 border
+parameter phBorderOn = 2200;		//  1920 display
+parameter phBlankOn = 2200;		//   0 border
+parameter phTotal = 2200;		// 2200 total clocks
+parameter pvSyncOn  = 4;		//    4 front porch
+parameter pvSyncOff = 9;		//    9 vertical sync
+parameter pvBlankOff = 45;		//   45 back porch (36)
+parameter pvBorderOff = 45;		//   44 border	0
+parameter pvBorderOn = 1125;		//  600 display
+parameter pvBlankOn = 1125;  	//   44 border	0
+parameter pvTotal = 1125;		//  628 total scan lines
+`endif
+
+// 74.25 MHz clock
+// -hsync, -vsync
+`ifdef WXGA960x1080
+parameter phSyncOn  = 44;		//   88 front porch
+parameter phSyncOff = 66;		//  44 sync
+parameter phBlankOff = 140;	//256	//   148 back porch
+parameter phBorderOff = 140;	//   0 border
+parameter phBorderOn = 1100;		//  1920 display
+parameter phBlankOn = 1100;		//   0 border
+parameter phTotal = 1100;		// 2200 total clocks
+parameter pvSyncOn  = 4;		//    4 front porch
+parameter pvSyncOff = 9;		//    9 vertical sync
+parameter pvBlankOff = 45;		//   45 back porch (36)
+parameter pvBorderOff = 45;		//   44 border	0
+parameter pvBorderOn = 1125;		//  600 display
+parameter pvBlankOn = 1125;  	//   44 border	0
+parameter pvTotal = 1125;		//  628 total scan lines
+`endif
+
+// 74.25 MHz clock (148.5 MHz clock/2)
+// +hsync, +vsync
+`ifdef WXGA1280x720
+parameter phSyncOn  = 220;		// 110 front porch
+parameter phSyncOff = 300;		//  40 sync
+parameter phBlankOff = 740;		// 220	back porch
+//parameter phBorderOff = 336;	//   0 border
+parameter phBorderOff = 740;	//   0 border
+parameter phBorderOn = 3300;		//  1280 (2560) display
+parameter phBlankOn = 3300;		//   0 border
+parameter phTotal = 3300;		// 2200 total clocks
+parameter pvSyncOn  = 5;		//    5 front porch
+parameter pvSyncOff = 10;		//    5 vertical sync
+parameter pvBlankOff = 30;		//   20 back porch (36)
+parameter pvBorderOff = 30;		//   44 border	0
+//parameter pvBorderOff = 72;		//   44 border	0
+parameter pvBorderOn = 750;		//  600 display
+//parameter pvBorderOn = 584;		//  512 display
+parameter pvBlankOn = 750;  	//   44 border	0
+parameter pvTotal = 750;			//  628 total scan lines
 `endif
 
 /*
@@ -322,12 +384,13 @@ reg cs_map;
 reg cs_reg;
 wire cs_edge;
 wire cs_fbc;
+wire latch_map;
 reg we;
 reg [7:0] sel;
 reg [31:0] adri;
 reg [63:0] dat;
 wire irq_en;
-reg [63:0] s_dat_o;
+reg [63:0] s_dat_o, s_dato;
 wire ack;
 `ifdef BUSWID64
 fta_cmd_request64_t reqd;
@@ -379,10 +442,10 @@ else begin
 	end
 end
 
-vtdl #(.WID(1), .DEP(16)) urdyd1 (.clk(s_clk_i), .ce(1'b1), .a(4'd3), .d(cs_map|cs_reg|cs_config), .q(ack));
-vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(s_clk_i), .ce(1'b1), .a(4'd4), .d((cs_map|cs_reg|cs_config) & ~we), .q(s_resp1.ack));
-vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(s_clk_i), .ce(1'b1), .a(4'd5), .d(s_req_i.tid), .q(s_resp1.tid));
-vtdl #(.WID(32), .DEP(16)) urdyd5 (.clk(s_clk_i), .ce(1'b1), .a(4'd5), .d(s_req_i.adr), .q(s_resp1.adr));
+vtdl #(.WID(1), .DEP(16)) urdyd1 (.clk(s_clk_i), .ce(1'b1), .a(4'd1), .d(cs_map), .q(latch_map));
+vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(s_clk_i), .ce(1'b1), .a(4'd0), .d((cs_map|cs_edge|cs_config) & ~we), .q(s_resp1.ack));
+vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(s_clk_i), .ce(1'b1), .a(4'd1), .d(s_req_i.tid), .q(s_resp1.tid));
+vtdl #(.WID(32), .DEP(16)) urdyd5 (.clk(s_clk_i), .ce(1'b1), .a(4'd1), .d(s_req_i.adr), .q(s_resp1.adr));
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -396,7 +459,7 @@ reg onoff;
 reg [2:0] hres,vres;
 reg greyscale;
 reg page;
-reg [3:0] pals;				// palette select
+reg [4:0] pals;				// palette select
 reg [15:0] hrefdelay;
 reg [15:0] vrefdelay;
 reg [15:0] windowLeft;
@@ -406,7 +469,8 @@ reg [11:0] burst_interval;     // memory access period
 reg [11:0] bi_ctr;
 reg [15:0] bmpWidth;		// scan line increment (pixels)
 reg [15:0] bmpHeight;
-reg [`ABITS] baseAddr;	// base address register
+reg [`ABITS] baseAddrDisplay;	// base address register
+reg [`ABITS] baseAddrWork;	// base address register
 wire [MDW-1:0] rgbo1, rgbo1e, rgbo1o, rgbo1m;
 reg [15:0] pixelRow;
 reg [15:0] pixelCol;
@@ -435,13 +499,14 @@ reg sgLock;
 wire pe_hsync, pe_hsync2;
 wire pe_vsync;
 wire [11:0] tocnt;		// bus timeout counter
-reg [2:0] vm_cmd_o;
+reg [4:0] vm_cmd_o;
 reg [5:0] vm_blen_o;
 reg vm_cyc_o;
 reg [31:0] vm_adr_o;
 reg vm_we_o;
 reg [MDW/8-1:0] vm_sel_o;
 fta_tranid_t vm_tid_o;
+wire row_change;
 
 // config
 reg [63:0] irq_msgadr = IRQ_MSGADR;
@@ -522,6 +587,7 @@ endgenerate
 
 wire [BITS_IN_ADDR_MAP-1:0] map_page;
 wire [BITS_IN_ADDR_MAP-1:0] map_out;
+reg [BITS_IN_ADDR_MAP-1:0] map_out_latch;
 
    // xpm_memory_tdpram: True Dual Port RAM
    // Xilinx Parameterized Macro, version 2022.2
@@ -543,7 +609,7 @@ wire [BITS_IN_ADDR_MAP-1:0] map_out;
       .MESSAGE_CONTROL(0),            // DECIMAL
       .READ_DATA_WIDTH_A(BITS_IN_ADDR_MAP),
       .READ_DATA_WIDTH_B(BITS_IN_ADDR_MAP),
-      .READ_LATENCY_A(2),             // DECIMAL
+      .READ_LATENCY_A(1),             // DECIMAL
       .READ_LATENCY_B(2),             // DECIMAL
       .READ_RESET_VALUE_A("0"),       // String
       .READ_RESET_VALUE_B("0"),       // String
@@ -646,7 +712,7 @@ delay3 #(1) udly1 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_cyc_o), .o(m_bus_o.req.cy
 delay3 #(1) udly2 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_we_o), .o(m_bus_o.req.we));
 delay3 #(MDW/8) udly3 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_sel_o), .o(m_bus_o.req.sel));
 //delay3 #(32) udly4 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_adr_o), .o(m_bus_o.req.adr));
-delay3 #(14) udly5 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_adr_o[12:0]), .o(m_bus_o.req.adr[13:0]));
+delay3 #(14) udly5 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_adr_o[13:0]), .o(m_bus_o.req.adr[13:0]));
 delay1 #(18) udly8 (.clk(m_bus_o.clk), .ce(1'b1), .i(map_page), .o(m_bus_o.req.adr[31:14]));
 delay3 #(13) udly6 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_tid_o), .o(m_bus_o.req.tid));
 delay3 #(6) udly7 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_blen_o), .o(m_bus_o.req.blen));
@@ -755,7 +821,9 @@ else begin
 end
 
 always_comb
-	baseAddr = page ? bm_base_addr2 : bm_base_addr1;
+	baseAddrDisplay = page ? bm_base_addr2 : bm_base_addr1;
+always_comb
+	baseAddrWork = page ? bm_base_addr1 : bm_base_addr2;
 
 // Color palette RAM for 8bpp modes
 // 64x1024 A side, 32x2048 B side
@@ -781,7 +849,7 @@ fb_palram upal1	// Actually 1024x64
 always_ff @(posedge s_clk_i)
 if (rst_i) begin
 	page <= 1'b0;
-	pals <= 4'h0;
+	pals <= 5'h0;
 	hres <= 3'd1;
 	vres <= 3'd1;
 `ifdef WXGA800x600	
@@ -825,7 +893,7 @@ if (rst_i) begin
 	hBorderOn <= phBorderOn; hBorderOff <= phBorderOff;
 	vBorderOn <= pvBorderOn; vBorderOff <= pvBorderOff;
 	max_nburst <= 6'd1;		// 2 bursts of 25 = 50 accesses for 800 pixels
-	burst_len <= 6'd49;		//
+	burst_len <= 6'd59;		// 2 bursts of 60 = 120 access for 1920 pixels
 end
 else begin
 	color_depth2 <= color_depth;
@@ -849,7 +917,7 @@ else begin
 					end
 					if (sel[3]) begin
 					page <= dat[24];
-					pals <= dat[28:25];
+					pals <= dat[29:25];
 					end
 					if (sel[4]) burst_len <= dat[37:32];
 					if (sel[5]) max_nburst <= dat[45:40];
@@ -957,7 +1025,7 @@ else begin
 			endcase
 		end
 	end
-	if (cs_reg) begin
+	if (cs_edge) begin
 		if (BUSWID==64)
 		  casez(adri[13:3])
 		  REG_CTRL:
@@ -968,7 +1036,7 @@ else begin
 		          s_dat_o[18:16] <= hres;
 		          s_dat_o[22:20] <= vres;
 		          s_dat_o[24] <= page;
-		          s_dat_o[28:25] <= pals;
+		          s_dat_o[29:25] <= pals;
 		          s_dat_o[47:32] <= bmpWidth;
 		          s_dat_o[59:48] <= burst_interval;
 		      end
@@ -994,7 +1062,7 @@ else begin
 		          s_dat_o[18:16] <= hres;
 		          s_dat_o[22:20] <= vres;
 		          s_dat_o[24] <= page;
-		          s_dat_o[28:25] <= pals;
+		          s_dat_o[29:25] <= pals;
 		      end
 		  {REG_CTRL,1'b1}:
 		      begin
@@ -1020,13 +1088,15 @@ else begin
 		  endcase
 	end
 	else if (cs_map)
-		s_dat_o <= {40'h0,map_out};
+		s_dat_o <= {40'h0,map_out_latch};
 	else if (cs_config)
 		s_dat_o <= cfg_out;
 	else if (irq)
 		s_dat_o <= {2{irq_msgdat}};
 	else
-		s_dat_o <= 64'h0;
+		s_dat_o <= 64'd0;
+	if (latch_map)
+		map_out_latch <= map_out;
 end
 
 //`ifdef USE_CLOCK_GATE
@@ -1145,8 +1215,20 @@ modCalcShifts ucalcshft
 wire vFetch = !vblank;//pixelRow < windowHeight;
 reg fifo_rrst;
 reg fifo_wrst;
-always_comb fifo_rrst = pixelCol==16'hFFF0;
-always_comb fifo_wrst = pe_hsync2;// && vc==4'd1;
+reg [3:0] wrstcnt;
+always_comb fifo_rrst = pe_hsync;	// pixelCol==16'hFFF0;
+
+always_ff @(posedge m_bus_o.clk)
+if (m_bus_o.rst)
+	wrstcnt <= 4'd0;
+else begin
+	if (pe_hsync2)
+		wrstcnt <= 4'd0;
+	else if (wrstcnt!=4'd5)
+		wrstcnt <= wrstcnt + 2'd1;
+end
+
+always_comb fifo_wrst = wrstcnt!=4'd5;// && vc==4'd1;
 
 wire[31:0] grAddr,xyAddr;
 reg [11:0] fetchCol;
@@ -1166,7 +1248,7 @@ gfx_calc_address
 u1
 (
   .clk(m_bus_o.clk),
-	.base_address_i(baseAddr),
+	.base_address_i(baseAddrDisplay),
 	.color_depth_i(color_depth2),
 	.bmp_width_i(bmpWidth),
 	.x_coord_i(windowLeft),
@@ -1185,7 +1267,7 @@ gfx_calc_address
 u2
 (
   .clk(m_bus_o.clk),
-	.base_address_i(baseAddr),
+	.base_address_i(baseAddrWork),
 	.color_depth_i(color_depth2),
 	.bmp_width_i(bmpWidth),
 	.x_coord_i(px),
@@ -1321,8 +1403,8 @@ always_ff @(posedge m_bus_o.clk)
 // Illegal coordinates result in a red display
 wire [15:0] xcol = fetchCol;
 reg legal_x, legal_y;
-always_comb legal_x = ~&xcol[15:12] && xcol < bmpWidth;
-always_comb legal_y = ~&pixelRow[15:12] && pixelRow < bmpHeight;
+always_comb legal_x = ~xcol[15] && xcol < windowLeft + windowWidth && xcol >= windowLeft;//bmpWidth;
+always_comb legal_y = ~pixelRow[15] && pixelRow < windowTop + windowHeight && pixelRow >= windowTop;//bmpHeight;
 
 reg modd;
 always_comb
@@ -1381,7 +1463,7 @@ else begin
     vm_sel_o <= {MDW/8{1'b1}};
     if (m_fst_o) begin
 	    vm_adr_o <= adr;
-    	next_adr <= adr + MDW/8;
+    	next_adr <= adr;// + bmpWidth * bytpp;//MDW/8;
     end
     else begin
 	    vm_adr_o <= next_adr;
@@ -1416,6 +1498,7 @@ else begin
   	// Make sure a strip request will not be present before using the bus.
 		if (!(memreq && !m_rst_busy_i)) begin
 			if (pcmd_adr != xyAddr) begin
+				pcmd_adr <= xyAddr;
 	    	vm_blen_o <= 6'd0;
 				vm_tid_o <= {CORENO,CHANNEL,2'b0,pcmd[1:0]};
 				vm_cmd_o <= fta_bus_pkg::CMD_LOADZ;
@@ -1467,7 +1550,7 @@ else begin
       state <= STORESTRIP;
     end
   STORESTRIP:
-    if (!memreq && !m_rst_busy_i) begin
+    if (!(memreq && !m_rst_busy_i)) begin
     	mem_strip <= m_bus_o.req.data1;		// cache the new value
     	vm_blen_o <= 6'd0;
 			vm_tid_o <= {CORENO,CHANNEL,4'h3};
@@ -1486,7 +1569,7 @@ else begin
   endcase
 
 	// Process responses from memory
-  if (m_bus_o.resp.ack|tocnt[10]) begin
+  if (m_bus_o.resp.ack) begin
   	case(m_bus_o.resp.tid.tranid)
   	4'd1:	// Get pixel
   		begin
@@ -1530,37 +1613,29 @@ always_ff @(posedge vclk)
 // Before the hrefdelay expires, pixelCol will be negative, which is greater
 // than windowWidth as the value is unsigned. That means that fifo reading is
 // active only during the display area 0 to windowWidth.
-reg shift1;
-always_comb shift1 = hc==hres;
+reg shift_en;
+always_comb shift_en = hc==hres;
 modShiftCntr ushftcnt1
 (
 	.clk(vclk),
 	.pe_hsync(pe_hsync),
-	.hc(hc),
-	.hres(hres),
+	.en(shift_en),
 	.pixel_col(pixelCol),
 	.shifts(shifts),
 	.shift_cnt(shift_cnt)
 );
 
 reg next_strip;
-always_comb next_strip = (shift_cnt==shifts) && (hc==hres);
+always_comb next_strip = shift_cnt==shifts;
 
-wire vrd;
-reg shift,shift2;
-always_ff @(posedge vclk) shift2 <= shift1;
-always_ff @(posedge vclk) shift <= shift2;
-always_ff @(posedge vclk) rd_fifo2 <= next_strip;
-always_ff @(posedge vclk) rd_fifo <= rd_fifo2;
+always_ff @(posedge vclk) rd_fifo <= next_strip;
 
 modMuxRgbo3 #(.MDW(MDW)) umuxrgbo31
 (
 	.clk(vclk),
+	.en(shift_en),
 	.rd_fifo(rd_fifo),
-	.lef(lef),
-	.rgbo1o(rgbo1o),
 	.rgbo1e(rgbo1e),
-	.shift(shift),
 	.color_depth(color_depth2),
 	.rgbo(rgbo3)
 );
@@ -1613,21 +1688,154 @@ modOobColor #(.MDW(MDW)) uoobdat1
 // Could maybe set pixel color here on timeout, otherwise likely random data
 // will be used for the color.
 
+
 rescan_fifo #(.WIDTH(MDW), .DEPTH(256)) uf1
 (
 	.wrst(fifo_wrst),
 	.wclk(m_bus_o.clk),
 //	.wr((((m_bus_o.resp.ack|tocnt[10]) && state==WAITLOAD) || state==LOAD_OOB) && lef),
 //	.di((state==LOAD_OOB) ? oob_dat : m_bus_o.resp.dat),
-	.wr(((m_bus_o.resp.ack && m_bus_o.resp.tid.tranid==4'h0)|tocnt[10]) && lef),
+	.wr(m_bus_o.resp.ack && m_bus_o.resp.tid.tranid==4'h0),
 	.din(m_bus_o.resp.dat),
-	.rrst(fifo_rrst),
+	.rrst(fifo_wrst),
 	.rclk(vclk),
-	.rd(rd_fifo & lof),
+	.rd(next_strip),
 	.dout(rgbo1e),
 	.cnt()
 );
 
+/*
+wire wr_rst_busy, rd_rst_busy;
+reg rd_en;
+always_comb
+	rd_en = next_strip && shift_en && !rd_rst_busy;
+reg wr_en;
+always_comb	
+	wr_en = (m_bus_o.resp.ack && m_bus_o.resp.tid.tranid==4'h0) && !rst_i && !fifo_wrst && !wr_rst_busy;
+
+   // xpm_fifo_async: Asynchronous FIFO
+   // Xilinx Parameterized Macro, version 2024.2
+
+   xpm_fifo_async #(
+      .CASCADE_HEIGHT(0),            // DECIMAL
+      .CDC_SYNC_STAGES(2),           // DECIMAL
+      .DOUT_RESET_VALUE("0"),        // String
+      .ECC_MODE("no_ecc"),           // String
+      .EN_SIM_ASSERT_ERR("warning"), // String
+      .FIFO_MEMORY_TYPE("auto"),     // String
+      .FIFO_READ_LATENCY(1),         // DECIMAL
+      .FIFO_WRITE_DEPTH(256),       // DECIMAL
+      .FULL_RESET_VALUE(0),          // DECIMAL
+      .PROG_EMPTY_THRESH(10),        // DECIMAL
+      .PROG_FULL_THRESH(250),         // DECIMAL
+      .RD_DATA_COUNT_WIDTH(8),       // DECIMAL
+      .READ_DATA_WIDTH(MDW),          // DECIMAL
+      .READ_MODE("std"),             // String
+      .RELATED_CLOCKS(0),            // DECIMAL
+      .SIM_ASSERT_CHK(0),            // DECIMAL; 0=disable simulation messages, 1=enable simulation messages
+      .USE_ADV_FEATURES("0000"),     // String
+      .WAKEUP_TIME(0),               // DECIMAL
+      .WRITE_DATA_WIDTH(MDW),         // DECIMAL
+      .WR_DATA_COUNT_WIDTH(8)        // DECIMAL
+   )
+   xpm_fifo_async_inst (
+      .almost_empty(),   						// 1-bit output: Almost Empty : When asserted, this signal indicates that
+                                     // only one more read can be performed before the FIFO goes to empty.
+
+      .almost_full(),     					// 1-bit output: Almost Full: When asserted, this signal indicates that
+                                     // only one more write can be performed before the FIFO is full.
+
+      .data_valid(),       					// 1-bit output: Read Data Valid: When asserted, this signal indicates
+                                     // that valid data is available on the output bus (dout).
+
+      .dbiterr(),				             // 1-bit output: Double Bit Error: Indicates that the ECC decoder detected
+                                     // a double-bit error and data in the FIFO core is corrupted.
+
+      .dout(rgbo1e),                 // READ_DATA_WIDTH-bit output: Read Data: The output data bus is driven
+                                     // when reading the FIFO.
+
+      .empty(),			                 // 1-bit output: Empty Flag: When asserted, this signal indicates that the
+                                     // FIFO is empty. Read requests are ignored when the FIFO is empty,
+                                     // initiating a read while empty is not destructive to the FIFO.
+
+      .full(),  	                   // 1-bit output: Full Flag: When asserted, this signal indicates that the
+                                     // FIFO is full. Write requests are ignored when the FIFO is full,
+                                     // initiating a write when the FIFO is full is not destructive to the
+                                     // contents of the FIFO.
+
+      .overflow(),           				// 1-bit output: Overflow: This signal indicates that a write request
+                                     // (wren) during the prior clock cycle was rejected, because the FIFO is
+                                     // full. Overflowing the FIFO is not destructive to the contents of the
+                                     // FIFO.
+
+      .prog_empty(),					       // 1-bit output: Programmable Empty: This signal is asserted when the
+                                     // number of words in the FIFO is less than or equal to the programmable
+                                     // empty threshold value. It is de-asserted when the number of words in
+                                     // the FIFO exceeds the programmable empty threshold value.
+
+      .prog_full(),					         // 1-bit output: Programmable Full: This signal is asserted when the
+                                     // number of words in the FIFO is greater than or equal to the
+                                     // programmable full threshold value. It is de-asserted when the number of
+                                     // words in the FIFO is less than the programmable full threshold value.
+
+      .rd_data_count(),							 // RD_DATA_COUNT_WIDTH-bit output: Read Data Count: This bus indicates the
+                                     // number of words read from the FIFO.
+
+      .rd_rst_busy(rd_rst_busy),     // 1-bit output: Read Reset Busy: Active-High indicator that the FIFO read
+                                     // domain is currently in a reset state.
+
+      .sbiterr(),					           // 1-bit output: Single Bit Error: Indicates that the ECC decoder detected
+                                     // and fixed a single-bit error.
+
+      .underflow(),					         // 1-bit output: Underflow: Indicates that the read request (rd_en) during
+                                     // the previous clock cycle was rejected because the FIFO is empty. Under
+                                     // flowing the FIFO is not destructive to the FIFO.
+
+      .wr_ack(),			               // 1-bit output: Write Acknowledge: This signal indicates that a write
+                                     // request (wr_en) during the prior clock cycle is succeeded.
+
+      .wr_data_count(), 							// WR_DATA_COUNT_WIDTH-bit output: Write Data Count: This bus indicates
+                                     // the number of words written into the FIFO.
+
+      .wr_rst_busy(wr_rst_busy),     // 1-bit output: Write Reset Busy: Active-High indicator that the FIFO
+                                     // write domain is currently in a reset state.
+
+      .din(m_bus_o.resp.dat), 			 // WRITE_DATA_WIDTH-bit input: Write Data: The input data bus used when
+                                     // writing the FIFO.
+
+      .injectdbiterr(1'b0), // 1-bit input: Double Bit Error Injection: Injects a double bit error if
+                                     // the ECC feature is used on block RAMs or UltraRAM macros.
+
+      .injectsbiterr(1'b0), // 1-bit input: Single Bit Error Injection: Injects a single bit error if
+                                     // the ECC feature is used on block RAMs or UltraRAM macros.
+
+      .rd_clk(vclk),                 // 1-bit input: Read clock: Used for read operation. rd_clk must be a free
+                                     // running clock.
+
+      .rd_en(rd_en),                 // 1-bit input: Read Enable: If the FIFO is not empty, asserting this
+                                     // signal causes data (on dout) to be read from the FIFO. Must be held
+                                     // active-low when rd_rst_busy is active high.
+
+      .rst(rst_i|fifo_wrst),         // 1-bit input: Reset: Must be synchronous to wr_clk. The clock(s) can be
+                                     // unstable at the time of applying reset, but reset must be released only
+                                     // after the clock(s) is/are stable.
+
+      .sleep(!vFetch),               // 1-bit input: Dynamic power saving: If sleep is High, the memory/fifo
+                                     // block is in power saving mode.
+
+      .wr_clk(m_bus_o.clk),               // 1-bit input: Write clock: Used for write operation. wr_clk must be a
+                                     // free running clock.
+
+      .wr_en(wr_en)                  // 1-bit input: Write Enable: If the FIFO is not full, asserting this
+                                     // signal causes data (on din) to be written to the FIFO. Must be held
+                                     // active-low when rst or wr_rst_busy is active high.
+
+   );
+
+   // End of xpm_fifo_async_inst instantiation
+				
+*/				
+/*
 rescan_fifo #(.WIDTH(MDW), .DEPTH(256)) uf2
 (
 	.wrst(fifo_wrst),
@@ -1636,11 +1844,11 @@ rescan_fifo #(.WIDTH(MDW), .DEPTH(256)) uf2
 	.din(m_bus_o.resp.dat),
 	.rrst(fifo_rrst),
 	.rclk(vclk),
-	.rd(rd_fifo & lef),
+	.rd(next_strip & lef),
 	.dout(rgbo1o),
 	.cnt()
 );
-
+*/
 endmodule
 
 // Horizontal or vertical pixel counter.
@@ -1754,7 +1962,7 @@ output reg first_memreq;			// first memreq on line
 
 reg first;
 reg memreq1;
-reg [11:0] bi_ctr;
+reg [15:0] bi_ctr;
 wire [5:0] nburst;
 
 modBurstCntr ubc1
@@ -1786,7 +1994,7 @@ else begin
 		memreq1 <= FALSE;
 end
 
-assign memreq = memreq1;
+assign memreq = memreq1;// && nburst <= max_nburst;
 
 always_ff @(posedge clk)
 if (rst|pe_hsync)
@@ -1894,32 +2102,29 @@ end
 
 endmodule
 
-module modShiftCntr(clk, pe_hsync, hc, hres, pixel_col, shifts, shift_cnt);
+module modShiftCntr(clk, pe_hsync, en, pixel_col, shifts, shift_cnt);
 input clk;
 input pe_hsync;
-input [2:0] hc;
-input [2:0] hres;
+input en;
 input [15:0] pixel_col;
 input [5:0] shifts;
 output reg [5:0] shift_cnt;
 
-reg shift1;
-always_comb shift1 = hc==hres;
-
 always_ff @(posedge clk)
 if (pe_hsync)
-	shift_cnt <= 5'd1;
+	shift_cnt <= 6'd1;
 else begin
-	if (shift1) begin
-		if (pixel_col==16'hFFFF)
+	if (en) begin
+		if (pixel_col==16'hFFFF) begin
 			shift_cnt <= shifts;
+		end
 		else if (!pixel_col[15]) begin
-			shift_cnt <= shift_cnt + 5'd1;
+			shift_cnt <= shift_cnt + 6'd1;
 			if (shift_cnt==shifts)
-				shift_cnt <= 5'd1;
+				shift_cnt <= 6'd1;
 		end
 		else
-			shift_cnt <= 5'd1;
+			shift_cnt <= 6'd1;
 	end
 end
 
@@ -1927,30 +2132,30 @@ endmodule
 
 // This mux extracts pixels from the memory strip.
 
-module modMuxRgbo3(clk, rd_fifo, lef, rgbo1o, rgbo1e, shift, color_depth, rgbo);
+module modMuxRgbo3(clk, en, rd_fifo, rgbo1e, color_depth, rgbo);
 parameter MDW=256;
 input clk;
+input en;
 input rd_fifo;
-input lef;
 input [MDW-1:0] rgbo1e;
-input [MDW-1:0] rgbo1o;
-input shift;
 input color_depth_t color_depth;
 output reg [31:0] rgbo;
 
 reg [MDW-1:0] rgbo3;
 
 always_ff @(posedge clk)
-	if (rd_fifo)
-		rgbo3 <= lef ? rgbo1o : rgbo1e;
-	else if (shift) begin
-		case(color_depth)
-		BPP8:	rgbo3 <= {8'h0,rgbo3[MDW-1:8]};
-		BPP16:	rgbo3 <= {16'h0,rgbo3[MDW-1:16]};
-		BPP24:	rgbo3 <= {24'h0,rgbo3[MDW-1:24]};
-		BPP32:	rgbo3 <= {32'h0,rgbo3[MDW-1:32]};
-		default: rgbo3 <= {16'h0,rgbo3[MDW-1:16]};
-		endcase
+	if (en) begin
+		if (rd_fifo)
+			rgbo3 <= rgbo1e;
+		else begin
+			case(color_depth)
+			BPP8:	rgbo3 <= {8'h0,rgbo3[MDW-1:8]};
+			BPP16:	rgbo3 <= {16'h0,rgbo3[MDW-1:16]};
+			BPP24:	rgbo3 <= {24'h0,rgbo3[MDW-1:24]};
+			BPP32:	rgbo3 <= {32'h0,rgbo3[MDW-1:32]};
+			default: rgbo3 <= {16'h0,rgbo3[MDW-1:16]};
+			endcase
+		end
 	end
 
 always_comb rgbo = rgbo3[31:0];
