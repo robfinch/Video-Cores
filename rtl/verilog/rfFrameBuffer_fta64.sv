@@ -864,6 +864,12 @@ if (rst_i) begin
 	bmpWidth <= 16'd1360;
 	bmpHeight <= 16'd768;
 `endif
+`ifdef WXGA1920x1080
+	windowWidth <= 12'd1920;
+	windowHeight <= 12'd1080;
+	bmpWidth <= 16'd1920;
+	bmpHeight <= 16'd1080;
+`endif
 	onoff <= 1'b1;
 	color_depth <= BPP16;
 	color_depth2 <= BPP16;
@@ -874,8 +880,6 @@ if (rst_i) begin
 	vrefdelay <= 16'hFFEA;//16'hFFF3;12'd13;
 	windowLeft <= 16'h0;
 	windowTop <= 16'h0;
-	bmpWidth <= 16'd800;
-	bmpHeight <= 16'd600;
 	burst_interval <= BURST_INTERVAL;
 	pcmd <= 2'b00;
 	rstcmd1 <= 1'b0;
@@ -1270,8 +1274,8 @@ u2
 	.base_address_i(baseAddrWork),
 	.color_depth_i(color_depth2),
 	.bmp_width_i(bmpWidth),
-	.x_coord_i(px),
-	.y_coord_i(py),
+	.x_coord_i(windowLeft+px),
+	.y_coord_i(windowTop+py),
 	.address_o(xyAddr),
 	.mb_o(mb),
 	.me_o(me),
@@ -1384,7 +1388,7 @@ modAddrGen uaddrgen1
 (
 	.clk(m_bus_o.clk),
 	.state(state),
-	.row_change(row_change),
+	.pe_hsync(pe_hsync2),
 	.grAddr(grAddr),
 	.ack(m_bus_o.resp.ack && m_bus_o.resp.tid.tranid==4'h0),
 	.tocnt(tocnt),
@@ -1466,7 +1470,7 @@ else begin
     	next_adr <= adr;// + bmpWidth * bytpp;//MDW/8;
     end
     else begin
-	    vm_adr_o <= next_adr;
+	    vm_adr_o <= next_adr + ({10'd0,burst_len} + 2'd1) * (MDW/8);
 	    next_adr <= next_adr + ({10'd0,burst_len} + 2'd1) * (MDW/8);
 	  end
 	end
@@ -1628,7 +1632,7 @@ modShiftCntr ushftcnt1
 reg next_strip;
 always_comb next_strip = shift_cnt==shifts;
 
-always_ff @(posedge vclk) rd_fifo <= next_strip;
+always_comb rd_fifo = next_strip & shift_en & ~pixelCol[15];
 
 modMuxRgbo3 #(.MDW(MDW)) umuxrgbo31
 (
@@ -1699,7 +1703,7 @@ rescan_fifo #(.WIDTH(MDW), .DEPTH(256)) uf1
 	.din(m_bus_o.resp.dat),
 	.rrst(fifo_wrst),
 	.rclk(vclk),
-	.rd(next_strip),
+	.rd(rd_fifo),
 	.dout(rgbo1e),
 	.cnt()
 );
@@ -2051,21 +2055,34 @@ always_comb
 
 endmodule
 
-module modAddrGen(clk, state, row_change, grAddr, ack, tocnt, adr);
+// hsync causes the video row to be incremented, it then takes about three
+// clocks for the start address of the row to be calculated. So, there is a
+// delay to account for after an hsync. The address must also be available
+// for the memory request generation logic, which allows a delay of 12 clock
+// cycles.
+
+module modAddrGen(clk, state, pe_hsync, grAddr, ack, tocnt, adr);
 parameter MDW=256;
 input clk;
 input fb_state_t state;
-input row_change;
+input pe_hsync;
 input [31:0] grAddr;
 input ack;
 input [11:0] tocnt;
 output reg [31:0] adr;
 
+reg [3:0] cnt;
 always_ff @(posedge clk)
-if (row_change)
+	if (pe_hsync)
+		cnt <= 4'h0;
+	else if (cnt != 4'd15)
+		cnt <= cnt + 4'd1;
+
+always_ff @(posedge clk)
+if (cnt == 4'd5)
 	adr <= grAddr;
 else begin
-  if ((state==gfx_pkg::WAITLOAD && (ack|tocnt[10])) || state==gfx_pkg::LOAD_OOB)
+  if ((ack|tocnt[10]) || state==gfx_pkg::LOAD_OOB)
   	adr <= adr + MDW/8;
 end
 

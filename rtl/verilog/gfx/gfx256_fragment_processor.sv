@@ -85,7 +85,7 @@ reg              [31:0] pixel_offset;
 
 // Calculate the memory address of the texel to read 
 wire [7:0] mb;
-gfx_calc_address ugfxca1
+gfx_calc_address #(.SW(256)) ugfxca1
 (
 	.clk(clk_i),
 	.base_address_i(tex0_base_i),

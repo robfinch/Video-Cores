@@ -101,7 +101,7 @@ wire [7:0] alpha = combined_alpha_reg[15:8];
 // Addr[31:2] = Base + (Y*width + X) * ppb
 //reg [31:0] pixel_offset;
 wire [7:0] mb;
-gfx_calc_address ugfxca1
+gfx_calc_address #(.SW(256)) ugfxca1
 (
 	.clk(clk_i),
 	.base_address_i(target_base_i),

@@ -81,7 +81,7 @@ input      ack_i;
 wire [31:5] target_addr;
 wire [31:5] zbuffer_addr;
 wire [7:0] tmb;
-gfx_calc_address ugfxca1
+gfx_calc_address #(.SW(256)) ugfxca1
 (
 	.clk(clk_i),
 	.base_address_i(target_base_i),
@@ -95,7 +95,7 @@ gfx_calc_address ugfxca1
 	.ce_o()
 );
 wire [7:0] zmb;
-gfx_calc_address ugfxca2
+gfx_calc_address #(.SW(256)) ugfxca2
 (
 	.clk(clk_i),
 	.base_address_i(zbuffer_base_i),

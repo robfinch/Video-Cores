@@ -42,7 +42,7 @@ import gfx_pkg::*;
 
 module gfx_calc_address(clk, base_address_i, color_depth_i, bmp_width_i, x_coord_i, y_coord_i,
 	address_o, mb_o, me_o, ce_o);
-parameter SW = 128;		// strip width in bits
+parameter SW = 256;		// strip width in bits
 parameter BN = $clog2(SW)-1;
 input clk;
 input [31:0] base_address_i;
@@ -149,15 +149,15 @@ reg [31:0] offset;
 always_ff @(posedge clk)
 begin
 	case(SW)
-	32:		offset <= {(({4'b0,num_strips} * y_coord_i) + strip_num),2'h0};
-	64:		offset <= {(({4'b0,num_strips} * y_coord_i) + strip_num),3'h0};
-	128:	offset <= {(({4'b0,num_strips} * y_coord_i) + strip_num),4'h0};
-	256:	offset <= {(({4'b0,num_strips} * y_coord_i) + strip_num),5'h0};
-	default:	offset <= {(({4'b0,num_strips} * y_coord_i) + strip_num),5'h0};
+	32:		offset <= {(({16'b0,num_strips} * y_coord_i) + strip_num),2'h0};
+	64:		offset <= {(({16'b0,num_strips} * y_coord_i) + strip_num),3'h0};
+	128:	offset <= {(({16'b0,num_strips} * y_coord_i) + strip_num),4'h0};
+	256:	offset <= {(({16'b0,num_strips} * y_coord_i) + strip_num),5'h0};
+	default:	offset <= {(({16'b0,num_strips} * y_coord_i) + strip_num),5'h0};
 	endcase
 end
 
-always_ff @(posedge clk)
-	address_o <= base_address_i + offset;
+always_comb
+	address_o = base_address_i + offset;
 
 endmodule
