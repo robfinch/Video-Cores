@@ -179,7 +179,7 @@ memory_to_color256 memory_proc(
 );
 
 // Acknowledge when a command has completed
-always @(posedge clk_i or posedge rst_i)
+always_ff @(posedge clk_i)
 begin
   // reset, init component
   if(rst_i)
@@ -259,12 +259,13 @@ begin
           ack_o <= 1'b1;    
       end
 
+		default:	;
     endcase
   end
 end
 
 // State machine
-always @(posedge clk_i or posedge rst_i)
+always_ff @(posedge clk_i)
 begin
   // reset, init component
   if(rst_i)
@@ -273,36 +274,36 @@ begin
   else
     case (state)
 
-      wait_state:
-        if(write_i & blending_enable_i)
-          state <= target_read_state;
-        else if(write_i)
-          state <= write_pixel_state;
-          
-      delay1_state:
-      	state <= delay2_state;
-      delay2_state:
-      	state <= delay3_state;
-      delay3_state:
-        if(write_i & blending_enable_i)
-          state <= target_read_state;
-        else if(write_i)
-          state <= write_pixel_state;
+    wait_state:
+      if(write_i & blending_enable_i)
+        state <= delay1_state;
+      else if(write_i)
+        state <= delay1_state;
+        
+    delay1_state:
+    	state <= delay2_state;
+    delay2_state:
+      if(write_i & blending_enable_i)
+        state <= target_read_state;
+      else if(write_i)
+        state <= write_pixel_state;
 
-			target_read_state:
-				state <= target_read_ack_state;
+		target_read_state:
+			state <= target_read_ack_state;
 
-      target_read_ack_state:
-        if(target_ack_i)
-          state <= write_pixel_state;
+    target_read_ack_state:
+      if(target_ack_i)
+        state <= write_pixel_state;
 
-			write_pixel_state:
-				state <= write_pixel_ack_state;
+		write_pixel_state:
+			state <= write_pixel_ack_state;
 
-      write_pixel_ack_state:
-        if(ack_i)
-          state <= wait_state;
+    write_pixel_ack_state:
+      if(ack_i)
+        state <= wait_state;
 
+		default:
+			state <= wait_state;
     endcase
 end
 

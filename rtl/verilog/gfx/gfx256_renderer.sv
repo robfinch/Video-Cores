@@ -161,39 +161,40 @@ begin
   begin
     case (state)
 
-      wait_state:
-        ack_o <= 1'b0;
+    wait_state:
+      ack_o <= 1'b0;
 
-			write_pixel_state:
-        begin
-          render_addr_o <= target_addr;
-          render_sel_o <= target_sel;
-          render_dat_o <= target_dat;
-          write_o <= 1'b1;
-        end
-
-      // Write pixel to memory. If depth buffering is enabled, write z value too
-      write_pixel_ack_state:
+		write_pixel_state:
       begin
-        if(ack_i)
-        begin
-          render_addr_o <= zbuffer_addr;
-          render_sel_o  <= zbuffer_sel;
-          render_dat_o  <= zbuffer_dat;
-
-          write_o <= zbuffer_enable_i;
-          ack_o <= ~zbuffer_enable_i;
-        end
-        else
-          write_o <= 1'b0;
+        render_addr_o <= target_addr;
+        render_sel_o <= target_sel;
+        render_dat_o <= target_dat;
+        write_o <= 1'b1;
       end
 
-      write_z_state:
-      begin
-        write_o <= 1'b0;
-        ack_o <= ack_i;
-      end
+    // Write pixel to memory. If depth buffering is enabled, write z value too
+    write_pixel_ack_state:
+	    begin
+	      if(ack_i)
+	      begin
+	        render_addr_o <= zbuffer_addr;
+	        render_sel_o  <= zbuffer_sel;
+	        render_dat_o  <= zbuffer_dat;
 
+	        write_o <= zbuffer_enable_i;
+	        ack_o <= ~zbuffer_enable_i;
+	      end
+	      else
+	        write_o <= 1'b0;
+	    end
+
+    write_z_state:
+	    begin
+	      write_o <= 1'b0;
+	      ack_o <= ack_i;
+	    end
+
+		default:	;
     endcase
   end
 end
@@ -208,31 +209,31 @@ begin
   else
     case (state)
 
-      wait_state:
-        if(write_i)
-          state <= delay1_state;
+    wait_state:
+      if(write_i)
+        state <= delay1_state;
 
-      delay1_state:
-      	state <= delay2_state;
-      delay2_state:
-      	state <= delay3_state;
-      delay3_state:
-        if(write_i)
-          state <= write_pixel_state;
+    delay1_state:
+    	state <= delay2_state;
+    delay2_state:
+      if(write_i)
+        state <= write_pixel_state;
 
-			write_pixel_state:
-				state <= write_pixel_ack_state;
+		write_pixel_state:
+			state <= write_pixel_ack_state;
 
-      write_pixel_ack_state:
-        if(ack_i & zbuffer_enable_i)
-          state <= write_z_state;
-        else if(ack_i)
-          state <= wait_state;
+    write_pixel_ack_state:
+      if(ack_i & zbuffer_enable_i)
+        state <= write_z_state;
+      else if(ack_i)
+        state <= wait_state;
 
-      write_z_state:
-        if(ack_i)
-          state <= wait_state;
+    write_z_state:
+      if(ack_i)
+        state <= wait_state;
 
+		default:
+			state <= wait_state;
     endcase
 end
 

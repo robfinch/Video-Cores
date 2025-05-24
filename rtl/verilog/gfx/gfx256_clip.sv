@@ -224,39 +224,39 @@ else
 begin
   case (state)
 
-    wait_state:
-    begin
-      if(write_i)
-        ack_o <= discard_pixel;
-      else
-        ack_o <= 1'b0;
+  wait_state:
+	  begin
+	    if(write_i)
+	      ack_o <= discard_pixel;
+	    else
+	      ack_o <= 1'b0;
+	  end
+
+  delay2_state:
+    if(zbuffer_enable_i)
+      z_request_o <= ~discard_pixel;
+    else
+      write_o <= ~discard_pixel;
+
+  // Do a depth check. If it fails, discard pixel, ack and go back to wait. If it succeeds, go to write state
+  z_read_state:
+    if(z_ack_i) begin
+      write_o <= ~fail_z_check;
+      ack_o <= fail_z_check;
+      z_request_o <= 1'b0;
     end
+    else
+      z_request_o <= ~wbm_busy_i | z_request_o;
 
-    delay3_state:
-      if(zbuffer_enable_i)
-        z_request_o <= ~discard_pixel;
-      else
-        write_o <= ~discard_pixel;
+  // ack, then go back to wait state when the next module is ready
+  write_pixel_state:
+	  begin
+	    write_o <= 1'b0;
+	    if(ack_i)
+	      ack_o <= 1'b1;    
+	  end
 
-    // Do a depth check. If it fails, discard pixel, ack and go back to wait. If it succeeds, go to write state
-    z_read_state:
-      if(z_ack_i)
-      begin
-        write_o <= ~fail_z_check;
-        ack_o <= fail_z_check;
-        z_request_o <= 1'b0;
-      end
-      else
-        z_request_o <= ~wbm_busy_i | z_request_o;
-
-    // ack, then go back to wait state when the next module is ready
-    write_pixel_state:
-    begin
-      write_o <= 1'b0;
-      if(ack_i)
-        ack_o <= 1'b1;    
-    end
-
+	default:	;
   endcase
 
 end
@@ -270,27 +270,29 @@ if(rst_i)
 else
   case (state)
 
-    wait_state:
-      if(write_i & ~discard_pixel)
-      	state <= delay1_state;
+  wait_state:
+    if(write_i & ~discard_pixel)
+    	state <= delay1_state;
 
-		// Two cycle delay is for address calc. 
-    delay1_state:
-    	state <= delay2_state;
-    delay2_state:
-      if(zbuffer_enable_i)
-        state <= z_read_state;
-      else 
-        state <= write_pixel_state;
+	// Two cycle delay is for address calc. 
+  delay1_state:
+  	state <= delay2_state;
+  delay2_state:
+    if(zbuffer_enable_i)
+      state <= z_read_state;
+    else 
+      state <= write_pixel_state;
 
-    z_read_state:
-      if(z_ack_i)
-        state <= fail_z_check ? wait_state : write_pixel_state;
+  z_read_state:
+    if(z_ack_i)
+      state <= fail_z_check ? wait_state : write_pixel_state;
 
-    write_pixel_state:
-      if(ack_i)
-        state <= wait_state;
+  write_pixel_state:
+    if(ack_i)
+      state <= wait_state;
 
+	default:
+		state <= wait_state;
   endcase
 
 endmodule

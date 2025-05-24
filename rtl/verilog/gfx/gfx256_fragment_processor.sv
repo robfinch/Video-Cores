@@ -167,7 +167,7 @@ begin
   begin
     case (state)
 
-      wait_state:
+    wait_state:
       begin
         ack_o <= write_i & curve_write_i & ~bezier_draw;
 
@@ -183,33 +183,33 @@ begin
         end
       end
 
-			texture_read_state:
-        texture_request_o <= 1'b1;
-			
-      texture_read_ack_state:
-        if(texture_ack_i)
-        begin
-          pixel_x_o <= x_counter_i;
-          pixel_y_o <= y_counter_i;
-          pixel_z_o <= z_i;
-          pixel_color_o <= mem_conv_color_o;
-          pixel_alpha_o <= pixel_alpha_i;
-          texture_request_o <= 1'b0;	// clear this after one cycle??
-          if(colorkey_enable_i & transparent_pixel)
-            ack_o <= 1'b1; // Colorkey enabled: Only write if the pixel doesn't match the colorkey
-          else
-            write_o <= 1'b1;
-        end
-
-			write_pixel_state:
-				write_o <= 1'b1;
-				
-      write_pixel_ack_state:
-      begin
-        write_o <= 1'b0;
-        ack_o <= ack_i;
+		texture_read_state:
+      texture_request_o <= 1'b1;
+		
+    texture_read_ack_state:
+      if(texture_ack_i) begin
+        pixel_x_o <= x_counter_i;
+        pixel_y_o <= y_counter_i;
+        pixel_z_o <= z_i;
+        pixel_color_o <= mem_conv_color_o;
+        pixel_alpha_o <= pixel_alpha_i;
+        texture_request_o <= 1'b0;	// clear this after one cycle??
+        if(colorkey_enable_i & transparent_pixel)
+          ack_o <= 1'b1; // Colorkey enabled: Only write if the pixel doesn't match the colorkey
+        else
+          write_o <= 1'b1;
       end
 
+		write_pixel_state:
+			write_o <= 1'b1;
+			
+    write_pixel_ack_state:
+	    begin
+	      write_o <= 1'b0;
+	      ack_o <= ack_i;
+	    end
+
+		default:	;
     endcase
   end
 end
@@ -224,39 +224,39 @@ begin
   else
     case (state)
 
-      wait_state:
-        if(write_i & texture_enable_i & (~curve_write_i | bezier_draw))
-          state <= delay1_state;
-        else if(write_i & (~curve_write_i | bezier_draw))
-          state <= delay1_state;
+    wait_state:
+      if(write_i & texture_enable_i & (~curve_write_i | bezier_draw))
+        state <= delay1_state;
+      else if(write_i & (~curve_write_i | bezier_draw))
+        state <= delay1_state;
 
-      delay1_state:
-      	state <= delay2_state;
-      delay2_state:
-      	state <= delay3_state;
-      delay3_state:
-        if(write_i & texture_enable_i & (~curve_write_i | bezier_draw))
-          state <= texture_read_state;
-        else if(write_i & (~curve_write_i | bezier_draw))
-          state <= write_pixel_state;
+    delay1_state:
+    	state <= delay2_state;
+    delay2_state:
+      if(write_i & texture_enable_i & (~curve_write_i | bezier_draw))
+        state <= texture_read_state;
+      else if(write_i & (~curve_write_i | bezier_draw))
+        state <= write_pixel_state;
 
-			texture_read_state:
-				state <= texture_read_ack_state;
+		texture_read_state:
+			state <= texture_read_ack_state;
 
-      texture_read_ack_state:
-        // Check for texture ack. If we have colorkeying enabled, only goto the write state if the texture doesn't match the colorkey
-        if(texture_ack_i & colorkey_enable_i)
-          state <= transparent_pixel ? wait_state : write_pixel_state;
-        else if(texture_ack_i)
-          state <= write_pixel_state;
+    texture_read_ack_state:
+      // Check for texture ack. If we have colorkeying enabled, only goto the write state if the texture doesn't match the colorkey
+      if(texture_ack_i & colorkey_enable_i)
+        state <= transparent_pixel ? wait_state : write_pixel_state;
+      else if(texture_ack_i)
+        state <= write_pixel_state;
 
-			write_pixel_state:
-				state <= write_pixel_ack_state;
+		write_pixel_state:
+			state <= write_pixel_ack_state;
 
-      write_pixel_ack_state:
-        if(ack_i)
-          state <= wait_state;
+    write_pixel_ack_state:
+      if(ack_i)
+        state <= wait_state;
 
+		default:
+			state <= wait_state;
     endcase
 end
 
