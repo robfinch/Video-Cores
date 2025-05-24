@@ -49,7 +49,7 @@ input                   rst_i;
 input                   clipping_enable_i;
 input                   zbuffer_enable_i;
 input [1:0] color_depth_i;
-input            [31:5] zbuffer_base_i;
+input            [31:0] zbuffer_base_i;
 input [point_width-1:0] target_size_x_i;
 input [point_width-1:0] target_size_y_i;
 input [point_width-1:0] target_x0_i;
@@ -82,7 +82,7 @@ output reg              ack_o;
 
 // Interface against wishbone master (reader)
 input             z_ack_i;
-output     [31:5] z_addr_o;
+output     [31:0] z_addr_o;
 input      [255:0] z_data_i;
 output reg  [31:0] z_sel_o;
 output reg        z_request_o;
@@ -274,12 +274,10 @@ else
       if(write_i & ~discard_pixel)
       	state <= delay1_state;
 
-		// Three cycle delay is for address calc.      
+		// Two cycle delay is for address calc. 
     delay1_state:
     	state <= delay2_state;
     delay2_state:
-    	state <= delay3_state;
-    delay3_state:
       if(zbuffer_enable_i)
         state <= z_read_state;
       else 

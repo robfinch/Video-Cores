@@ -68,13 +68,13 @@ input                        ack_i;
 // to/from wishbone master read
 input              texture_ack_i;
 input      [255:0] texture_data_i;
-output      [31:5] texture_addr_o;
+output      [31:0] texture_addr_o;
 output reg  [31:0] texture_sel_o;
 output reg         texture_request_o;
 
 // from wishbone slave
 input                   texture_enable_i;
-input            [31:5] tex0_base_i;
+input            [31:0] tex0_base_i;
 input [point_width-1:0] tex0_size_x_i;
 input [point_width-1:0] tex0_size_y_i;
 input            [ 1:0] color_depth_i;

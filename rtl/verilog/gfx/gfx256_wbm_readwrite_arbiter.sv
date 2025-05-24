@@ -74,7 +74,7 @@ output        master_busy_o;
 // Interface against the wbm read module
 output        read_request_o;
 output				write_request_o;
-output reg [31:WID==256?5:WID==128?4:WID==64?3:2] addr_o;
+output reg [31:0] addr_o;
 output        we_o;
 output reg [WID/8-1:0] sel_o;
 input  [WID-1:0] dat_i;
@@ -82,39 +82,39 @@ output [WID-1:0] dat_o;
 input         ack_i;
 // Interface against writer
 input         mw_write_request_i;
-input  [31:WID==256?5:WID==128?4:WID==64?3:2] mw_addr_i;
+input  [31:0] mw_addr_i;
 input   [WID/8-1:0] mw_sel_i;
 input         mw_we_i;
 input  [WID-1:0] mw_dat_i;
 output        mw_ack_o;
 // Interface against masters (clip)
 input         m0_read_request_i;
-input  [31:WID==256?5:WID==128?4:WID==64?3:2] m0_addr_i;
+input  [31:0] m0_addr_i;
 input   [WID/8-1:0] m0_sel_i;
 output [WID-1:0] m0_dat_o;
 output        m0_ack_o;
 // Interface against masters (fragment processor)
 input         m1_read_request_i;
-input  [31:WID==256?5:WID==128?4:WID==64?3:2] m1_addr_i;
+input  [31:0] m1_addr_i;
 input   [WID/8-1:0] m1_sel_i;
 output [WID-1:0] m1_dat_o;
 output        m1_ack_o;
 // Interface against masters (blender)
 input         m2_read_request_i;
-input  [31:WID==256?5:WID==128?4:WID==64?3:2] m2_addr_i;
+input  [31:0] m2_addr_i;
 input   [WID/8-1:0] m2_sel_i;
 output [WID-1:0] m2_dat_o;
 output        m2_ack_o;
 // Interface against masters (textblit)
 input         m3_read_request_i;
-input  [31:WID==256?5:WID==128?4:WID==64?3:2] m3_addr_i;
+input  [31:0] m3_addr_i;
 input   [WID/8-1:0] m3_sel_i;
 output [WID-1:0] m3_dat_o;
 output        m3_ack_o;
 
 // Master ins -> |MUX> -> these wires
 wire        rreq_w;
-wire [31:WID==256?5:WID==128?4:WID==64?3:2] addr_w;
+wire [31:0] addr_w;
 wire  [WID/8-1:0] sel_w;
 // Slave ins -> |MUX> -> these wires
 wire [WID-1:0] dat_w;
@@ -156,11 +156,11 @@ assign write_request_o = master_sel[3];
 
 always_comb
 casez(master_sel)
-5'b1????:	addr_o <= {m3_addr_i,5'h0};
-5'b01???:	addr_o <= {mw_addr_i,5'h0};
-5'b001??:	addr_o <= {m2_addr_i,5'h0};
-5'b0001?:	addr_o <= {m1_addr_i,5'h0};
-5'b00001:	addr_o <= {m0_addr_i,5'h0};
+5'b1????:	addr_o <= m3_addr_i;
+5'b01???:	addr_o <= mw_addr_i;
+5'b001??:	addr_o <= m2_addr_i;
+5'b0001?:	addr_o <= m1_addr_i;
+5'b00001:	addr_o <= m0_addr_i;
 default:	addr_o <= 32'h0;
 endcase
 

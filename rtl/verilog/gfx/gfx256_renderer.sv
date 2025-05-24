@@ -38,8 +38,8 @@ input clk_i;
 input rst_i;
 
 // Render target information, used for checking out of bounds and stride when writing pixels
-input            [31:4] target_base_i;
-input            [31:4] zbuffer_base_i;
+input            [31:0] target_base_i;
+input            [31:0] zbuffer_base_i;
 input [point_width-1:0] target_size_x_i;
 input [point_width-1:0] target_size_y_i;
 input [point_width-1:0] target_x0_i;
@@ -57,7 +57,7 @@ input      write_i;
 output reg write_o;
 
 // Output registers connected to the wbm
-output reg  [31:5] render_addr_o;
+output reg  [31:0] render_addr_o;
 output reg  [31:0] render_sel_o;
 output reg [255:0] render_dat_o;
 
@@ -78,8 +78,8 @@ input      ack_i;
 //reg [31:0] pixel_offset;
 //always_comb
 //	pixel_offset = fnPixelOffset(color_depth_i,(target_size_x_i*pixel_y_i + pixel_x_i));
-wire [31:5] target_addr;
-wire [31:5] zbuffer_addr;
+wire [31:0] target_addr;
+wire [31:0] zbuffer_addr;
 wire [7:0] tmb;
 gfx_calc_address #(.SW(256)) ugfxca1
 (

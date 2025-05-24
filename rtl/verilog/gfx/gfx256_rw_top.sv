@@ -60,7 +60,7 @@ wire wbmreader_sint;
 wire vector_wbs_ack;
 wire transform_wbs_ack;
 
-wire            [31:5] target_base_reg;
+wire            [31:0] target_base_reg;
 wire [point_width-1:0] target_size_x_reg;
 wire [point_width-1:0] target_size_y_reg;
 wire [point_width-1:0] target_x0_reg;
@@ -68,11 +68,11 @@ wire [point_width-1:0] target_y0_reg;
 wire [point_width-1:0] target_x1_reg;
 wire [point_width-1:0] target_y1_reg;
 
-wire            [31:5] wbs_fragment_tex0_base;
+wire            [31:0] wbs_fragment_tex0_base;
 wire [point_width-1:0] wbs_fragment_tex0_size_x;
 wire [point_width-1:0] wbs_fragment_tex0_size_y;
 
-wire [31:5] render_wbmwriter_addr;
+wire [31:0] render_wbmwriter_addr;
 wire [31:0] render_wbmwriter_sel;
 wire [255:0] render_wbmwriter_dat;
 
@@ -145,14 +145,14 @@ wire [31:0] colorkey_reg;
 wire        clipping_enable_reg;
 wire        inside_reg;
 wire        zbuffer_enable_reg;
-wire [31:4] zbuffer_base_reg;
+wire [31:0] zbuffer_base_reg;
 
 wire        wbs_transform_transform;
 wire        wbs_transform_forward;
 
 wire        raster_wbs_ack;
 
-wire [31:5] font_table_base_reg;
+wire [31:0] font_table_base_reg;
 wire [15:0] font_id_reg;
 wire [15:0] char_code_reg;
 
@@ -524,7 +524,7 @@ gfx256_textblit textblit
 
 // Connected through arbiter
 wire        wbmreader_clip_z_ack;
-wire [31:5] clip_wbmreader_z_addr;
+wire [31:0] clip_wbmreader_z_addr;
 wire [255:0] wbmreader_clip_z_data;
 wire  [31:0] clip_wbmreader_z_sel;
 wire        clip_wbmreader_z_request;
@@ -649,7 +649,7 @@ wire            [31:0] blender_render_color;
 
 // Connected through arbiter
 wire        wbmreader_blender_target_ack;
-wire [31:5] blender_wbmreader_target_addr;
+wire [31:0] blender_wbmreader_target_addr;
 wire [255:0] wbmreader_blender_target_data;
 wire [31:0] blender_wbmreader_target_sel;
 wire        blender_wbmreader_target_request;
@@ -718,7 +718,7 @@ gfx256_renderer renderer (
 defparam renderer.point_width = point_width;
 
 wire        wbmreader_arbiter_ack;
-wire [31:5] arbiter_wbmreader_addr;
+wire [31:0] arbiter_wbmreader_addr;
 wire [255:0] wbmreader_arbiter_data;
 wire [255:0] wbmwriter_arbiter_data;
 wire [31:0] arbiter_wbmreader_sel;
@@ -762,7 +762,7 @@ gfx256_wbm_readwrite_arbiter wbm_arbiter (
   .m2_ack_o          (wbmreader_blender_target_ack),
   // Interface against masters (textblit)
   .m3_read_request_i(textblit_read_request),
-  .m3_addr_i				(textblit_adr_o[31:5]),
+  .m3_addr_i				(textblit_adr_o[31:0]),
   .m3_sel_i					(textblit_sel_o),
   .m3_dat_o				  (textblit_dat_i),
   .m3_ack_o					(textblit_ack_i)

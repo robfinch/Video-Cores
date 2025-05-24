@@ -48,7 +48,7 @@ input                   clk_i;
 input                   rst_i;
 
 input                   blending_enable_i;
-input            [31:5] target_base_i;
+input            [31:0] target_base_i;
 input [point_width-1:0] target_size_x_i;
 input [point_width-1:0] target_size_y_i;
 input             [1:0] color_depth_i;
@@ -65,7 +65,7 @@ output reg              ack_o;
 
 // Interface against wishbone master (reader)
 input             target_ack_i;
-output     [31:5] target_addr_o;
+output     [31:0] target_addr_o;
 input      [31:0] target_data_i;
 output reg [31:0] target_sel_o;
 output reg        target_request_o;

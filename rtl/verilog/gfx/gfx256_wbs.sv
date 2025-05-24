@@ -152,14 +152,14 @@ module gfx256_wbs(
   output [7:0] a1_o;
   output [7:0] a2_o;
 
-  output            [31:5] target_base_o;
+  output            [31:0] target_base_o;
   output [point_width-1:0] target_size_x_o;
   output [point_width-1:0] target_size_y_o;
   output [point_width-1:0] target_x0_o;
   output [point_width-1:0] target_y0_o;
   output [point_width-1:0] target_x1_o;
   output [point_width-1:0] target_y1_o;
-  output            [31:5] tex0_base_o;
+  output            [31:0] tex0_base_o;
   output [point_width-1:0] tex0_size_x_o;
   output [point_width-1:0] tex0_size_y_o;
 
@@ -401,14 +401,14 @@ module gfx256_wbs(
   end
 
   // Assign target and texture signals
-  assign target_base_o   = target_base_reg[31:3];
+  assign target_base_o   = target_base_reg[31:0];
   assign target_size_x_o = target_size_x_reg[point_width-1:0];
   assign target_size_y_o = target_size_y_reg[point_width-1:0];
   assign target_x0_o     = target_x0_reg[point_width-1:0];
   assign target_y0_o     = target_y0_reg[point_width-1:0];
   assign target_x1_o     = target_x1_reg[point_width-1:0];
   assign target_y1_o     = target_y1_reg[point_width-1:0];
-  assign tex0_base_o     = tex0_base_reg[31:3];
+  assign tex0_base_o     = tex0_base_reg[31:0];
   assign tex0_size_x_o   = tex0_size_x_reg[point_width-1:0];
   assign tex0_size_y_o   = tex0_size_y_reg[point_width-1:0];
 

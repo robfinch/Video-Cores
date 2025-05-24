@@ -60,7 +60,7 @@ output sint_o;     // non recoverable error, interrupt host
 input read_request_i;
 input write_request_i;
 
-input [31:5] texture_addr_i;
+input [31:0] texture_addr_i;
 input [31:0] texture_sel_i;
 output reg [255:0] texture_dat_o;
 input [255:0] texture_dat_i;
@@ -82,13 +82,13 @@ function fnMatch;
 input [3:0] nn;
 input rw;
 input [31:0] sel;
-input [31:5] adr;
+input [31:0] adr;
 input [255:0] dat;
 begin
 	fnMatch = 'd0;
 	if (cmdv[nn]) begin
 		if (rw == cmdout[nn].we) begin
-			if (adr==cmdout[nn].vadr[31:5]) begin
+			if (adr==cmdout[nn].vadr[31:0]) begin
 				if (rw) begin
 					// Check only the lanes that are being accessed.
 					casez(sel)
@@ -202,8 +202,8 @@ begin
 	  	wbm_req.stb <= 1'b1;
 	  	wbm_req.we <= write_request_i;
 	  	wbm_req.sel <= texture_sel_i;
-	  	wbm_req.vadr <= {texture_addr_i[31:5],5'd0};
-	  	wbm_req.padr <= {texture_addr_i[31:5],5'd0};
+	  	wbm_req.vadr <= texture_addr_i;
+	  	wbm_req.padr <= texture_addr_i;
 	  	wbm_req.dat <= texture_dat_i;
 	  end
 	end
