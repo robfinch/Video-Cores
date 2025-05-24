@@ -231,8 +231,12 @@ module gfx256_wbs(
   wire acc, acc32, reg_acc, reg_wacc;
 
   // State machine variables
-  reg state;
-  parameter wait_state = 1'b0, busy_state = 1'b1;
+  typedef enum logic [1:0] 
+  {
+  	wait_state = 2'd0,
+  	busy_state = 2'd1
+  } wbs_state_e;
+  wbs_state_e state;
 
   //
   // Module body
@@ -392,8 +396,8 @@ module gfx256_wbs(
     status_reg <= 32'h00000000;
   else
   begin
-    status_reg[GFX_STAT_BUSY] <= (state == busy_state);
-    status_reg[31:16]         <= instruction_fifo_count;
+    status_reg[GFX_STAT_BUSY] <= (state != wait_state);
+    status_reg[31:16] <= instruction_fifo_count;
   end
 
   // Assign target and texture signals
@@ -422,7 +426,7 @@ module gfx256_wbs(
   assign dest_pixel_x_o[point_width-1:-subpixel_width] = $signed(dest_pixel_pos_x_reg);
   assign dest_pixel_y_o[point_width-1:-subpixel_width] = $signed(dest_pixel_pos_y_reg);
   assign dest_pixel_z_o[point_width-1:-subpixel_width] = $signed(dest_pixel_pos_z_reg);
-  assign dest_pixel_id_o                               = active_point;
+  assign dest_pixel_id_o = active_point;
 
   // Assign matrix signals
   assign aa_o = $signed(aa_reg);
@@ -468,21 +472,26 @@ module gfx256_wbs(
   assign clipping_enable_o  = control_reg[GFX_CTRL_CLIPPING];
   assign zbuffer_enable_o   = control_reg[GFX_CTRL_ZBUFFER ];
 
-  assign rect_write_o       = control_reg[GFX_CTRL_RECT    ];
-  assign line_write_o       = control_reg[GFX_CTRL_LINE    ];
-  assign triangle_write_o   = control_reg[GFX_CTRL_TRI     ];
-  assign curve_write_o      = control_reg[GFX_CTRL_CURVE   ];
   assign interpolate_o      = control_reg[GFX_CTRL_INTERP  ];
   assign inside_o           = control_reg[GFX_CTRL_INSIDE  ];
-  assign char_write_o				= control_reg[GFX_CTRL_CHAR    ];
 
   assign active_point       = control_reg[GFX_CTRL_ACTIVE_POINT+1:GFX_CTRL_ACTIVE_POINT];
-  assign forward_point_o    = control_reg[GFX_CTRL_FORWARD_POINT];
-  assign transform_point_o  = control_reg[GFX_CTRL_TRANSFORM_POINT];
   
   assign font_table_base_o  = font_table_base_reg;
   assign font_id_o					= font_id_reg;
   assign char_code_o				= char_code_reg;
+
+	// The following signals should just pulse for one controller clock cycle.
+	// This works assuming the controller clock is at least as fast as the slave bus clock.
+	// With a slow slave bus clock, the output of the control reg cannot be used directly,
+	// it would take too long to reset.
+	edge_det ued1 (.rst(rst_i), .clk(clk_i), .ce(1'b1), .i(control_reg[GFX_CTRL_RECT]), .pe(rect_write_o), .ne(), .ee());
+	edge_det ued2 (.rst(rst_i), .clk(clk_i), .ce(1'b1), .i(control_reg[GFX_CTRL_LINE]), .pe(line_write_o), .ne(), .ee());
+	edge_det ued3 (.rst(rst_i), .clk(clk_i), .ce(1'b1), .i(control_reg[GFX_CTRL_TRI]), .pe(triangle_write_o), .ne(), .ee());
+	edge_det ued4 (.rst(rst_i), .clk(clk_i), .ce(1'b1), .i(control_reg[GFX_CTRL_CURVE]), .pe(curve_write_o), .ne(), .ee());
+	edge_det ued5 (.rst(rst_i), .clk(clk_i), .ce(1'b1), .i(control_reg[GFX_CTRL_CHAR]), .pe(char_write_o), .ne(), .ee());
+	edge_det ued6 (.rst(rst_i), .clk(clk_i), .ce(1'b1), .i(control_reg[GFX_CTRL_FORWARD_POINT]), .pe(forward_point_o), .ne(), .ee());
+	edge_det ued7 (.rst(rst_i), .clk(clk_i), .ce(1'b1), .i(control_reg[GFX_CTRL_TRANSFORM_POINT]), .pe(transform_point_o), .ne(), .ee());
 
   // decode status register TODO
 
@@ -561,11 +570,8 @@ module gfx256_wbs(
 
       busy_state:
       	begin
-	        if(rect_write_o | line_write_o | triangle_write_o | char_write_o |
-	           forward_point_o | transform_point_o)
-	          state <= busy_state;
 	        // If a pipeline operation is finished, go back to wait state
-	        else if(pipeline_ack_i | transform_ack_i)
+	        if(pipeline_ack_i | transform_ack_i)
 	          state <= wait_state;
         end
     endcase
@@ -586,7 +592,7 @@ module gfx256_wbs(
     else
       fifo_read_ack <= instruction_fifo_rreq & !fifo_read_ack;
 
-  wire ready_next_cycle = (state == wait_state) & ~rect_write_o & ~line_write_o & ~triangle_write_o & ~forward_point_o & ~transform_point_o;
+  wire ready_next_cycle = (state == wait_state) & ~rect_write_o & ~line_write_o & ~triangle_write_o & ~char_write_o & ~forward_point_o & ~transform_point_o;
   assign instruction_fifo_rreq = instruction_fifo_valid_out & ~fifo_read_ack & ready_next_cycle;
 
   always_ff @(posedge wbs_clk_i)
