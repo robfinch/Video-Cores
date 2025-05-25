@@ -78,6 +78,8 @@ module gfx256_wbs(
   inside_o,
   zbuffer_enable_o,
   zbuffer_base_o,
+
+	point_write_o,
  
   font_table_base_o,
   font_id_o,
@@ -191,9 +193,11 @@ module gfx256_wbs(
   output        inside_o;
   output        zbuffer_enable_o;
 
-  output [31:5] zbuffer_base_o;
-  
-  output [31:5] font_table_base_o;
+  output [31:0] zbuffer_base_o;
+
+	output point_write_o;
+
+  output [31:0] font_table_base_o;
   output [15:0] font_id_o;
   output [15:0] char_code_o;
   output char_write_o;
@@ -326,55 +330,56 @@ module gfx256_wbs(
     else if (instruction_fifo_rreq)
     begin
       case (instruction_fifo_q_adr) // synopsis full_case parallel_case
-        GFX_CONTROL          : control_reg            <= instruction_fifo_q_data;
-        GFX_TARGET_BASE      : target_base_reg        <= instruction_fifo_q_data;
-        GFX_TARGET_SIZE_X    : target_size_x_reg      <= instruction_fifo_q_data;
-        GFX_TARGET_SIZE_Y    : target_size_y_reg      <= instruction_fifo_q_data;
-        GFX_TARGET_X0				 : target_x0_reg          <= instruction_fifo_q_data;
-        GFX_TARGET_X1				 : target_x0_reg          <= instruction_fifo_q_data;
-        GFX_TARGET_Y0				 : target_y0_reg          <= instruction_fifo_q_data;
-        GFX_TARGET_Y1				 : target_y1_reg          <= instruction_fifo_q_data;
-        GFX_TEX0_BASE        : tex0_base_reg          <= instruction_fifo_q_data;
-        GFX_TEX0_SIZE_X      : tex0_size_x_reg        <= instruction_fifo_q_data;
-        GFX_TEX0_SIZE_Y      : tex0_size_y_reg        <= instruction_fifo_q_data;
-        GFX_SRC_PIXEL0_X     : src_pixel_pos_0_x_reg  <= instruction_fifo_q_data;
-        GFX_SRC_PIXEL0_Y     : src_pixel_pos_0_y_reg  <= instruction_fifo_q_data;
-        GFX_SRC_PIXEL1_X     : src_pixel_pos_1_x_reg  <= instruction_fifo_q_data;
-        GFX_SRC_PIXEL1_Y     : src_pixel_pos_1_y_reg  <= instruction_fifo_q_data;
-        GFX_DEST_PIXEL_X     : dest_pixel_pos_x_reg   <= $signed(instruction_fifo_q_data);
-        GFX_DEST_PIXEL_Y     : dest_pixel_pos_y_reg   <= $signed(instruction_fifo_q_data);
-        GFX_DEST_PIXEL_Z     : dest_pixel_pos_z_reg   <= $signed(instruction_fifo_q_data);
-        GFX_AA               : aa_reg                 <= $signed(instruction_fifo_q_data);
-        GFX_AB               : ab_reg                 <= $signed(instruction_fifo_q_data);
-        GFX_AC               : ac_reg                 <= $signed(instruction_fifo_q_data);
-        GFX_TX               : tx_reg                 <= $signed(instruction_fifo_q_data);
-        GFX_BA               : ba_reg                 <= $signed(instruction_fifo_q_data);
-        GFX_BB               : bb_reg                 <= $signed(instruction_fifo_q_data);
-        GFX_BC               : bc_reg                 <= $signed(instruction_fifo_q_data);
-        GFX_TY               : ty_reg                 <= $signed(instruction_fifo_q_data);
-        GFX_CA               : ca_reg                 <= $signed(instruction_fifo_q_data);
-        GFX_CB               : cb_reg                 <= $signed(instruction_fifo_q_data);
-        GFX_CC               : cc_reg                 <= $signed(instruction_fifo_q_data);
-        GFX_TZ               : tz_reg                 <= $signed(instruction_fifo_q_data);
-        GFX_CLIP_PIXEL0_X    : clip_pixel_pos_0_x_reg <= instruction_fifo_q_data;
-        GFX_CLIP_PIXEL0_Y    : clip_pixel_pos_0_y_reg <= instruction_fifo_q_data;
-        GFX_CLIP_PIXEL1_X    : clip_pixel_pos_1_x_reg <= instruction_fifo_q_data;
-        GFX_CLIP_PIXEL1_Y    : clip_pixel_pos_1_y_reg <= instruction_fifo_q_data;
-        GFX_COLOR0           : color0_reg             <= instruction_fifo_q_data;
-        GFX_COLOR1           : color1_reg             <= instruction_fifo_q_data;
-        GFX_COLOR2           : color2_reg             <= instruction_fifo_q_data;
-        GFX_U0               : u0_reg                 <= instruction_fifo_q_data;
-        GFX_V0               : v0_reg                 <= instruction_fifo_q_data;
-        GFX_U1               : u1_reg                 <= instruction_fifo_q_data;
-        GFX_V1               : v1_reg                 <= instruction_fifo_q_data;
-        GFX_U2               : u2_reg                 <= instruction_fifo_q_data;
-        GFX_V2               : v2_reg                 <= instruction_fifo_q_data;
-        GFX_ALPHA            : alpha_reg              <= instruction_fifo_q_data;
-        GFX_COLORKEY         : colorkey_reg           <= instruction_fifo_q_data;
-        GFX_ZBUFFER_BASE     : zbuffer_base_reg       <= instruction_fifo_q_data;
-        GFX_FONT_TABLE_BASE	 : font_table_base_reg    <= instruction_fifo_q_data;
-        GFX_FONT_ID					 : font_id_reg            <= instruction_fifo_q_data;
-        GFX_CHAR_CODE				 : char_code_reg					<= instruction_fifo_q_data;
+      GFX_CONTROL          : control_reg            <= instruction_fifo_q_data;
+      GFX_TARGET_BASE      : target_base_reg        <= instruction_fifo_q_data;
+      GFX_TARGET_SIZE_X    : target_size_x_reg      <= instruction_fifo_q_data;
+      GFX_TARGET_SIZE_Y    : target_size_y_reg      <= instruction_fifo_q_data;
+      GFX_TARGET_X0				 : target_x0_reg          <= instruction_fifo_q_data;
+      GFX_TARGET_X1				 : target_x0_reg          <= instruction_fifo_q_data;
+      GFX_TARGET_Y0				 : target_y0_reg          <= instruction_fifo_q_data;
+      GFX_TARGET_Y1				 : target_y1_reg          <= instruction_fifo_q_data;
+      GFX_TEX0_BASE        : tex0_base_reg          <= instruction_fifo_q_data;
+      GFX_TEX0_SIZE_X      : tex0_size_x_reg        <= instruction_fifo_q_data;
+      GFX_TEX0_SIZE_Y      : tex0_size_y_reg        <= instruction_fifo_q_data;
+      GFX_SRC_PIXEL0_X     : src_pixel_pos_0_x_reg  <= instruction_fifo_q_data;
+      GFX_SRC_PIXEL0_Y     : src_pixel_pos_0_y_reg  <= instruction_fifo_q_data;
+      GFX_SRC_PIXEL1_X     : src_pixel_pos_1_x_reg  <= instruction_fifo_q_data;
+      GFX_SRC_PIXEL1_Y     : src_pixel_pos_1_y_reg  <= instruction_fifo_q_data;
+      GFX_DEST_PIXEL_X     : dest_pixel_pos_x_reg   <= $signed(instruction_fifo_q_data);
+      GFX_DEST_PIXEL_Y     : dest_pixel_pos_y_reg   <= $signed(instruction_fifo_q_data);
+      GFX_DEST_PIXEL_Z     : dest_pixel_pos_z_reg   <= $signed(instruction_fifo_q_data);
+      GFX_AA               : aa_reg                 <= $signed(instruction_fifo_q_data);
+      GFX_AB               : ab_reg                 <= $signed(instruction_fifo_q_data);
+      GFX_AC               : ac_reg                 <= $signed(instruction_fifo_q_data);
+      GFX_TX               : tx_reg                 <= $signed(instruction_fifo_q_data);
+      GFX_BA               : ba_reg                 <= $signed(instruction_fifo_q_data);
+      GFX_BB               : bb_reg                 <= $signed(instruction_fifo_q_data);
+      GFX_BC               : bc_reg                 <= $signed(instruction_fifo_q_data);
+      GFX_TY               : ty_reg                 <= $signed(instruction_fifo_q_data);
+      GFX_CA               : ca_reg                 <= $signed(instruction_fifo_q_data);
+      GFX_CB               : cb_reg                 <= $signed(instruction_fifo_q_data);
+      GFX_CC               : cc_reg                 <= $signed(instruction_fifo_q_data);
+      GFX_TZ               : tz_reg                 <= $signed(instruction_fifo_q_data);
+      GFX_CLIP_PIXEL0_X    : clip_pixel_pos_0_x_reg <= instruction_fifo_q_data;
+      GFX_CLIP_PIXEL0_Y    : clip_pixel_pos_0_y_reg <= instruction_fifo_q_data;
+      GFX_CLIP_PIXEL1_X    : clip_pixel_pos_1_x_reg <= instruction_fifo_q_data;
+      GFX_CLIP_PIXEL1_Y    : clip_pixel_pos_1_y_reg <= instruction_fifo_q_data;
+      GFX_COLOR0           : color0_reg             <= instruction_fifo_q_data;
+      GFX_COLOR1           : color1_reg             <= instruction_fifo_q_data;
+      GFX_COLOR2           : color2_reg             <= instruction_fifo_q_data;
+      GFX_U0               : u0_reg                 <= instruction_fifo_q_data;
+      GFX_V0               : v0_reg                 <= instruction_fifo_q_data;
+      GFX_U1               : u1_reg                 <= instruction_fifo_q_data;
+      GFX_V1               : v1_reg                 <= instruction_fifo_q_data;
+      GFX_U2               : u2_reg                 <= instruction_fifo_q_data;
+      GFX_V2               : v2_reg                 <= instruction_fifo_q_data;
+      GFX_ALPHA            : alpha_reg              <= instruction_fifo_q_data;
+      GFX_COLORKEY         : colorkey_reg           <= instruction_fifo_q_data;
+      GFX_ZBUFFER_BASE     : zbuffer_base_reg       <= instruction_fifo_q_data;
+      GFX_FONT_TABLE_BASE	 : font_table_base_reg    <= instruction_fifo_q_data;
+      GFX_FONT_ID					 : font_id_reg            <= instruction_fifo_q_data;
+      GFX_CHAR_CODE				 : char_code_reg					<= instruction_fifo_q_data;
+      default:	;
       endcase
     end
     else
@@ -384,6 +389,7 @@ module gfx256_wbs(
       control_reg[GFX_CTRL_LINE]  <= 1'b0; // Reset line write
       control_reg[GFX_CTRL_TRI]   <= 1'b0; // Reset triangle write
       control_reg[GFX_CTRL_CHAR]  <= 1'b0; // Reset char blit write
+      control_reg[GFX_CTRL_POINT] <= 1'b0; // Reset point write
       // Reset matrix transformation bits
       control_reg[GFX_CTRL_FORWARD_POINT]   <= 1'b0;
       control_reg[GFX_CTRL_TRANSFORM_POINT] <= 1'b0;
@@ -492,6 +498,7 @@ module gfx256_wbs(
 	edge_det ued5 (.rst(rst_i), .clk(clk_i), .ce(1'b1), .i(control_reg[GFX_CTRL_CHAR]), .pe(char_write_o), .ne(), .ee());
 	edge_det ued6 (.rst(rst_i), .clk(clk_i), .ce(1'b1), .i(control_reg[GFX_CTRL_FORWARD_POINT]), .pe(forward_point_o), .ne(), .ee());
 	edge_det ued7 (.rst(rst_i), .clk(clk_i), .ce(1'b1), .i(control_reg[GFX_CTRL_TRANSFORM_POINT]), .pe(transform_point_o), .ne(), .ee());
+	edge_det ued8 (.rst(rst_i), .clk(clk_i), .ce(1'b1), .i(control_reg[GFX_CTRL_POINT]), .pe(point_write_o), .ne(), .ee());
 
   // decode status register TODO
 
@@ -564,7 +571,7 @@ module gfx256_wbs(
     case (state)
       wait_state:
         // Signals that trigger pipeline operations 
-        if(rect_write_o | line_write_o | triangle_write_o | char_write_o |
+        if(rect_write_o | line_write_o | triangle_write_o | char_write_o | point_write_o |
            forward_point_o | transform_point_o)
           state <= busy_state;
 

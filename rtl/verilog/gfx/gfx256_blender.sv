@@ -198,7 +198,7 @@ begin
   begin
     case (state)
 
-      wait_state:
+    wait_state:
       begin
         ack_o <= 1'b0;
 

@@ -216,8 +216,7 @@ begin
     delay1_state:
     	state <= delay2_state;
     delay2_state:
-      if(write_i)
-        state <= write_pixel_state;
+      state <= write_pixel_state;
 
 		write_pixel_state:
 			state <= write_pixel_ack_state;

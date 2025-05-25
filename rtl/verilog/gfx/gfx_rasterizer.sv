@@ -32,7 +32,7 @@ If texturing is enabled, texture coordinates u (horizontal) and v (vertical) are
 When all pixels have been generated and acked, the rasterizer acks the operation and returns to wait state.
 */
 module gfx_rasterizer (clk_i, rst_i,
-  clip_ack_i, interp_ack_i, ack_o,
+  clip_ack_i, interp_ack_i, ack_o, point_write_i,
   rect_write_i, line_write_i, triangle_write_i, interpolate_i, texture_enable_i,
   //source pixel 0 and pixel 1
   src_pixel0_x_i, src_pixel0_y_i, src_pixel1_x_i, src_pixel1_y_i,
@@ -63,6 +63,7 @@ input clip_ack_i;
 input interp_ack_i;
 output reg ack_o;
 
+input point_write_i;
 input rect_write_i;
 input line_write_i;
 input triangle_write_i;
@@ -140,13 +141,18 @@ wire [point_width-1:0] minor_out; // the minor axis
 wire request_next_pixel;
 
 // State machine
+typedef enum logic [2:0] 
+{
+	wait_state = 3'd0,
+	point_state,
+	rect_state,
+	line_state,
+	triangle_state,
+	triangle_final_state,
+	char_state
+} rasterizer_state_e;
+rasterizer_state_e state;
 reg [2:0] state;
-parameter wait_state           = 3'b000,
-          rect_state           = 3'b001,
-          line_state           = 3'b010,
-          triangle_state       = 3'b011,
-          triangle_final_state = 3'b100,
-          char_state = 3'b101;
 
 // Write/ack counter
 reg [delay_width-1:0] ack_counter;
@@ -235,38 +241,48 @@ if(rst_i)
 else
   case (state)
 
-    wait_state:
-      if(triangle_write_i)
-        state <= triangle_state;
-      else if(rect_write_i & !empty_raster) // if request for drawing a rect, go to rect drawing state
-        state <= rect_state;
-      else if(line_write_i)
-        state <= line_state; // if request for drawing a line, go to line drawing state
-      else if (char_write_i)
-      	state <= char_state;
+  wait_state:
+  	case(1'b1)
+  	point_write_i:
+  		state <= point_state;
+    triangle_write_i:
+    	state <= triangle_state;
+    rect_write_i & !empty_raster: // if request for drawing a rect, go to rect drawing state
+      state <= rect_state;
+    line_write_i:
+      state <= line_state; // if request for drawing a line, go to line drawing state
+    char_write_i:
+    	state <= char_state;
+    default: ;
+  	endcase
 
-    rect_state:
-      if(raster_rect_done) // if we are done drawing a rect, go to wait state
-        state <= wait_state;
+	point_state:
+		state <= wait_state;
 
-    line_state:
-      if(!raster_line_busy & !draw_line)  // if we are done drawing a line, go to wait state
-        state <= wait_state;
+  rect_state:
+    if(raster_rect_done) // if we are done drawing a rect, go to wait state
+      state <= wait_state;
 
-    triangle_state:
-      if(triangle_ack & triangle_finished)
-        state <= wait_state;
-      else if(triangle_ack)
-        state <= triangle_final_state;
+  line_state:
+    if(!raster_line_busy & !draw_line)  // if we are done drawing a line, go to wait state
+      state <= wait_state;
 
-    triangle_final_state:
-      if(triangle_finished)
-        state <= wait_state;
-        
-    char_state:
-    	if (char_ack_i)
-    		state <= wait_state;
+  triangle_state:
+    if(triangle_ack & triangle_finished)
+      state <= wait_state;
+    else if(triangle_ack)
+      state <= triangle_final_state;
 
+  triangle_final_state:
+    if(triangle_finished)
+      state <= wait_state;
+      
+  char_state:
+  	if (char_ack_i)
+  		state <= wait_state;
+
+	default:
+		state <= wait_state;
   endcase
 
 // If interpolation is active, only write to interp module if queue is not full. 
@@ -295,37 +311,48 @@ begin
   	ack_o <= 1'b0;
     case (state)
 
-      // Wait for incoming instructions
-      wait_state:
-        
-        if(rect_write_i & !empty_raster) // Start a raster rectangle operation
-        begin
-          ack_o <= 1'b0;
-          clip_write_o <= 1'b1;
-          // Generate pixel coordinates
-          x_counter_o  <= rect_p0_x;
-          y_counter_o  <= rect_p0_y;
-          // Generate texture coordinates
-          u_o <= (($signed(clip_pixel0_x_i) < p0_x) ? 1'b0 :
-                   $signed(clip_pixel0_x_i) - p0_x) + src_pixel0_x_i;
-          v_o <= (($signed(clip_pixel0_y_i) < p0_y) ? 1'b0 :
-                   $signed(clip_pixel0_y_i) - p0_y) + src_pixel0_y_i;
-        end
+    // Wait for incoming instructions
+    wait_state:
+    
+    	if (point_write_i) begin
+				x_counter_o <= p0_x;
+				y_counter_o <= p0_y;
+				clip_write_o <= point_write_i;
+			end
 
-        else if(rect_write_i & empty_raster & !ack_o) // Start a raster rectangle operation
-          ack_o <= 1'b1;
+      else if(rect_write_i & !empty_raster) // Start a raster rectangle operation
+      begin
+        ack_o <= 1'b0;
+        clip_write_o <= 1'b1;
+        // Generate pixel coordinates
+        x_counter_o  <= rect_p0_x;
+        y_counter_o  <= rect_p0_y;
+        // Generate texture coordinates
+        u_o <= (($signed(clip_pixel0_x_i) < p0_x) ? 1'b0 :
+                 $signed(clip_pixel0_x_i) - p0_x) + src_pixel0_x_i;
+        v_o <= (($signed(clip_pixel0_y_i) < p0_y) ? 1'b0 :
+                 $signed(clip_pixel0_y_i) - p0_y) + src_pixel0_y_i;
+      end
 
-        // Start a raster line operation
-        else if(line_write_i) begin
-          draw_line <= 1'b1;
-          ack_o <= 1'b0;
-        end
-        else
-          ack_o <= 1'b0;
+      else if(rect_write_i & empty_raster & !ack_o) // Start a raster rectangle operation
+        ack_o <= 1'b1;
 
+      // Start a raster line operation
+      else if(line_write_i) begin
+        draw_line <= 1'b1;
+        ack_o <= 1'b0;
+      end
+      else
+        ack_o <= 1'b0;
 
-      // Rasterize a rectangle between p0 and p1 (rasterize = generate the pixels)
-      rect_state:
+		point_state:
+			begin
+				clip_write_o <= 1'b0;
+				ack_o <= 1'b1;
+			end
+
+    // Rasterize a rectangle between p0 and p1 (rasterize = generate the pixels)
+    rect_state:
       begin
         if(ack_i) // If our last coordinate was acknowledged by a fragment processor
         begin
@@ -351,7 +378,7 @@ begin
       end
 
       // Rasterize a line between dest_pixel0 and dest_pixel1 (rasterize = generate the pixels)
-      line_state:
+    line_state:
       begin
         draw_line <= 1'b0;
         clip_write_o <= raster_line_busy & valid_out;
@@ -360,7 +387,7 @@ begin
         ack_o <= !raster_line_busy & !draw_line;
       end
 
-      triangle_state:
+    triangle_state:
       if(triangle_ack) begin
         interp_write_o <= 1'b0;
         clip_write_o <= 1'b0;
@@ -387,15 +414,16 @@ begin
         if(triangle_finished)
           ack_o <= 1'b1;
 
-			char_state:
-				if (char_ack_i)
-					ack_o <= 1'b1;
-				else begin
-					x_counter_o <= char_x_i;
-					y_counter_o <= char_y_i;
-					clip_write_o <= char_write_i;
-				end
+		char_state:
+			if (char_ack_i)
+				ack_o <= 1'b1;
+			else begin
+				x_counter_o <= char_x_i;
+				y_counter_o <= char_y_i;
+				clip_write_o <= char_write_i;
+			end
 
+		default:	;
     endcase
   end
 end

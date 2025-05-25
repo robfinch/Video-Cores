@@ -91,8 +91,12 @@ input transform_i, forward_i;
 
 output reg ack_o;
 
-reg state;
-parameter wait_state = 1'b0, transform_state = 1'b1;
+typedef enum logic [1:0] {
+	wait_state = 2'd0,
+	forward_state,
+	transform_state
+} transform_state_e;
+transform_state_e state;
 
 reg signed [2*point_width-1:-subpixel_width*2] aax;
 reg signed [2*point_width-1:-subpixel_width*2] aby;
@@ -108,30 +112,30 @@ always_ff @(posedge clk_i)
 if(rst_i)
 begin
   // Initialize registers
-  ack_o             <= 1'b0;
-  p0_x_o            <= 1'b0;
-  p0_y_o            <= 1'b0;
-  p0_z_o            <= 1'b0;
-  p1_x_o            <= 1'b0;
-  p1_y_o            <= 1'b0;
-  p1_z_o            <= 1'b0;
-  p2_x_o            <= 1'b0;
-  p2_y_o            <= 1'b0;
-  p2_z_o            <= 1'b0;
+  ack_o  <= 1'b0;
+  p0_x_o <= 1'b0;
+  p0_y_o <= 1'b0;
+  p0_z_o <= 1'b0;
+  p1_x_o <= 1'b0;
+  p1_y_o <= 1'b0;
+  p1_z_o <= 1'b0;
+  p2_x_o <= 1'b0;
+  p2_y_o <= 1'b0;
+  p2_z_o <= 1'b0;
 
-  aax               <= 1'b0;
-  aby               <= 1'b0;
-  acz               <= 1'b0;
-  bax               <= 1'b0;
-  bby               <= 1'b0;
-  bcz               <= 1'b0;
-  cax               <= 1'b0;
-  cby               <= 1'b0;
-  ccz               <= 1'b0;
+  aax <= 1'b0;
+  aby <= 1'b0;
+  acz <= 1'b0;
+  bax <= 1'b0;
+  bby <= 1'b0;
+  bcz <= 1'b0;
+  cax <= 1'b0;
+  cby <= 1'b0;
+  ccz <= 1'b0;
 end
 else
   case(state)
-    wait_state:
+  wait_state:
     begin
       ack_o <= 1'b0;
 
@@ -149,7 +153,6 @@ else
       end
       // Forward the point
       else if(forward_i) begin
-	      ack_o <= 1'b1;
       	case(point_id_i)
       	2'b00:
 	        begin
@@ -174,7 +177,10 @@ else
       end
     end
 
-    transform_state:
+  forward_state:
+  	ack_o <= 1'b1;
+
+  transform_state:
     begin
       ack_o <= 1'b1;
 			case(point_id_i)
@@ -199,6 +205,7 @@ else
       default:	;
     	endcase
     end
+  default:	;
   endcase
 
 wire [subpixel_width-1:0] zeroes = 1'b0;
@@ -217,13 +224,19 @@ if(rst_i)
   state <= wait_state;
 else
   case(state)
-    wait_state:
-      if(transform_i)
-        state <= transform_state;
+  wait_state:
+    if(transform_i)
+      state <= transform_state;
+    else if(forward_i)
+      state <= forward_state;
 
-    transform_state:
-      state <= wait_state;
+  forward_state:
+    state <= wait_state;
+
+  transform_state:
+    state <= wait_state;
+  default:
+  	state <= wait_state;
   endcase
 
 endmodule
-

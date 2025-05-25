@@ -112,13 +112,14 @@ typedef enum logic [2:0] {
 	delay2_state,
 	delay3_state,
 	z_read_state,
-	write_pixel_state
+	write_pixel_state,
+	nack_state
 } clip_state_e;
 clip_state_e state;
 
 // Calculate address of target pixel
 // Addr[31:2] = Base + (Y*width + X) * ppb
-wire [31:0] pixel_offset;
+//wire [31:0] pixel_offset;
 wire [7:0] mb;
 gfx_calc_address #(.SW(256)) ugfxca1
 (
@@ -150,7 +151,7 @@ memory_to_color256 memory_proc(
 );
 
 // Forward texture coordinates, color, alpha etc
-always @(posedge clk_i)
+always_ff @(posedge clk_i)
 if(rst_i)
 begin
   u_o              <= 1'b0;
@@ -226,17 +227,18 @@ begin
 
   wait_state:
 	  begin
-	    if(write_i)
-	      ack_o <= discard_pixel;
-	    else
-	      ack_o <= 1'b0;
+      if(write_i)
+        ack_o <= discard_pixel;
+      if(write_i & zbuffer_enable_i) begin
+      	if (discard_pixel)
+        	z_request_o <= 1'b0;
+      end
+      else if(write_i)
+        write_o <= ~discard_pixel;
 	  end
 
   delay2_state:
-    if(zbuffer_enable_i)
-      z_request_o <= ~discard_pixel;
-    else
-      write_o <= ~discard_pixel;
+    z_request_o <= 1'b1;
 
   // Do a depth check. If it fails, discard pixel, ack and go back to wait. If it succeeds, go to write state
   z_read_state:
@@ -256,6 +258,9 @@ begin
 	      ack_o <= 1'b1;    
 	  end
 
+	nack_state:
+		ack_o <= 1'b0;
+
 	default:	;
   endcase
 
@@ -271,17 +276,20 @@ else
   case (state)
 
   wait_state:
-    if(write_i & ~discard_pixel)
-    	state <= delay1_state;
+    if(write_i & ~discard_pixel) begin
+    	if (zbuffer_enable_i)
+    		state <= delay1_state;
+    	else
+    		state <= write_pixel_state;
+    end
+    else if (write_i)
+    	state <= nack_state;
 
 	// Two cycle delay is for address calc. 
   delay1_state:
   	state <= delay2_state;
   delay2_state:
-    if(zbuffer_enable_i)
-      state <= z_read_state;
-    else 
-      state <= write_pixel_state;
+    state <= z_read_state;
 
   z_read_state:
     if(z_ack_i)
@@ -289,7 +297,10 @@ else
 
   write_pixel_state:
     if(ack_i)
-      state <= wait_state;
+      state <= nack_state;
+
+	nack_state:
+		state <= wait_state;
 
 	default:
 		state <= wait_state;

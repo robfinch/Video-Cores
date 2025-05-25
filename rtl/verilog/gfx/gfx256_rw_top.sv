@@ -79,6 +79,7 @@ wire [255:0] render_wbmwriter_dat;
 wire [1:0] color_depth_reg;
 
 wire render_wbmwriter_memory_pixel_write;
+wire wbs_raster_point_write;
 wire wbs_raster_rect_write;
 wire wbs_raster_line_write;
 wire wbs_raster_triangle_write;
@@ -222,6 +223,7 @@ gfx256_wbs wb_databus(
 
   .color_depth_o     (color_depth_reg),
 
+	.point_write_o		 (wbs_raster_point_write),
   .rect_write_o      (wbs_raster_rect_write),
   .line_write_o      (wbs_raster_line_write),
   .triangle_write_o  (wbs_raster_triangle_write),
@@ -330,6 +332,7 @@ gfx_rasterizer rasterizer0 (
   .interp_ack_i     (interp_raster_ack),
   .ack_o            (raster_wbs_ack),
 
+	.point_write_i	  (wbs_raster_point_write),
   .rect_write_i	    (wbs_raster_rect_write),
   .line_write_i     (wbs_raster_line_write),
   .triangle_write_i (wbs_raster_triangle_write),
