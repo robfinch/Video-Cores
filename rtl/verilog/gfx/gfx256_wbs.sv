@@ -91,10 +91,12 @@ module gfx256_wbs(
   `include "gfx_params.v"
 
   // Adjust these parameters in gfx_top!
-  parameter REG_ADR_HIBIT = 9;
+  parameter REG_ADR_HIBIT = 7;
   parameter point_width = 16;
   parameter subpixel_width = 16;
-  parameter fifo_depth = 10;
+  parameter fifo_depth = 11;
+  parameter GR_WIDTH = 32'd1920;
+  parameter GR_HEIGHT = 32'd1080;
 
   //
   // inputs & outputs
@@ -229,6 +231,16 @@ module gfx256_wbs(
 	reg        [31:0] char_code_reg;
   wire        [1:0] active_point;
 
+  /* Instruction fifo */
+  wire instruction_fifo_wreq;
+  wire [31:0] instruction_fifo_q_data;
+  wire instruction_fifo_rreq;
+  wire instruction_fifo_valid_out;
+  reg fifo_read_ack;
+  reg was_fifo_rd;
+  wire [REG_ADR_HIBIT:0] instruction_fifo_q_adr;
+  wire [fifo_depth:0] instruction_fifo_count;
+
   // Wishbone access wires
   wb_cmd_request32_t [15:0] tran_in;
 
@@ -246,19 +258,23 @@ module gfx256_wbs(
   // Module body
   //
 
+	wire full, empty;
+	wire wr_ack;
+
   // wishbone access signals
-  assign acc      = cs_i & wbs_req.cyc & wbs_req.stb;
-  assign acc32    = (wbs_req.sel[3:0] == 4'b1111);
-  assign reg_acc  = acc & acc32;
+  assign acc = cs_i & wbs_req.cyc & wbs_req.stb;
+  assign acc32 = (wbs_req.sel[3:0] == 4'b1111);
+  assign reg_acc = acc & acc32;
   assign reg_wacc = reg_acc & wbs_req.we;
 
   // Generate wishbone ack
-  wire rdy3;
-  delay3 #(.WID(1)) udly1 (.clk(wbs_clk_i), .ce(1'b1), .i(acc), .o(rdy3));
+  wire rdy3, rdy3pe;
+  delay2 #(.WID(1)) udly1 (.clk(wbs_clk_i), .ce(1'b1), .i(acc), .o(rdy3));
+	edge_det ued10 (.rst(rst_i), .clk(wbs_clk_i), .ce(1'b1), .i(rdy3), .pe(rdy3pe), .ne(), .ee());
   always_comb
   begin
   	wbs_resp = {$bits(wb_cmd_response32_t){1'b0}};
-  	wbs_resp.ack = (acc & wbs_req.we) ? 1'b1 : acc & rdy3;
+  	wbs_resp.ack = (acc & wbs_req.we) ? wr_ack : acc & rdy3pe;
   	wbs_resp.rty = 1'b0;
   	wbs_resp.err = acc & ~acc32 ? wishbone_pkg::ERR : wishbone_pkg::OKAY;
   	wbs_resp.dat = acc ? dato : 32'd0;
@@ -272,18 +288,27 @@ module gfx256_wbs(
     inta_o <= writer_sint_i | reader_sint_i; // | other_int | (int_enable & int) | ...
 
   // generate registers
-  always_ff @(posedge wbs_clk_i)
+  always_ff @(posedge clk_i)
   begin : gen_regs
+    /* To prevent entering an infinite write cycle, the bits that start pipeline operations are cleared here */
+    control_reg[GFX_CTRL_RECT]  <= 1'b0; // Reset rect write
+    control_reg[GFX_CTRL_LINE]  <= 1'b0; // Reset line write
+    control_reg[GFX_CTRL_TRI]   <= 1'b0; // Reset triangle write
+    control_reg[GFX_CTRL_CHAR]  <= 1'b0; // Reset char blit write
+    control_reg[GFX_CTRL_POINT] <= 1'b0; // Reset point write
+    // Reset matrix transformation bits
+    control_reg[GFX_CTRL_FORWARD_POINT]   <= 1'b0;
+    control_reg[GFX_CTRL_TRANSFORM_POINT] <= 1'b0;
     if (rst_i)
       begin
         control_reg             <= 32'h00000001;
         target_base_reg         <= 32'h00000000;
-        target_size_x_reg       <= 32'h00000000;
-        target_size_y_reg       <= 32'h00000000;
+        target_size_x_reg       <= GR_WIDTH;
+        target_size_y_reg       <= GR_HEIGHT;
         target_x0_reg           <= 32'h00000000;
         target_y0_reg           <= 32'h00000000;
-        target_x1_reg           <= 32'h00000000;
-        target_y1_reg           <= 32'h00000000;
+        target_x1_reg           <= GR_WIDTH;
+        target_y1_reg           <= GR_HEIGHT;
         tex0_base_reg           <= 32'h00000000;
         tex0_size_x_reg         <= 32'h00000000;
         tex0_size_y_reg         <= 32'h00000000;
@@ -308,8 +333,8 @@ module gfx256_wbs(
         tz_reg                  <= 32'h00000000;
         clip_pixel_pos_0_x_reg  <= 32'h00000000;
         clip_pixel_pos_0_y_reg  <= 32'h00000000;
-        clip_pixel_pos_1_x_reg  <= 32'h00000000;
-        clip_pixel_pos_1_y_reg  <= 32'h00000000;
+        clip_pixel_pos_1_x_reg  <= GR_WIDTH;
+        clip_pixel_pos_1_y_reg  <= GR_HEIGHT;
         color0_reg              <= 32'h00000000;
         color1_reg              <= 32'h00000000;
         color2_reg              <= 32'h00000000;
@@ -327,8 +352,7 @@ module gfx256_wbs(
         char_code_reg					  <= 32'h0;
       end
     // Read fifo to write to registers
-    else if (instruction_fifo_rreq)
-    begin
+    else if (was_fifo_rd & instruction_fifo_valid_out) begin
       case (instruction_fifo_q_adr) // synopsis full_case parallel_case
       GFX_CONTROL          : control_reg            <= instruction_fifo_q_data;
       GFX_TARGET_BASE      : target_base_reg        <= instruction_fifo_q_data;
@@ -382,22 +406,10 @@ module gfx256_wbs(
       default:	;
       endcase
     end
-    else
-    begin
-      /* To prevent entering an infinite write cycle, the bits that start pipeline operations are cleared here */
-      control_reg[GFX_CTRL_RECT]  <= 1'b0; // Reset rect write
-      control_reg[GFX_CTRL_LINE]  <= 1'b0; // Reset line write
-      control_reg[GFX_CTRL_TRI]   <= 1'b0; // Reset triangle write
-      control_reg[GFX_CTRL_CHAR]  <= 1'b0; // Reset char blit write
-      control_reg[GFX_CTRL_POINT] <= 1'b0; // Reset point write
-      // Reset matrix transformation bits
-      control_reg[GFX_CTRL_FORWARD_POINT]   <= 1'b0;
-      control_reg[GFX_CTRL_TRANSFORM_POINT] <= 1'b0;
-    end
   end
 
   // generate status register
-  always_ff @(posedge wbs_clk_i)
+  always_ff @(posedge clk_i)
   if (rst_i)
     status_reg <= 32'h00000000;
   else
@@ -407,27 +419,27 @@ module gfx256_wbs(
   end
 
   // Assign target and texture signals
-  assign target_base_o   = target_base_reg[31:0];
+  assign target_base_o = target_base_reg[31:0];
   assign target_size_x_o = target_size_x_reg[point_width-1:0];
   assign target_size_y_o = target_size_y_reg[point_width-1:0];
-  assign target_x0_o     = target_x0_reg[point_width-1:0];
-  assign target_y0_o     = target_y0_reg[point_width-1:0];
-  assign target_x1_o     = target_x1_reg[point_width-1:0];
-  assign target_y1_o     = target_y1_reg[point_width-1:0];
-  assign tex0_base_o     = tex0_base_reg[31:0];
-  assign tex0_size_x_o   = tex0_size_x_reg[point_width-1:0];
-  assign tex0_size_y_o   = tex0_size_y_reg[point_width-1:0];
+  assign target_x0_o = target_x0_reg[point_width-1:0];
+  assign target_y0_o = target_y0_reg[point_width-1:0];
+  assign target_x1_o = target_x1_reg[point_width-1:0];
+  assign target_y1_o = target_y1_reg[point_width-1:0];
+  assign tex0_base_o = tex0_base_reg[31:0];
+  assign tex0_size_x_o = tex0_size_x_reg[point_width-1:0];
+  assign tex0_size_y_o = tex0_size_y_reg[point_width-1:0];
 
   // Assign source pixel signals
-  assign src_pixel0_x_o      = src_pixel_pos_0_x_reg[point_width-1:0];
-  assign src_pixel0_y_o      = src_pixel_pos_0_y_reg[point_width-1:0];
-  assign src_pixel1_x_o      = src_pixel_pos_1_x_reg[point_width-1:0];
-  assign src_pixel1_y_o      = src_pixel_pos_1_y_reg[point_width-1:0];
+  assign src_pixel0_x_o = src_pixel_pos_0_x_reg[point_width-1:0];
+  assign src_pixel0_y_o = src_pixel_pos_0_y_reg[point_width-1:0];
+  assign src_pixel1_x_o = src_pixel_pos_1_x_reg[point_width-1:0];
+  assign src_pixel1_y_o = src_pixel_pos_1_y_reg[point_width-1:0];
   // Assign clipping pixel signals
-  assign clip_pixel0_x_o     = clip_pixel_pos_0_x_reg[point_width-1:0];
-  assign clip_pixel0_y_o     = clip_pixel_pos_0_y_reg[point_width-1:0];
-  assign clip_pixel1_x_o     = clip_pixel_pos_1_x_reg[point_width-1:0];
-  assign clip_pixel1_y_o     = clip_pixel_pos_1_y_reg[point_width-1:0];
+  assign clip_pixel0_x_o = clip_pixel_pos_0_x_reg[point_width-1:0];
+  assign clip_pixel0_y_o = clip_pixel_pos_0_y_reg[point_width-1:0];
+  assign clip_pixel1_x_o = clip_pixel_pos_1_x_reg[point_width-1:0];
+  assign clip_pixel1_y_o = clip_pixel_pos_1_y_reg[point_width-1:0];
   // Assign destination pixel signals
   assign dest_pixel_x_o[point_width-1:-subpixel_width] = $signed(dest_pixel_pos_x_reg);
   assign dest_pixel_y_o[point_width-1:-subpixel_width] = $signed(dest_pixel_pos_y_reg);
@@ -449,43 +461,42 @@ module gfx256_wbs(
   assign tz_o = $signed(tz_reg);
 
   // Assign color signals
-  assign color0_o            = color0_reg;
-  assign color1_o            = color1_reg;
-  assign color2_o            = color2_reg;
+  assign color0_o = color0_reg;
+  assign color1_o = color1_reg;
+  assign color2_o = color2_reg;
 
-  assign u0_o                = u0_reg[point_width-1:0];
-  assign v0_o                = v0_reg[point_width-1:0];
-  assign u1_o                = u1_reg[point_width-1:0];
-  assign v1_o                = v1_reg[point_width-1:0];
-  assign u2_o                = u2_reg[point_width-1:0];
-  assign v2_o                = v2_reg[point_width-1:0];
+  assign u0_o = u0_reg[point_width-1:0];
+  assign v0_o = v0_reg[point_width-1:0];
+  assign u1_o = u1_reg[point_width-1:0];
+  assign v1_o = v1_reg[point_width-1:0];
+  assign u2_o = u2_reg[point_width-1:0];
+  assign v2_o = v2_reg[point_width-1:0];
 
-  assign a0_o                = alpha_reg[31:24];
-  assign a1_o                = alpha_reg[23:16];
-  assign a2_o                = alpha_reg[15:8];
-  assign global_alpha_o      = alpha_reg[7:0];
-  assign colorkey_o          = colorkey_reg;
-  assign zbuffer_base_o      = zbuffer_base_reg[31:3];
-
+  assign a0_o = alpha_reg[31:24];
+  assign a1_o = alpha_reg[23:16];
+  assign a2_o = alpha_reg[15:8];
+  assign global_alpha_o = alpha_reg[7:0];
+  assign colorkey_o = colorkey_reg;
+  assign zbuffer_base_o = zbuffer_base_reg[31:3];
 
 
   // decode control register
-  assign color_depth_o      = control_reg[GFX_CTRL_COLOR_DEPTH+1:GFX_CTRL_COLOR_DEPTH];
+  assign color_depth_o = control_reg[GFX_CTRL_COLOR_DEPTH+1:GFX_CTRL_COLOR_DEPTH];
 
-  assign texture_enable_o   = control_reg[GFX_CTRL_TEXTURE ];
-  assign blending_enable_o  = control_reg[GFX_CTRL_BLENDING];
-  assign colorkey_enable_o  = control_reg[GFX_CTRL_COLORKEY];
-  assign clipping_enable_o  = control_reg[GFX_CTRL_CLIPPING];
-  assign zbuffer_enable_o   = control_reg[GFX_CTRL_ZBUFFER ];
+  assign texture_enable_o = control_reg[GFX_CTRL_TEXTURE ];
+  assign blending_enable_o = control_reg[GFX_CTRL_BLENDING];
+  assign colorkey_enable_o = control_reg[GFX_CTRL_COLORKEY];
+  assign clipping_enable_o = control_reg[GFX_CTRL_CLIPPING];
+  assign zbuffer_enable_o = control_reg[GFX_CTRL_ZBUFFER ];
 
-  assign interpolate_o      = control_reg[GFX_CTRL_INTERP  ];
-  assign inside_o           = control_reg[GFX_CTRL_INSIDE  ];
+  assign interpolate_o = control_reg[GFX_CTRL_INTERP  ];
+  assign inside_o = control_reg[GFX_CTRL_INSIDE  ];
 
-  assign active_point       = control_reg[GFX_CTRL_ACTIVE_POINT+1:GFX_CTRL_ACTIVE_POINT];
+  assign active_point = control_reg[GFX_CTRL_ACTIVE_POINT+1:GFX_CTRL_ACTIVE_POINT];
   
-  assign font_table_base_o  = font_table_base_reg;
-  assign font_id_o					= font_id_reg;
-  assign char_code_o				= char_code_reg;
+  assign font_table_base_o = font_table_base_reg;
+  assign font_id_o = font_id_reg;
+  assign char_code_o = char_code_reg;
 
 	// The following signals should just pulse for one controller clock cycle.
 	// This works assuming the controller clock is at least as fast as the slave bus clock.
@@ -583,60 +594,101 @@ module gfx256_wbs(
         end
     endcase
 
-  /* Instruction fifo */
-  wire        instruction_fifo_wreq;
-  wire [31:0] instruction_fifo_q_data;
-  wire        instruction_fifo_rreq;
-  wire        instruction_fifo_valid_out;
-  reg         fifo_read_ack;
-  reg         fifo_write_ack;
-  wire [REG_ADR_HIBIT:0] instruction_fifo_q_adr;
-  wire    [fifo_depth:0] instruction_fifo_count;
+  wire ready_next_cycle = (state == wait_state) &
+  	~rect_write_o &
+  	~line_write_o &
+  	~triangle_write_o &
+  	~char_write_o &
+  	~point_write_o &
+  	~forward_point_o &
+  	~transform_point_o
+  	;
 
-  always_ff @(posedge wbs_clk_i)
-    if(rst_i)
-      fifo_read_ack <= 1'b0;
-    else
-      fifo_read_ack <= instruction_fifo_rreq & !fifo_read_ack;
-
-  wire ready_next_cycle = (state == wait_state) & ~rect_write_o & ~line_write_o & ~triangle_write_o & ~char_write_o & ~forward_point_o & ~transform_point_o;
-  assign instruction_fifo_rreq = instruction_fifo_valid_out & ~fifo_read_ack & ready_next_cycle;
-
-  always_ff @(posedge wbs_clk_i)
-    if(rst_i)
-      fifo_write_ack <= 1'b0;
-    else
-      fifo_write_ack <= instruction_fifo_wreq ? !fifo_write_ack : reg_wacc;
-
-  assign instruction_fifo_wreq = reg_wacc & ~fifo_write_ack;
+	wire fifo_wr_req;
+	wire wr_rst_busy;
+	wire rd_rst_busy;
+  assign instruction_fifo_rreq = ready_next_cycle && !rd_rst_busy;
+  always_ff @(posedge clk_i)
+  	was_fifo_rd <= instruction_fifo_rreq;
+//	edge_det ued9 (.rst(rst_i), .clk(wbs_clk_i), .ce(1'b1), .i(reg_wacc && !full), .pe(fifo_wr_req), .ne(), .ee());
+	assign instruction_fifo_wreq = reg_wacc && !full && !rst_i && !wr_rst_busy && !rd_rst_busy && !wr_ack;
 
 	reg [31:0] dati;
 	always_comb
 		dati <= wbs_req.dat;
-	/*
-		case(wbs_req.padr[3:2])
-		2'd0:	dati <= wbs_req.data1[31:0];
-		2'd1:	dati <= wbs_req.data1[63:32];
-		2'd2:	dati <= wbs_req.data1[95:64];
-		2'd3:	dati <= wbs_req.data1[127:96];
-		endcase		
-	*/
-  // TODO: 1024 places large enough?
-  basic_fifo instruction_fifo(
-  .clk_i     ( wbs_clk_i ),
-  .rst_i     ( rst_i ),
+		
+	localparam FIFO_WID = 32 + REG_ADR_HIBIT + 1;
 
-  .data_i    ( {REG_ADR, dati} ),
-  .enq_i     ( instruction_fifo_wreq ),
-  .full_o    ( ), // TODO: use?
-  .count_o   ( instruction_fifo_count ),
+// +---------------------------------------------------------------------------------------------------------------------+
+// | USE_ADV_FEATURES     | String             | Default value = 0707.                                                   |
+// |---------------------------------------------------------------------------------------------------------------------|
+// | Enables data_valid, almost_empty, rd_data_count, prog_empty, underflow, wr_ack, almost_full, wr_data_count,         |
+// | prog_full, overflow features.                                                                                       |
+// |                                                                                                                     |
+// |   Setting USE_ADV_FEATURES[0] to 1 enables overflow flag; Default value of this bit is 1                            |
+// |   Setting USE_ADV_FEATURES[1] to 1 enables prog_full flag; Default value of this bit is 1                           |
+// |   Setting USE_ADV_FEATURES[2] to 1 enables wr_data_count; Default value of this bit is 1                            |
+// |   Setting USE_ADV_FEATURES[3] to 1 enables almost_full flag; Default value of this bit is 0                         |
+// |   Setting USE_ADV_FEATURES[4] to 1 enables wr_ack flag; Default value of this bit is 0                              |
+// |   Setting USE_ADV_FEATURES[8] to 1 enables underflow flag; Default value of this bit is 1                           |
+// |   Setting USE_ADV_FEATURES[9] to 1 enables prog_empty flag; Default value of this bit is 1                          |
+// |   Setting USE_ADV_FEATURES[10] to 1 enables rd_data_count; Default value of this bit is 1                           |
+// |   Setting USE_ADV_FEATURES[11] to 1 enables almost_empty flag; Default value of this bit is 0                       |
+// |   Setting USE_ADV_FEATURES[12] to 1 enables data_valid flag; Default value of this bit is 0                         |
+// +---------------------------------------------------------------------------------------------------------------------+
 
-  .data_o    ( {instruction_fifo_q_adr, instruction_fifo_q_data} ),
-  .valid_o   ( instruction_fifo_valid_out ),
-  .deq_i     ( instruction_fifo_rreq )
-  );
+   // xpm_fifo_async: Asynchronous FIFO
+   // Xilinx Parameterized Macro, version 2024.2
 
-defparam instruction_fifo.fifo_width     = REG_ADR_HIBIT+1+32;
-defparam instruction_fifo.fifo_bit_depth = fifo_depth;
-
+   xpm_fifo_async #(
+      .CASCADE_HEIGHT(0),            // DECIMAL
+      .CDC_SYNC_STAGES(2),           // DECIMAL
+      .DOUT_RESET_VALUE("0"),        // String
+      .ECC_MODE("no_ecc"),           // String
+      .EN_SIM_ASSERT_ERR("warning"), // String
+      .FIFO_MEMORY_TYPE("auto"),     // String
+      .FIFO_READ_LATENCY(1),         // DECIMAL
+      .FIFO_WRITE_DEPTH(2048),       // DECIMAL
+      .FULL_RESET_VALUE(0),          // DECIMAL
+      .PROG_EMPTY_THRESH(10),        // DECIMAL
+      .PROG_FULL_THRESH(2040),        // DECIMAL
+      .RD_DATA_COUNT_WIDTH(11),      // DECIMAL
+      .READ_DATA_WIDTH(FIFO_WID),    // DECIMAL
+      .READ_MODE("std"),             // String
+      .RELATED_CLOCKS(0),            // DECIMAL
+      .SIM_ASSERT_CHK(0),            // DECIMAL; 0=disable simulation messages, 1=enable simulation messages
+      .USE_ADV_FEATURES("1014"),     // String
+      .WAKEUP_TIME(0),               // DECIMAL
+      .WRITE_DATA_WIDTH(FIFO_WID),   // DECIMAL
+      .WR_DATA_COUNT_WIDTH(11)       // DECIMAL
+   )
+   xpm_fifo_async_inst (
+      .almost_empty(),
+      .almost_full(),
+      .data_valid(instruction_fifo_valid_out),
+      .dbiterr(),
+      .dout({instruction_fifo_q_adr, instruction_fifo_q_data}),
+      .empty(empty),
+      .full(full),
+      .overflow(),
+      .prog_empty(),
+      .prog_full(),
+      .rd_data_count(),
+      .rd_rst_busy(rd_rst_busy),
+      .sbiterr(),
+      .underflow(),
+      .wr_ack(wr_ack),
+      .wr_data_count(instruction_fifo_count),
+      .wr_rst_busy(wr_rst_busy),
+      .din({REG_ADR, dati}),
+      .injectdbiterr(1'b0),
+      .injectsbiterr(1'b0),
+      .rd_clk(clk_i),
+      .rd_en(instruction_fifo_rreq),
+      .rst(rst_i),
+      .sleep(1'b0),
+      .wr_clk(wbs_clk_i),
+      .wr_en(instruction_fifo_wreq)
+   );
+				
 endmodule

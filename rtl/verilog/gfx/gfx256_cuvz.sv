@@ -110,12 +110,15 @@ output reg [point_width-1:0] x_o;
 output reg [point_width-1:0] y_o;
 
 // Write pixel output signal
-output reg                   write_o;
+output write_o;
 
 // Holds the barycentric coordinates for interpolation
 reg        [point_width:0] factor0;
 reg        [point_width:0] factor1;
 reg        [point_width:0] factor2;
+
+reg write1;
+assign write_o = write1;
 
 // State machine
 reg [1:0] state;
@@ -212,7 +215,7 @@ begin
   if(rst_i)
   begin
     ack_o       <= 1'b0;
-    write_o     <= 1'b0;
+    write1 <= 1'b0;
     x_o         <= 1'b0;
     y_o         <= 1'b0;
     color_o     <= 1'b0;
@@ -227,7 +230,7 @@ begin
   else
     case (state)
 
-      wait_state:
+    wait_state:
       begin
         ack_o     <= 1'b0;
         if(write_i)
@@ -240,11 +243,11 @@ begin
         end
       end
 
-      prep_state:
+    prep_state:
       begin
         // Assign outputs
         // --------------
-        write_o <= 1'b1;
+        write1 <= 1'b1;
         // Texture coordinates
         u_o     <= u[point_width*2-1:point_width];
         v_o     <= v[point_width*2-1:point_width];
@@ -262,11 +265,10 @@ begin
                    {color_r[10+point_width-1:point_width], color_g[10+point_width-1:point_width], color_b[10+point_width-1:point_width]}; // 32 bit
       end
 
-      write_state:
-      begin
-        write_o   <= 1'b0;
-        if(ack_i)
-          ack_o   <= 1'b1;
+    write_state:
+      if (ack_i) begin
+        write1 <= 1'b0;
+        ack_o <= 1'b1;
       end
     endcase
    

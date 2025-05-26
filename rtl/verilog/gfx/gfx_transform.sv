@@ -133,12 +133,11 @@ begin
   cby <= 1'b0;
   ccz <= 1'b0;
 end
-else
+else begin
+  ack_o <= 1'b0;
   case(state)
   wait_state:
     begin
-      ack_o <= 1'b0;
-
       // Begin transformation
       if(transform_i) begin
         aax <= aa * x_i;
@@ -207,6 +206,7 @@ else
     end
   default:	;
   endcase
+end
 
 wire [subpixel_width-1:0] zeroes = 1'b0;
 

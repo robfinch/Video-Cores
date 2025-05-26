@@ -76,15 +76,16 @@ output reg [point_width-1:0] pixel_x_o;
 output reg [point_width-1:0] pixel_y_o;
 output reg signed [point_width-1:0] pixel_z_o;
 output reg            [31:0] pixel_color_o;
-output reg                   write_o;
-input                        ack_i;
+output write_o;
+input ack_i;
+
+reg write1;
 
 // State machine
 typedef enum logic [2:0] {
 	wait_state = 3'd0,
 	delay1_state,
 	delay2_state,
-	delay3_state,
 	target_read_state,
 	target_read_ack_state,
 	write_pixel_state,
@@ -178,14 +179,16 @@ memory_to_color256 memory_proc(
 .sel_o ()
 );
 
+assign write_o = write1;
+
 // Acknowledge when a command has completed
 always_ff @(posedge clk_i)
 begin
   // reset, init component
   if(rst_i)
   begin
-    ack_o            <= 1'b0;
-    write_o          <= 1'b0;
+    ack_o <= 1'b0;
+    write1 <= 1'b0;
     pixel_x_o        <= 1'b0;
     pixel_y_o        <= 1'b0;
     pixel_z_o        <= 1'b0;
@@ -210,7 +213,7 @@ begin
             pixel_y_o     <= y_counter_i;
             pixel_z_o     <= z_i;
             pixel_color_o <= pixel_color_i;
-            write_o       <= 1'b1;
+            write1 <= 1'b1;
           end
           else
           begin
@@ -225,7 +228,7 @@ begin
         if(target_ack_i)
         begin
           // When we receive an ack from memory, calculate the combined color and send the pixel forward in the pipeline (go to write state)
-          write_o <= 1'b1;
+          write1 <= 1'b1;
           pixel_x_o <= x_counter_i;
           pixel_y_o <= y_counter_i;
           pixel_z_o <= z_i;
@@ -242,21 +245,13 @@ begin
         else
           target_request_o <= !wbm_busy_i | target_request_o;
 
-			write_pixel_state:
-        begin
-          pixel_x_o <= x_counter_i;
-          pixel_y_o <= y_counter_i;
-          pixel_z_o <= z_i;
-          pixel_color_o <= pixel_color_i;
-          write_o <= 1'b1;
-        end
-
       // Ack and return to wait state
-      write_pixel_ack_state:
-      begin
-        write_o <= 1'b0;
-        if(ack_i)
-          ack_o <= 1'b1;    
+    write_pixel_ack_state:
+  	  begin
+        if(ack_i) begin
+	        write1 <= 1'b0;
+          ack_o <= 1'b1;
+        end    
       end
 
 		default:	;
@@ -278,25 +273,21 @@ begin
       if(write_i & blending_enable_i)
         state <= delay1_state;
       else if(write_i)
-        state <= delay1_state;
+        state <= write_pixel_ack_state;
         
     delay1_state:
     	state <= delay2_state;
     delay2_state:
-      if(write_i & blending_enable_i)
-        state <= target_read_state;
-      else if(write_i)
-        state <= write_pixel_state;
+      state <= target_read_state;
 
 		target_read_state:
-			state <= target_read_ack_state;
-
-    target_read_ack_state:
       if(target_ack_i)
-        state <= write_pixel_state;
+        state <= write_pixel_ack_state;
+//			state <= target_read_ack_state;
 
-		write_pixel_state:
-			state <= write_pixel_ack_state;
+//    target_read_ack_state:
+//      if(target_ack_i)
+//        state <= write_pixel_ack_state;
 
     write_pixel_ack_state:
       if(ack_i)

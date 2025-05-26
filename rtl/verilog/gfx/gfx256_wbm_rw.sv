@@ -208,6 +208,17 @@ begin
 	  end
 	end
 	else begin
+  	wbm_req.cid <= CID;
+  	wbm_req.tid <= {CID,1'b0,3'b001};
+  	wbm_req.bte <= wishbone_pkg::LINEAR;
+  	wbm_req.cti <= wishbone_pkg::CLASSIC;
+  	wbm_req.cyc <= 1'b1;
+  	wbm_req.stb <= 1'b1;
+  	wbm_req.we <= write_request_i;
+  	wbm_req.sel <= texture_sel_i;
+  	wbm_req.vadr <= texture_addr_i;
+  	wbm_req.padr <= texture_addr_i;
+  	wbm_req.dat <= texture_dat_i;
   	if (wbm_resp.ack|wbm_resp.err) begin
    		texture_data_ack <= 1'b1;
   		texture_dat_o <= wbm_resp.dat;

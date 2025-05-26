@@ -43,13 +43,13 @@ module gfx256_clip(clk_i, rst_i,
 
 parameter point_width = 16;
 
-input                   clk_i;
-input                   rst_i;
+input clk_i;
+input rst_i;
 
-input                   clipping_enable_i;
-input                   zbuffer_enable_i;
+input clipping_enable_i;
+input zbuffer_enable_i;
 input [1:0] color_depth_i;
-input            [31:0] zbuffer_base_i;
+input [31:0] zbuffer_base_i;
 input [point_width-1:0] target_size_x_i;
 input [point_width-1:0] target_size_y_i;
 input [point_width-1:0] target_x0_i;
@@ -68,25 +68,25 @@ input [point_width-1:0] cuvz_pixel_y_i;
 input signed [point_width-1:0] cuvz_pixel_z_i;
 input [point_width-1:0] cuvz_u_i;
 input [point_width-1:0] cuvz_v_i;
-input             [7:0] cuvz_a_i;
-input            [31:0] cuvz_color_i;
-input                   cuvz_write_i;
+input [7:0] cuvz_a_i;
+input [31:0] cuvz_color_i;
+input cuvz_write_i;
 // From raster
 input [point_width-1:0] raster_pixel_x_i;
 input [point_width-1:0] raster_pixel_y_i;
 input [point_width-1:0] raster_u_i;
 input [point_width-1:0] raster_v_i;
-input            [31:0] flat_color_i;
-input                   raster_write_i;
-output reg              ack_o;
+input [31:0] flat_color_i;
+input raster_write_i;
+output reg ack_o;
 
 // Interface against wishbone master (reader)
-input             z_ack_i;
-output     [31:0] z_addr_o;
-input      [255:0] z_data_i;
-output reg  [31:0] z_sel_o;
-output reg        z_request_o;
-input             wbm_busy_i;
+input z_ack_i;
+output [31:0] z_addr_o;
+input [255:0] z_data_i;
+output reg [31:0] z_sel_o;
+output reg z_request_o;
+input wbm_busy_i;
 
 // To fragment
 output reg [point_width-1:0] pixel_x_o;
@@ -94,26 +94,26 @@ output reg [point_width-1:0] pixel_y_o;
 output reg [point_width-1:0] pixel_z_o;
 output reg [point_width-1:0] u_o;
 output reg [point_width-1:0] v_o;
-output reg             [7:0] a_o;
-input      [point_width-1:0] bezier_factor0_i;
-input      [point_width-1:0] bezier_factor1_i;
+output reg [7:0] a_o;
+input [point_width-1:0] bezier_factor0_i;
+input [point_width-1:0] bezier_factor1_i;
 output reg [point_width-1:0] bezier_factor0_o;
 output reg [point_width-1:0] bezier_factor1_o;
-output reg            [31:0] color_o;
-output reg write_o;
+output reg [31:0] color_o;
+output write_o;
 input ack_i;
 
 // 
+reg write1;
+assign write_o = write1;
 
 // State machine
 typedef enum logic [2:0] {
 	wait_state = 3'd0,
 	delay1_state,
 	delay2_state,
-	delay3_state,
 	z_read_state,
-	write_pixel_state,
-	nack_state
+	write_pixel_state
 } clip_state_e;
 clip_state_e state;
 
@@ -143,51 +143,51 @@ wire signed [point_width-1:0] z_value_at_target = z_value_at_target32[point_widt
 
 // Memory to color converter
 memory_to_color256 memory_proc(
-.color_depth_i (2'b01),
-.mem_i         (z_data_i),
-.mb_i(mb),
-.color_o       (z_value_at_target32),
-.sel_o         ()
+	.color_depth_i (2'b01),
+	.mem_i (z_data_i),
+	.mb_i(mb),
+	.color_o (z_value_at_target32),
+	.sel_o ()
 );
 
 // Forward texture coordinates, color, alpha etc
 always_ff @(posedge clk_i)
 if(rst_i)
 begin
-  u_o              <= 1'b0;
-  v_o              <= 1'b0;
+  u_o <= 1'b0;
+  v_o <= 1'b0;
   bezier_factor0_o <= 1'b0;
   bezier_factor1_o <= 1'b0;
-  pixel_x_o        <= 1'b0;
-  pixel_y_o        <= 1'b0;
-  pixel_z_o        <= 1'b0;
-  color_o          <= 1'b0;
-  a_o              <= 1'b0;
-  z_sel_o          <= 32'hFFFFFFFF;
+  pixel_x_o <= 16'b0;
+  pixel_y_o <= 16'b0;
+  pixel_z_o <= 16'b0;
+  color_o <= 32'b0;
+  a_o <= 8'b0;
+  z_sel_o <= 32'hFFFFFFFF;
 end
 else
 begin
   // Implement a MUX, send data from either the raster or from the cuvz module to the fragment processor
   if(raster_write_i)
   begin
-    u_o              <= raster_u_i;
-    v_o              <= raster_v_i;
-    a_o              <= 8'hff;
-    color_o          <= flat_color_i;
-    pixel_x_o        <= raster_pixel_x_i;
-    pixel_y_o        <= raster_pixel_y_i;
-    pixel_z_o        <= 1'b0;
+    u_o <= raster_u_i;
+    v_o <= raster_v_i;
+    a_o <= 8'hff;
+    color_o <= flat_color_i;
+    pixel_x_o <= raster_pixel_x_i;
+    pixel_y_o <= raster_pixel_y_i;
+    pixel_z_o <= 16'b0;
   end
   // If the cuvz module is being used, more parameters needs to be forwarded
   else if(cuvz_write_i)
   begin
-    u_o              <= cuvz_u_i;
-    v_o              <= cuvz_v_i;
-    a_o              <= cuvz_a_i;
-    color_o          <= cuvz_color_i;
-    pixel_x_o        <= cuvz_pixel_x_i;
-    pixel_y_o        <= cuvz_pixel_y_i;
-    pixel_z_o        <= cuvz_pixel_z_i;
+    u_o <= cuvz_u_i;
+    v_o <= cuvz_v_i;
+    a_o <= cuvz_a_i;
+    color_o <= cuvz_color_i;
+    pixel_x_o <= cuvz_pixel_x_i;
+    pixel_y_o <= cuvz_pixel_y_i;
+    pixel_z_o <= cuvz_pixel_z_i;
     bezier_factor0_o <= bezier_factor0_i;
     bezier_factor1_o <= bezier_factor1_i;
   end
@@ -202,13 +202,13 @@ wire outside_target = raster_write_i
 											 | (raster_pixel_y_i < target_y0_i) | (raster_pixel_y_i >= target_y1_i)
 											 : (cuvz_pixel_x_i < target_x0_i) | (cuvz_pixel_x_i >= target_x1_i)
 											 | (cuvz_pixel_y_i < target_y0_i) | (cuvz_pixel_y_i >= target_y1_i);
-wire outside_clip   = raster_write_i
+wire outside_clip = raster_write_i
 											 ? (raster_pixel_x_i < clip_pixel0_x_i) | (raster_pixel_y_i < clip_pixel0_y_i) | (raster_pixel_x_i >= clip_pixel1_x_i) | (raster_pixel_y_i >= clip_pixel1_y_i)
 											 : (cuvz_pixel_x_i < clip_pixel0_x_i) | (cuvz_pixel_y_i < clip_pixel0_y_i) | (cuvz_pixel_x_i >= clip_pixel1_x_i) | (cuvz_pixel_y_i >= clip_pixel1_y_i);
-wire discard_pixel  = outside_target | (clipping_enable_i & outside_clip);
+wire discard_pixel = outside_target | (clipping_enable_i & outside_clip);
 
 // Check if there is a write signal
-wire write_i        = raster_write_i | cuvz_write_i;
+wire write_i = raster_write_i | cuvz_write_i;
 
 // Acknowledge when a command has completed
 always_ff @(posedge clk_i)
@@ -216,17 +216,19 @@ always_ff @(posedge clk_i)
 if(rst_i)
 begin
   ack_o <= 1'b0;
-  write_o <= 1'b0;
+  write1 <= 1'b0;
   z_request_o <= 1'b0;
   z_sel_o <= 32'hFFFFFFFF;
 end
 // Else, set outputs for next cycle
 else
 begin
+	ack_o <= 1'b0;
   case (state)
 
   wait_state:
 	  begin
+			ack_o <= 1'b0;
       if(write_i)
         ack_o <= discard_pixel;
       if(write_i & zbuffer_enable_i) begin
@@ -234,7 +236,7 @@ begin
         	z_request_o <= 1'b0;
       end
       else if(write_i)
-        write_o <= ~discard_pixel;
+        write1 <= ~discard_pixel;
 	  end
 
   delay2_state:
@@ -243,7 +245,7 @@ begin
   // Do a depth check. If it fails, discard pixel, ack and go back to wait. If it succeeds, go to write state
   z_read_state:
     if(z_ack_i) begin
-      write_o <= ~fail_z_check;
+      write1 <= ~fail_z_check;
       ack_o <= fail_z_check;
       z_request_o <= 1'b0;
     end
@@ -252,14 +254,10 @@ begin
 
   // ack, then go back to wait state when the next module is ready
   write_pixel_state:
-	  begin
-	    write_o <= 1'b0;
-	    if(ack_i)
-	      ack_o <= 1'b1;    
-	  end
-
-	nack_state:
-		ack_o <= 1'b0;
+    if(ack_i) begin
+	    write1 <= 1'b0;
+      ack_o <= 1'b1;    
+    end
 
 	default:	;
   endcase
@@ -282,8 +280,6 @@ else
     	else
     		state <= write_pixel_state;
     end
-    else if (write_i)
-    	state <= nack_state;
 
 	// Two cycle delay is for address calc. 
   delay1_state:
@@ -297,14 +293,10 @@ else
 
   write_pixel_state:
     if(ack_i)
-      state <= nack_state;
-
-	nack_state:
-		state <= wait_state;
+      state <= wait_state;
 
 	default:
 		state <= wait_state;
   endcase
 
 endmodule
-

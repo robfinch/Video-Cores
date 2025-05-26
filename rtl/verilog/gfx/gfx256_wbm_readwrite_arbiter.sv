@@ -39,10 +39,12 @@ module gfx256_wbm_readwrite_arbiter
    ack_i,
    // Interface against writer
    mw_write_request_i,
+   mw_read_request_i,
    mw_addr_i,
    mw_we_i,
    mw_sel_i,
    mw_dat_i,
+   mw_dat_o,
    mw_ack_o,
    // Interface against masters (clip)
    m0_read_request_i,
@@ -81,11 +83,13 @@ input  [WID-1:0] dat_i;
 output [WID-1:0] dat_o;
 input         ack_i;
 // Interface against writer
-input         mw_write_request_i;
+input mw_write_request_i;
+input mw_read_request_i;
 input  [31:0] mw_addr_i;
 input   [WID/8-1:0] mw_sel_i;
 input         mw_we_i;
-input  [WID-1:0] mw_dat_i;
+input [WID-1:0] mw_dat_i;
+output [WID-1:0] mw_dat_o;
 output        mw_ack_o;
 // Interface against masters (clip)
 input         m0_read_request_i;
@@ -123,16 +127,17 @@ wire        ack_w;
 // Master select (MUX controls)
 wire [4:0] master_sel;
 
-assign master_busy_o = m0_read_request_i | m1_read_request_i | m2_read_request_i | m3_read_request_i | mw_write_request_i;
+assign master_busy_o = m0_read_request_i | m1_read_request_i | m2_read_request_i | m3_read_request_i | (mw_write_request_i|mw_read_request_i);
 
 // priority to wbm1, the blender master
-assign master_sel[4] = m3_read_request_i & !m0_read_request_i & !m1_read_request_i & !m2_read_request_i & !mw_write_request_i;
-assign master_sel[0] = m0_read_request_i & !m1_read_request_i & !m2_read_request_i & !mw_write_request_i;
-assign master_sel[1] = m1_read_request_i & !m2_read_request_i & !mw_write_request_i;
-assign master_sel[2] = m2_read_request_i & !mw_write_request_i;
-assign master_sel[3] = mw_write_request_i;
+assign master_sel[4] = m3_read_request_i & !m0_read_request_i & !m1_read_request_i & !m2_read_request_i & !(mw_write_request_i|mw_read_request_i);
+assign master_sel[0] = m0_read_request_i & !m1_read_request_i & !m2_read_request_i & !(mw_write_request_i|mw_read_request_i);
+assign master_sel[1] = m1_read_request_i & !m2_read_request_i & !(mw_write_request_i|mw_read_request_i);
+assign master_sel[2] = m2_read_request_i & !(mw_write_request_i|mw_read_request_i);
+assign master_sel[3] = mw_write_request_i | mw_read_request_i;
 
 assign dat_o = mw_dat_i;
+assign mw_dat_o = dat_i;
 assign mw_ack_o = ack_i & master_sel[3];
 
 // Master input mux, priority to blender master
@@ -149,10 +154,11 @@ assign m3_dat_o = dat_i;
 assign m3_ack_o = ack_i & master_sel[4];
 
 assign read_request_o = master_sel[4] |
+												(master_sel[3] & mw_read_request_i) |
 												master_sel[2] |
                         master_sel[1] |
                         master_sel[0];
-assign write_request_o = master_sel[3];
+assign write_request_o = master_sel[3] & mw_write_request_i;
 
 always_comb
 casez(master_sel)
@@ -174,6 +180,6 @@ casez(master_sel)
 default:	sel_o <= {WID/8{1'b0}};
 endcase
 
-assign we_o   = master_sel[3] ? mw_we_i : 1'b0;
+assign we_o = master_sel[3] ? mw_we_i : 1'b0;
    
 endmodule

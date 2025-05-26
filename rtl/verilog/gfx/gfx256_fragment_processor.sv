@@ -40,7 +40,7 @@ parameter point_width = 16;
 input clk_i;
 input rst_i;
 
-input [7:0]  pixel_alpha_i;
+input [7:0] pixel_alpha_i;
 
 // from raster
 input [point_width-1:0] x_counter_i;
@@ -50,38 +50,41 @@ input [point_width-1:0] u_i; // x-ish texture coordinate
 input [point_width-1:0] v_i; // y-ish texture coordinate
 input [point_width-1:0] bezier_factor0_i; // Used for curve writing
 input [point_width-1:0] bezier_factor1_i; // Used for curve writing
-input                   bezier_inside_i;
-input            [31:0] pixel_color_i;
-input                   write_i;
-input                   curve_write_i;
-output reg              ack_o;
+input bezier_inside_i;
+input [31:0] pixel_color_i;
+input write_i;
+input curve_write_i;
+output reg ack_o;
 
 //to render
 output reg [point_width-1:0] pixel_x_o;
 output reg [point_width-1:0] pixel_y_o;
 output reg signed [point_width-1:0] pixel_z_o;
-output reg            [31:0] pixel_color_o;
-output reg             [7:0] pixel_alpha_o;
-output reg                   write_o;
-input                        ack_i;
+output reg [31:0] pixel_color_o;
+output reg [7:0] pixel_alpha_o;
+output write_o;
+input ack_i;
 
 // to/from wishbone master read
-input              texture_ack_i;
-input      [255:0] texture_data_i;
-output      [31:0] texture_addr_o;
-output reg  [31:0] texture_sel_o;
-output reg         texture_request_o;
+input texture_ack_i;
+input [255:0] texture_data_i;
+output [31:0] texture_addr_o;
+output reg [31:0] texture_sel_o;
+output reg texture_request_o;
 
 // from wishbone slave
-input                   texture_enable_i;
-input            [31:0] tex0_base_i;
+input texture_enable_i;
+input [31:0] tex0_base_i;
 input [point_width-1:0] tex0_size_x_i;
 input [point_width-1:0] tex0_size_y_i;
-input            [ 1:0] color_depth_i;
-input                   colorkey_enable_i;
-input            [31:0] colorkey_i;
+input [ 1:0] color_depth_i;
+input colorkey_enable_i;
+input [31:0] colorkey_i;
 
-reg              [31:0] pixel_offset;
+reg [31:0] pixel_offset;
+
+reg write1;
+assign write_o = write1;
 
 // Calculate the memory address of the texel to read 
 wire [7:0] mb;
@@ -108,23 +111,21 @@ typedef enum logic [2:0] {
 	wait_state = 3'd0,
 	delay1_state,
 	delay2_state,
-	delay3_state,
 	texture_read_state,
 	texture_read_ack_state,
-	write_pixel_state,
 	write_pixel_ack_state
-} tex_state_e;
-tex_state_e state;
+} frag_state_e;
+frag_state_e state;
 
 wire [31:0] mem_conv_color_o;
 
 // Color converter
 memory_to_color256 color_proc(
-.color_depth_i (color_depth_i),
-.mem_i         (texture_data_i),
-.mb_i(mb),
-.color_o       (mem_conv_color_o),
-.sel_o         ()
+	.color_depth_i (color_depth_i),
+	.mem_i (texture_data_i),
+	.mb_i(mb),
+	.color_o (mem_conv_color_o),
+	.sel_o ()
 );
 
 // Does the fetched texel match the colorkey?
@@ -150,10 +151,9 @@ wire bezier_draw = bezier_inside_i ^ bezier_eval; // inside xor eval
 always_ff @(posedge clk_i)
 begin
   // reset, init component
-  if(rst_i)
-  begin
+  if(rst_i) begin
     ack_o <= 1'b0;
-    write_o <= 1'b0;
+    write1 <= 1'b0;
     pixel_x_o <= 1'b0;
     pixel_y_o <= 1'b0;
     pixel_z_o <= 1'b0;
@@ -163,8 +163,8 @@ begin
     texture_sel_o <= 32'hFFFFFFFF;
   end
   // Else, set outputs for next cycle
-  else
-  begin
+  else begin
+  	ack_o <= 1'b0;
     case (state)
 
     wait_state:
@@ -180,6 +180,7 @@ begin
           pixel_z_o <= z_i;
           pixel_color_o <= pixel_color_i;// Note, colorkey only supported for texture reads
           pixel_alpha_o <= pixel_alpha_i;
+          write1 <= 1'b1;
         end
       end
 
@@ -197,16 +198,13 @@ begin
         if(colorkey_enable_i & transparent_pixel)
           ack_o <= 1'b1; // Colorkey enabled: Only write if the pixel doesn't match the colorkey
         else
-          write_o <= 1'b1;
+          write1 <= 1'b1;
       end
 
-		write_pixel_state:
-			write_o <= 1'b1;
-			
     write_pixel_ack_state:
-	    begin
-	      write_o <= 1'b0;
-	      ack_o <= ack_i;
+	    if (ack_i) begin
+	      write1 <= 1'b0;
+	      ack_o <= 1'b1;
 	    end
 
 		default:	;
@@ -228,15 +226,12 @@ begin
       if(write_i & texture_enable_i & (~curve_write_i | bezier_draw))
         state <= delay1_state;
       else if(write_i & (~curve_write_i | bezier_draw))
-        state <= delay1_state;
+        state <= write_pixel_ack_state;
 
     delay1_state:
     	state <= delay2_state;
     delay2_state:
-      if(write_i & texture_enable_i & (~curve_write_i | bezier_draw))
-        state <= texture_read_state;
-      else if(write_i & (~curve_write_i | bezier_draw))
-        state <= write_pixel_state;
+      state <= texture_read_state;
 
 		texture_read_state:
 			state <= texture_read_ack_state;
@@ -244,12 +239,9 @@ begin
     texture_read_ack_state:
       // Check for texture ack. If we have colorkeying enabled, only goto the write state if the texture doesn't match the colorkey
       if(texture_ack_i & colorkey_enable_i)
-        state <= transparent_pixel ? wait_state : write_pixel_state;
+        state <= transparent_pixel ? wait_state : write_pixel_ack_state;
       else if(texture_ack_i)
-        state <= write_pixel_state;
-
-		write_pixel_state:
-			state <= write_pixel_ack_state;
+        state <= write_pixel_ack_state;
 
     write_pixel_ack_state:
       if(ack_i)

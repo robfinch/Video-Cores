@@ -75,10 +75,12 @@ wire [point_width-1:0] wbs_fragment_tex0_size_y;
 wire [31:0] render_wbmwriter_addr;
 wire [31:0] render_wbmwriter_sel;
 wire [255:0] render_wbmwriter_dat;
+wire [255:0] render_wbmwriter_dati;
 
 wire [1:0] color_depth_reg;
 
 wire render_wbmwriter_memory_pixel_write;
+wire render_wbmwriter_memory_pixel_read;
 wire wbs_raster_point_write;
 wire wbs_raster_rect_write;
 wire wbs_raster_line_write;
@@ -159,96 +161,100 @@ wire [15:0] char_code_reg;
 
 // Slave wishbone interface. Reads wishbone bus and fills registers
 gfx256_wbs wb_databus(
-  .clk_i             (wb_clk_i),
-  .wbs_clk_i         (wbs_clk_i),
-  .rst_i             (wb_rst_i),
+  .clk_i (wb_clk_i),
+  .wbs_clk_i (wbs_clk_i),
+  .rst_i (wb_rst_i),
   .cs_i(wbs_cs_i),
   .wbs_req(wbs_req),
   .wbs_resp(wbs_resp),
-  .inta_o            (wb_inta_o),
+  .inta_o (wb_inta_o),
 
   //source pixel
-  .src_pixel0_x_o    (wbs_raster_src_pixel0_x),
-  .src_pixel0_y_o    (wbs_raster_src_pixel0_y),
-  .src_pixel1_x_o    (wbs_raster_src_pixel1_x),
-  .src_pixel1_y_o    (wbs_raster_src_pixel1_y),
+  .src_pixel0_x_o (wbs_raster_src_pixel0_x),
+  .src_pixel0_y_o (wbs_raster_src_pixel0_y),
+  .src_pixel1_x_o (wbs_raster_src_pixel1_x),
+  .src_pixel1_y_o (wbs_raster_src_pixel1_y),
   //destination pixel
-  .dest_pixel_x_o    (wbs_transform_dest_pixel_x),
-  .dest_pixel_y_o    (wbs_transform_dest_pixel_y),
-  .dest_pixel_z_o    (wbs_transform_dest_pixel_z),
-  .dest_pixel_id_o   (wbs_transform_dest_pixel_id),
+  .dest_pixel_x_o (wbs_transform_dest_pixel_x),
+  .dest_pixel_y_o (wbs_transform_dest_pixel_y),
+  .dest_pixel_z_o (wbs_transform_dest_pixel_z),
+  .dest_pixel_id_o (wbs_transform_dest_pixel_id),
   //matrix
-  .aa_o              (wbs_transform_aa),
-  .ab_o              (wbs_transform_ab),
-  .ac_o              (wbs_transform_ac),
-  .tx_o              (wbs_transform_tx),
-  .ba_o              (wbs_transform_ba),
-  .bb_o              (wbs_transform_bb),
-  .bc_o              (wbs_transform_bc),
-  .ty_o              (wbs_transform_ty),
-  .ca_o              (wbs_transform_ca),
-  .cb_o              (wbs_transform_cb),
-  .cc_o              (wbs_transform_cc),
-  .tz_o              (wbs_transform_tz),
+  .aa_o (wbs_transform_aa),
+  .ab_o (wbs_transform_ab),
+  .ac_o (wbs_transform_ac),
+  .tx_o (wbs_transform_tx),
+  .ba_o (wbs_transform_ba),
+  .bb_o (wbs_transform_bb),
+  .bc_o (wbs_transform_bc),
+  .ty_o (wbs_transform_ty),
+  .ca_o (wbs_transform_ca),
+  .cb_o (wbs_transform_cb),
+  .cc_o (wbs_transform_cc),
+  .tz_o (wbs_transform_tz),
   .transform_point_o (wbs_transform_transform),
-  .forward_point_o   (wbs_transform_forward),
+  .forward_point_o (wbs_transform_forward),
   //clip pixel
-  .clip_pixel0_x_o   (clip_pixel0_x_reg),
-  .clip_pixel0_y_o   (clip_pixel0_y_reg),
-  .clip_pixel1_x_o   (clip_pixel1_x_reg),
-  .clip_pixel1_y_o   (clip_pixel1_y_reg),
+  .clip_pixel0_x_o (clip_pixel0_x_reg),
+  .clip_pixel0_y_o (clip_pixel0_y_reg),
+  .clip_pixel1_x_o (clip_pixel1_x_reg),
+  .clip_pixel1_y_o (clip_pixel1_y_reg),
 
-  .color0_o          (color0_reg),
-  .color1_o          (color1_reg),
-  .color2_o          (color2_reg),
+  .color0_o (color0_reg),
+  .color1_o (color1_reg),
+  .color2_o (color2_reg),
 
-  .u0_o              (u0_reg),
-  .v0_o              (v0_reg),
-  .u1_o              (u1_reg),
-  .v1_o              (v1_reg),
-  .u2_o              (u2_reg),
-  .v2_o              (v2_reg),
+  .u0_o (u0_reg),
+  .v0_o (v0_reg),
+  .u1_o (u1_reg),
+  .v1_o (v1_reg),
+  .u2_o (u2_reg),
+  .v2_o (v2_reg),
 
-  .a0_o              (alpha0_reg),
-  .a1_o              (alpha1_reg),
-  .a2_o              (alpha2_reg),
-  .global_alpha_o    (global_alpha_reg),
+  .a0_o (alpha0_reg),
+  .a1_o (alpha1_reg),
+  .a2_o (alpha2_reg),
+  .global_alpha_o (global_alpha_reg),
 
-  .target_base_o     (target_base_reg),
-  .target_size_x_o   (target_size_x_reg),
-  .target_size_y_o   (target_size_y_reg),
-  .tex0_base_o       (wbs_fragment_tex0_base),
-  .tex0_size_x_o     (wbs_fragment_tex0_size_x),
-  .tex0_size_y_o     (wbs_fragment_tex0_size_y),
+  .target_base_o (target_base_reg),
+  .target_size_x_o (target_size_x_reg),
+  .target_size_y_o (target_size_y_reg),
+  .target_x0_o (target_x0_reg),
+  .target_y0_o (target_y0_reg),
+  .target_x1_o (target_x1_reg),
+  .target_y1_o (target_y1_reg),
+  .tex0_base_o (wbs_fragment_tex0_base),
+  .tex0_size_x_o (wbs_fragment_tex0_size_x),
+  .tex0_size_y_o (wbs_fragment_tex0_size_y),
 
-  .color_depth_o     (color_depth_reg),
+  .color_depth_o (color_depth_reg),
 
-	.point_write_o		 (wbs_raster_point_write),
-  .rect_write_o      (wbs_raster_rect_write),
-  .line_write_o      (wbs_raster_line_write),
-  .triangle_write_o  (wbs_raster_triangle_write),
-  .curve_write_o     (wbs_fragment_curve_write),
-  .char_write_o			 (wbs_char_write),
-  .interpolate_o     (wbs_raster_interpolate),
+	.point_write_o (wbs_raster_point_write),
+  .rect_write_o (wbs_raster_rect_write),
+  .line_write_o (wbs_raster_line_write),
+  .triangle_write_o (wbs_raster_triangle_write),
+  .curve_write_o (wbs_fragment_curve_write),
+  .char_write_o	(wbs_char_write),
+  .interpolate_o (wbs_raster_interpolate),
 
-  .writer_sint_i     (wbmwriter_sint),
-  .reader_sint_i     (wbmreader_sint),
+  .writer_sint_i (wbmwriter_sint),
+  .reader_sint_i (wbmreader_sint),
 
-  .pipeline_ack_i    (raster_wbs_ack),
-  .transform_ack_i   (transform_wbs_ack),
+  .pipeline_ack_i (raster_wbs_ack),
+  .transform_ack_i (transform_wbs_ack),
 
-  .texture_enable_o  (texture_enable_reg),
+  .texture_enable_o (texture_enable_reg),
   .blending_enable_o (blending_enable_reg),
   .colorkey_enable_o (colorkey_enable_reg),
-  .colorkey_o        (colorkey_reg),
+  .colorkey_o (colorkey_reg),
   .clipping_enable_o (clipping_enable_reg),
-  .inside_o          (inside_reg),
-  .zbuffer_enable_o  (zbuffer_enable_reg),
-  .zbuffer_base_o    (zbuffer_base_reg),
-  .char_code_o			 (char_code_reg),
+  .inside_o (inside_reg),
+  .zbuffer_enable_o (zbuffer_enable_reg),
+  .zbuffer_base_o (zbuffer_base_reg),
+  .char_code_o (char_code_reg),
   .font_table_base_o (font_table_base_reg),
-  .font_id_o				 (font_id_reg)
-  );
+  .font_id_o (font_id_reg)
+);
 
 defparam wb_databus.point_width    = point_width;
 defparam wb_databus.subpixel_width = subpixel_width;
@@ -268,38 +274,38 @@ wire signed [point_width-1:0] transform_cuvz_dest_pixel2_z;
 
 // Apply transforms to points
 gfx_transform transform(
-.clk_i           (wb_clk_i),
-.rst_i           (wb_rst_i),
-.x_i             (wbs_transform_dest_pixel_x),
-.y_i             (wbs_transform_dest_pixel_y),
-.z_i             (wbs_transform_dest_pixel_z),
-.point_id_i      (wbs_transform_dest_pixel_id),
-// Matrix
-.aa              (wbs_transform_aa),
-.ab              (wbs_transform_ab),
-.ac              (wbs_transform_ac),
-.tx              (wbs_transform_tx),
-.ba              (wbs_transform_ba),
-.bb              (wbs_transform_bb),
-.bc              (wbs_transform_bc),
-.ty              (wbs_transform_ty),
-.ca              (wbs_transform_ca),
-.cb              (wbs_transform_cb),
-.cc              (wbs_transform_cc),
-.tz              (wbs_transform_tz),
-// Output points
-.p0_x_o          (transform_raster_dest_pixel0_x),
-.p0_y_o          (transform_raster_dest_pixel0_y),
-.p0_z_o          (transform_cuvz_dest_pixel0_z),
-.p1_x_o          (transform_raster_dest_pixel1_x),
-.p1_y_o          (transform_raster_dest_pixel1_y),
-.p1_z_o          (transform_cuvz_dest_pixel1_z),
-.p2_x_o          (transform_raster_dest_pixel2_x),
-.p2_y_o          (transform_raster_dest_pixel2_y),
-.p2_z_o          (transform_cuvz_dest_pixel2_z),
-.transform_i     (wbs_transform_transform),
-.forward_i       (wbs_transform_forward),
-.ack_o           (transform_wbs_ack)
+	.clk_i (wb_clk_i),
+	.rst_i (wb_rst_i),
+	.x_i (wbs_transform_dest_pixel_x),
+	.y_i (wbs_transform_dest_pixel_y),
+	.z_i (wbs_transform_dest_pixel_z),
+	.point_id_i (wbs_transform_dest_pixel_id),
+	// Matrix
+	.aa (wbs_transform_aa),
+	.ab (wbs_transform_ab),
+	.ac (wbs_transform_ac),
+	.tx (wbs_transform_tx),
+	.ba (wbs_transform_ba),
+	.bb (wbs_transform_bb),
+	.bc (wbs_transform_bc),
+	.ty (wbs_transform_ty),
+	.ca (wbs_transform_ca),
+	.cb (wbs_transform_cb),
+	.cc (wbs_transform_cc),
+	.tz (wbs_transform_tz),
+	// Output points
+	.p0_x_o (transform_raster_dest_pixel0_x),
+	.p0_y_o (transform_raster_dest_pixel0_y),
+	.p0_z_o (transform_cuvz_dest_pixel0_z),
+	.p1_x_o (transform_raster_dest_pixel1_x),
+	.p1_y_o (transform_raster_dest_pixel1_y),
+	.p1_z_o (transform_cuvz_dest_pixel1_z),
+	.p2_x_o (transform_raster_dest_pixel2_x),
+	.p2_y_o (transform_raster_dest_pixel2_y),
+	.p2_z_o (transform_cuvz_dest_pixel2_z),
+	.transform_i (wbs_transform_transform),
+	.forward_i (wbs_transform_forward),
+	.ack_o (transform_wbs_ack)
 );
 
 defparam transform.point_width = point_width;
@@ -354,19 +360,19 @@ gfx_rasterizer rasterizer0 (
   .dest_pixel2_y_i  (transform_raster_dest_pixel2_y),
 
   // clip pixel coordinates
-  .clipping_enable_i       (clipping_enable_reg),
-  .clip_pixel0_x_i         (clip_pixel0_x_reg),
-  .clip_pixel0_y_i         (clip_pixel0_y_reg),
-  .clip_pixel1_x_i         (clip_pixel1_x_reg),
-  .clip_pixel1_y_i         (clip_pixel1_y_reg),	
+  .clipping_enable_i (clipping_enable_reg),
+  .clip_pixel0_x_i (clip_pixel0_x_reg),
+  .clip_pixel0_y_i (clip_pixel0_y_reg),
+  .clip_pixel1_x_i (clip_pixel1_x_reg),
+  .clip_pixel1_y_i (clip_pixel1_y_reg),	
 
   // Screen size
-  .target_size_x_i  (target_size_x_reg),
-  .target_size_y_i  (target_size_y_reg),
-  .target_x0_i			(target_x0_reg),
-  .target_y0_i			(target_y0_reg),
-  .target_x1_i			(target_x1_reg),
-  .target_y1_i			(target_y1_reg),
+  .target_size_x_i (target_size_x_reg),
+  .target_size_y_i (target_size_y_reg),
+  .target_x0_i (target_x0_reg),
+  .target_y0_i (target_y0_reg),
+  .target_x1_i (target_x1_reg),
+  .target_y1_i (target_y1_reg),
 
   // Output pixel
   .x_counter_o 	    (raster_x_pixel),
@@ -526,119 +532,119 @@ gfx256_textblit textblit
 );
 
 // Connected through arbiter
-wire        wbmreader_clip_z_ack;
+wire wbmreader_clip_z_ack;
 wire [31:0] clip_wbmreader_z_addr;
 wire [255:0] wbmreader_clip_z_data;
-wire  [31:0] clip_wbmreader_z_sel;
-wire        clip_wbmreader_z_request;
+wire [31:0] clip_wbmreader_z_sel;
+wire clip_wbmreader_z_request;
 
 // Apply clipping
 gfx256_clip clip(
-.clk_i            (wb_clk_i),
-.rst_i            (wb_rst_i),
-.clipping_enable_i(clipping_enable_reg),
-.color_depth_i    (color_depth_reg),
-.zbuffer_enable_i (zbuffer_enable_reg),
-.zbuffer_base_i   (zbuffer_base_reg),
-.target_size_x_i  (target_size_x_reg),
-.target_size_y_i  (target_size_y_reg),
-.target_x0_i			(target_x0_reg),
-.target_y0_i			(target_y0_reg),
-.target_x1_i			(target_x1_reg),
-.target_y1_i			(target_y1_reg),
-.clip_pixel0_x_i  (clip_pixel0_x_reg),
-.clip_pixel0_y_i  (clip_pixel0_y_reg),
-.clip_pixel1_x_i  (clip_pixel1_x_reg),
-.clip_pixel1_y_i  (clip_pixel1_y_reg),
-.raster_pixel_x_i (raster_x_pixel),
-.raster_pixel_y_i (raster_y_pixel),
-.raster_u_i       (raster_clip_u),
-.raster_v_i       (raster_clip_v),
-.flat_color_i     (color0_reg),
-.raster_write_i   (raster_clip_write),
-.cuvz_pixel_x_i   (cuvz_clip_x),
-.cuvz_pixel_y_i   (cuvz_clip_y),
-.cuvz_pixel_z_i   (cuvz_clip_z),
-.cuvz_u_i         (cuvz_clip_u),
-.cuvz_v_i         (cuvz_clip_v),
-.cuvz_a_i         (cuvz_clip_alpha),
-.cuvz_color_i     (cuvz_clip_color),
-.cuvz_write_i     (cuvz_clip_write),
-.ack_o            (clip_ack),
-.z_ack_i          (wbmreader_clip_z_ack),
-.z_addr_o         (clip_wbmreader_z_addr),
-.z_data_i         (wbmreader_clip_z_data),
-.z_sel_o          (clip_wbmreader_z_sel),
-.z_request_o      (clip_wbmreader_z_request),
-.wbm_busy_i       (wbmreader_busy),
-.pixel_x_o        (clip_fragment_x_pixel),
-.pixel_y_o        (clip_fragment_y_pixel),
-.pixel_z_o        (clip_fragment_z_pixel),
-.u_o              (clip_fragment_u),
-.v_o              (clip_fragment_v),
-.a_o              (clip_fragment_a),
-.bezier_factor0_i (cuvz_clip_bezier_factor0),
-.bezier_factor1_i (cuvz_clip_bezier_factor1),
-.bezier_factor0_o (clip_fragment_bezier_factor0),
-.bezier_factor1_o (clip_fragment_bezier_factor1),
-.color_o          (clip_fragment_color),
-.write_o          (clip_fragment_write_enable),
-.ack_i            (fragment_clip_ack)
+	.clk_i (wb_clk_i),
+	.rst_i (wb_rst_i),
+	.clipping_enable_i(clipping_enable_reg),
+	.color_depth_i (color_depth_reg),
+	.zbuffer_enable_i (zbuffer_enable_reg),
+	.zbuffer_base_i (zbuffer_base_reg),
+	.target_size_x_i (target_size_x_reg),
+	.target_size_y_i (target_size_y_reg),
+	.target_x0_i (target_x0_reg),
+	.target_y0_i (target_y0_reg),
+	.target_x1_i (target_x1_reg),
+	.target_y1_i (target_y1_reg),
+	.clip_pixel0_x_i (clip_pixel0_x_reg),
+	.clip_pixel0_y_i (clip_pixel0_y_reg),
+	.clip_pixel1_x_i (clip_pixel1_x_reg),
+	.clip_pixel1_y_i (clip_pixel1_y_reg),
+	.raster_pixel_x_i (raster_x_pixel),
+	.raster_pixel_y_i (raster_y_pixel),
+	.raster_u_i (raster_clip_u),
+	.raster_v_i (raster_clip_v),
+	.flat_color_i (color0_reg),
+	.raster_write_i (raster_clip_write),
+	.cuvz_pixel_x_i (cuvz_clip_x),
+	.cuvz_pixel_y_i (cuvz_clip_y),
+	.cuvz_pixel_z_i (cuvz_clip_z),
+	.cuvz_u_i (cuvz_clip_u),
+	.cuvz_v_i (cuvz_clip_v),
+	.cuvz_a_i (cuvz_clip_alpha),
+	.cuvz_color_i (cuvz_clip_color),
+	.cuvz_write_i (cuvz_clip_write),
+	.ack_o (clip_ack),
+	.z_ack_i (wbmreader_clip_z_ack),
+	.z_addr_o (clip_wbmreader_z_addr),
+	.z_data_i (wbmreader_clip_z_data),
+	.z_sel_o (clip_wbmreader_z_sel),
+	.z_request_o (clip_wbmreader_z_request),
+	.wbm_busy_i (wbmreader_busy),
+	.pixel_x_o (clip_fragment_x_pixel),
+	.pixel_y_o (clip_fragment_y_pixel),
+	.pixel_z_o (clip_fragment_z_pixel),
+	.u_o (clip_fragment_u),
+	.v_o (clip_fragment_v),
+	.a_o (clip_fragment_a),
+	.bezier_factor0_i (cuvz_clip_bezier_factor0),
+	.bezier_factor1_i (cuvz_clip_bezier_factor1),
+	.bezier_factor0_o (clip_fragment_bezier_factor0),
+	.bezier_factor1_o (clip_fragment_bezier_factor1),
+	.color_o (clip_fragment_color),
+	.write_o (clip_fragment_write_enable),
+	.ack_i (fragment_clip_ack)
 );
 
 defparam clip.point_width = point_width;
 
-wire                   fragment_blender_write_enable;
+wire fragment_blender_write_enable;
 wire [point_width-1:0] fragment_blender_x_pixel;
 wire [point_width-1:0] fragment_blender_y_pixel;
 wire signed [point_width-1:0] fragment_blender_z_pixel;
-wire                   blender_fragment_ack;
-wire            [31:0] fragment_blender_color;
-wire             [7:0] fragment_blender_alpha;
+wire blender_fragment_ack;
+wire [31:0] fragment_blender_color;
+wire [7:0] fragment_blender_alpha;
 
-wire        wbmreader_fragment_texture_ack;
+wire wbmreader_fragment_texture_ack;
 wire [255:0] wbmreader_fragment_texture_data;
-wire [31:5] fragment_wbmreader_texture_addr;
-wire  [31:0] fragment_wbmreader_texture_sel;
-wire        fragment_wbmreader_texture_request;
+wire [31:0] fragment_wbmreader_texture_addr;
+wire [31:0] fragment_wbmreader_texture_sel;
+wire fragment_wbmreader_texture_request;
 
 
 // Fragment processor generates color of pixel (requires RAM read for textures)
 gfx256_fragment_processor fp0 (
-  .clk_i             (wb_clk_i),
-  .rst_i             (wb_rst_i),
-  .pixel_alpha_i     (clip_fragment_a),
-  .x_counter_i       (clip_fragment_x_pixel),
-  .y_counter_i       (clip_fragment_y_pixel),
-  .z_i               (clip_fragment_z_pixel),
-  .u_i               (clip_fragment_u),
-  .v_i               (clip_fragment_v),
-  .bezier_factor0_i  (clip_fragment_bezier_factor0),
-  .bezier_factor1_i  (clip_fragment_bezier_factor1),
-  .bezier_inside_i   (inside_reg),
-  .ack_i             (blender_fragment_ack),
-  .write_i           (clip_fragment_write_enable),
-  .curve_write_i     (wbs_fragment_curve_write),
-  .pixel_x_o         (fragment_blender_x_pixel),
-  .pixel_y_o         (fragment_blender_y_pixel),
-  .pixel_z_o         (fragment_blender_z_pixel),
-  .pixel_color_i     (clip_fragment_color),
-  .pixel_color_o     (fragment_blender_color),
-  .pixel_alpha_o     (fragment_blender_alpha),
-  .write_o           (fragment_blender_write_enable),
-  .ack_o             (fragment_clip_ack),
-  .texture_ack_i     (wbmreader_fragment_texture_ack), 
-  .texture_data_i    (wbmreader_fragment_texture_data), 
-  .texture_addr_o    (fragment_wbmreader_texture_addr), 
-  .texture_sel_o     (fragment_wbmreader_texture_sel), 
+  .clk_i (wb_clk_i),
+  .rst_i (wb_rst_i),
+  .pixel_alpha_i (clip_fragment_a),
+  .x_counter_i (clip_fragment_x_pixel),
+  .y_counter_i (clip_fragment_y_pixel),
+  .z_i (clip_fragment_z_pixel),
+  .u_i (clip_fragment_u),
+  .v_i (clip_fragment_v),
+  .bezier_factor0_i (clip_fragment_bezier_factor0),
+  .bezier_factor1_i (clip_fragment_bezier_factor1),
+  .bezier_inside_i (inside_reg),
+  .ack_i (blender_fragment_ack),
+  .write_i (clip_fragment_write_enable),
+  .curve_write_i (wbs_fragment_curve_write),
+  .pixel_x_o (fragment_blender_x_pixel),
+  .pixel_y_o (fragment_blender_y_pixel),
+  .pixel_z_o (fragment_blender_z_pixel),
+  .pixel_color_i (clip_fragment_color),
+  .pixel_color_o (fragment_blender_color),
+  .pixel_alpha_o (fragment_blender_alpha),
+  .write_o (fragment_blender_write_enable),
+  .ack_o (fragment_clip_ack),
+  .texture_ack_i (wbmreader_fragment_texture_ack), 
+  .texture_data_i (wbmreader_fragment_texture_data), 
+  .texture_addr_o (fragment_wbmreader_texture_addr), 
+  .texture_sel_o (fragment_wbmreader_texture_sel), 
   .texture_request_o (fragment_wbmreader_texture_request),
-  .texture_enable_i  (texture_enable_reg),
-  .tex0_base_i       (wbs_fragment_tex0_base), 
-  .tex0_size_x_i     (wbs_fragment_tex0_size_x), 
-  .tex0_size_y_i     (wbs_fragment_tex0_size_y),
-  .color_depth_i     (color_depth_reg),
+  .texture_enable_i (texture_enable_reg),
+  .tex0_base_i (wbs_fragment_tex0_base), 
+  .tex0_size_x_i (wbs_fragment_tex0_size_x), 
+  .tex0_size_y_i (wbs_fragment_tex0_size_y),
+  .color_depth_i (color_depth_reg),
   .colorkey_enable_i (colorkey_enable_reg),
-  .colorkey_i        (colorkey_reg)
+  .colorkey_i (colorkey_reg)
   );
 
 defparam fp0.point_width = point_width;
@@ -651,106 +657,111 @@ wire                   render_blender_ack;
 wire            [31:0] blender_render_color;
 
 // Connected through arbiter
-wire        wbmreader_blender_target_ack;
+wire wbmreader_blender_target_ack;
 wire [31:0] blender_wbmreader_target_addr;
 wire [255:0] wbmreader_blender_target_data;
 wire [31:0] blender_wbmreader_target_sel;
-wire        blender_wbmreader_target_request;
+wire blender_wbmreader_target_request;
 
 // Applies alpha blending if enabled (requires RAM read to get target pixel color)
 // Fragment processor generates color of pixel (requires RAM read for textures)
 gfx256_blender blender0 (
-  .clk_i            (wb_clk_i),
-  .rst_i            (wb_rst_i),
+  .clk_i (wb_clk_i),
+  .rst_i (wb_rst_i),
   .blending_enable_i (blending_enable_reg),
   // Render target information
-  .target_base_i    (target_base_reg),
-  .target_size_x_i  (target_size_x_reg),
-  .target_size_y_i  (target_size_y_reg),
-  .color_depth_i    (color_depth_reg),
-  .x_counter_i      (fragment_blender_x_pixel),
-  .y_counter_i      (fragment_blender_y_pixel),
-  .z_i              (fragment_blender_z_pixel),
-  .alpha_i          (fragment_blender_alpha),
-  .global_alpha_i   (global_alpha_reg),
-  .ack_i            (render_blender_ack),
-  .target_ack_i     (wbmreader_blender_target_ack),
-  .target_addr_o    (blender_wbmreader_target_addr),
-  .target_data_i    (wbmreader_blender_target_data),
-  .target_sel_o     (blender_wbmreader_target_sel),
+  .target_base_i (target_base_reg),
+  .target_size_x_i (target_size_x_reg),
+  .target_size_y_i (target_size_y_reg),
+  .color_depth_i (color_depth_reg),
+  .x_counter_i (fragment_blender_x_pixel),
+  .y_counter_i (fragment_blender_y_pixel),
+  .z_i (fragment_blender_z_pixel),
+  .alpha_i (fragment_blender_alpha),
+  .global_alpha_i (global_alpha_reg),
+  .ack_i (render_blender_ack),
+  .target_ack_i (wbmreader_blender_target_ack),
+  .target_addr_o (blender_wbmreader_target_addr),
+  .target_data_i (wbmreader_blender_target_data),
+  .target_sel_o (blender_wbmreader_target_sel),
   .target_request_o (blender_wbmreader_target_request),
-  .wbm_busy_i       (wbmreader_busy),
-  .write_i          (fragment_blender_write_enable),
-  .pixel_x_o        (blender_render_x_pixel),
-  .pixel_y_o        (blender_render_y_pixel),
-  .pixel_z_o        (blender_render_z_pixel),
-  .pixel_color_i    (fragment_blender_color),
-  .pixel_color_o    (blender_render_color),
-  .write_o          (blender_render_write_enable),
-  .ack_o            (blender_fragment_ack)
-  );
+  .wbm_busy_i (wbmreader_busy),
+  .write_i (fragment_blender_write_enable),
+  .pixel_x_o (blender_render_x_pixel),
+  .pixel_y_o (blender_render_y_pixel),
+  .pixel_z_o (blender_render_z_pixel),
+  .pixel_color_i (fragment_blender_color),
+  .pixel_color_o (blender_render_color),
+  .write_o (blender_render_write_enable),
+  .ack_o (blender_fragment_ack)
+);
 
 defparam blender0.point_width = point_width;
 
 // Write pixel to target (check for out of bounds)
 gfx256_renderer renderer (
-  .clk_i           (wb_clk_i),
-  .rst_i           (wb_rst_i),
+  .clk_i (wb_clk_i),
+  .rst_i (wb_rst_i),
   // Render target information
-  .target_base_i   (target_base_reg),
-  .zbuffer_base_i  (zbuffer_base_reg),
+  .target_base_i (target_base_reg),
+  .zbuffer_base_i (zbuffer_base_reg),
   .target_size_x_i (target_size_x_reg),
   .target_size_y_i (target_size_y_reg),
-  .color_depth_i   (color_depth_reg),
+  .color_depth_i (color_depth_reg),
   // Input pixel
-  .pixel_x_i       (blender_render_x_pixel),
-  .pixel_y_i       (blender_render_y_pixel),
-  .pixel_z_i       (blender_render_z_pixel),
+  .pixel_x_i (blender_render_x_pixel),
+  .pixel_y_i (blender_render_y_pixel),
+  .pixel_z_i (blender_render_z_pixel),
   .zbuffer_enable_i(zbuffer_enable_reg),
-  .color_i         (blender_render_color),
+  .color_i (blender_render_color),
 
-  .render_addr_o   (render_wbmwriter_addr),
-  .render_sel_o    (render_wbmwriter_sel),
-  .render_dat_o    (render_wbmwriter_dat),
-  .ack_o           (render_blender_ack),
-  .ack_i           (wbmwriter_render_ack),
-  .write_i         (blender_render_write_enable),
-  .write_o         (render_wbmwriter_memory_pixel_write)
-  );
+  .render_addr_o (render_wbmwriter_addr),
+  .render_sel_o (render_wbmwriter_sel),
+  .render_dat_o (render_wbmwriter_dat),
+  .render_dat_i (render_wbmwriter_dati),
+  .ack_o (render_blender_ack),
+  .ack_i (wbmwriter_render_ack),
+  .write_i (blender_render_write_enable),
+  .write_o (render_wbmwriter_memory_pixel_write),
+  .read_o (render_wbmwriter_memory_pixel_read)
+);
 
 defparam renderer.point_width = point_width;
 
-wire        wbmreader_arbiter_ack;
+wire wbmreader_arbiter_ack;
 wire [31:0] arbiter_wbmreader_addr;
 wire [255:0] wbmreader_arbiter_data;
 wire [255:0] wbmwriter_arbiter_data;
 wire [31:0] arbiter_wbmreader_sel;
-wire        arbiter_wbmreader_request;
-wire        arbiter_wbmwriter_request;
+wire arbiter_wbmreader_request;
+wire arbiter_wbmwriter_request;
 
 // Instansiate wbm arbiter
 gfx256_wbm_readwrite_arbiter wbm_arbiter (
-  .master_busy_o     (wbmreader_busy),
+  .master_busy_o (wbmreader_busy),
   // Interface against the wbm module
-  .read_request_o    (arbiter_wbmreader_request),
-  .write_request_o   (arbiter_wbmwriter_request),
-  .addr_o            (arbiter_wbmreader_addr),
-  .sel_o             (arbiter_wbmreader_sel),
-  .dat_i             (wbmreader_arbiter_data),
-  .dat_o             (wbmwriter_arbiter_data),
-  .ack_i             (wbmreader_arbiter_ack),
+  .read_request_o (arbiter_wbmreader_request),
+  .write_request_o (arbiter_wbmwriter_request),
+  .addr_o (arbiter_wbmreader_addr),
+  .sel_o (arbiter_wbmreader_sel),
+  .dat_i (wbmreader_arbiter_data),
+  .dat_o (wbmwriter_arbiter_data),
+  .ack_i (wbmreader_arbiter_ack),
   // Interface against masters (render)
   .mw_write_request_i(render_wbmwriter_memory_pixel_write),
-  .mw_addr_i         (render_wbmwriter_addr),
-  .mw_sel_i          (render_wbmwriter_sel),
-  .mw_dat_i          (render_wbmwriter_dat),
-  .mw_ack_o          (wbmwriter_render_ack),
+  .mw_read_request_i(render_wbmwriter_memory_pixel_read),
+  .mw_we_i(render_wbmwriter_memory_pixel_write),
+  .mw_addr_i (render_wbmwriter_addr),
+  .mw_sel_i (render_wbmwriter_sel),
+  .mw_dat_i (render_wbmwriter_dat),
+  .mw_dat_o (render_wbmwriter_dati),
+  .mw_ack_o (wbmwriter_render_ack),
   // Interface against masters (clip)
   .m0_read_request_i (clip_wbmreader_z_request),
-  .m0_addr_i         (clip_wbmreader_z_addr),
-  .m0_sel_i          (clip_wbmreader_z_sel),
-  .m0_dat_o          (wbmreader_clip_z_data),
-  .m0_ack_o          (wbmreader_clip_z_ack),
+  .m0_addr_i (clip_wbmreader_z_addr),
+  .m0_sel_i (clip_wbmreader_z_sel),
+  .m0_dat_o (wbmreader_clip_z_data),
+  .m0_ack_o (wbmreader_clip_z_ack),
   // Interface against masters (fragment processor)
   .m1_read_request_i (fragment_wbmreader_texture_request),
   .m1_addr_i         (fragment_wbmreader_texture_addr),
@@ -765,20 +776,20 @@ gfx256_wbm_readwrite_arbiter wbm_arbiter (
   .m2_ack_o          (wbmreader_blender_target_ack),
   // Interface against masters (textblit)
   .m3_read_request_i(textblit_read_request),
-  .m3_addr_i				(textblit_adr_o[31:0]),
-  .m3_sel_i					(textblit_sel_o),
-  .m3_dat_o				  (textblit_dat_i),
-  .m3_ack_o					(textblit_ack_i)
-  );
+  .m3_addr_i (textblit_adr_o[31:0]),
+  .m3_sel_i	(textblit_sel_o),
+  .m3_dat_o	(textblit_dat_i),
+  .m3_ack_o	(textblit_ack_i)
+);
 
 // Instansiate wishbone master interface (read only for textures)
 gfx256_wbm_rw  #(.CID(CID)) wbm_rw
 (
-  .clk_i            (wb_clk_i),
-  .rst_i            (wb_rst_i),
+  .clk_i (wb_clk_i),
+  .rst_i (wb_rst_i),
   .wbm_req(wbm_req),
   .wbm_resp(wbm_resp),
-  .sint_o           (wbmreader_sint),
+  .sint_o (wbmreader_sint),
 
   // send ack to renderer when done writing to memory.
   .read_request_i   (arbiter_wbmreader_request),
@@ -788,7 +799,7 @@ gfx256_wbm_rw  #(.CID(CID)) wbm_rw
   .texture_dat_o    (wbmreader_arbiter_data),
   .texture_dat_i    (wbmwriter_arbiter_data),
   .texture_data_ack (wbmreader_arbiter_ack)
-  );
+);
 
 endmodule
 

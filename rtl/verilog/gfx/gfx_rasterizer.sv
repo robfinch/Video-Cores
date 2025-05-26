@@ -152,7 +152,6 @@ typedef enum logic [2:0]
 	char_state
 } rasterizer_state_e;
 rasterizer_state_e state;
-reg [2:0] state;
 
 // Write/ack counter
 reg [delay_width-1:0] ack_counter;
@@ -170,10 +169,10 @@ always_ff @(posedge clk_i)
 begin
   if(rst_i)
   begin
-    rect_p0_x <= 1'b0;
-    rect_p0_y <= 1'b0;
-    rect_p1_x <= 1'b0;
-    rect_p1_y <= 1'b0;
+    rect_p0_x <= 16'b0;
+    rect_p0_y <= 16'b0;
+    rect_p1_x <= 16'b0;
+    rect_p1_y <= 16'b0;
   end
   else
   begin
@@ -257,7 +256,8 @@ else
   	endcase
 
 	point_state:
-		state <= wait_state;
+		if (clip_ack_i)
+			state <= wait_state;
 
   rect_state:
     if(raster_rect_done) // if we are done drawing a rect, go to wait state
@@ -317,7 +317,7 @@ begin
     	if (point_write_i) begin
 				x_counter_o <= p0_x;
 				y_counter_o <= p0_y;
-				clip_write_o <= point_write_i;
+				clip_write_o <= 1'b1;
 			end
 
       else if(rect_write_i & !empty_raster) // Start a raster rectangle operation
@@ -346,7 +346,7 @@ begin
         ack_o <= 1'b0;
 
 		point_state:
-			begin
+			if (clip_ack_i) begin
 				clip_write_o <= 1'b0;
 				ack_o <= 1'b1;
 			end

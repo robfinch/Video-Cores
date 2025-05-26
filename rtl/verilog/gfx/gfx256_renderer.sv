@@ -27,9 +27,9 @@ module gfx256_renderer(clk_i, rst_i,
 	target_x0_i, target_y0_i,
 	color_depth_i,
 	pixel_x_i, pixel_y_i, pixel_z_i, zbuffer_enable_i, color_i,
-	render_addr_o, render_sel_o, render_dat_o,
+	render_addr_o, render_sel_o, render_dat_o, render_dat_i,
 	ack_o, ack_i,
-	write_i, write_o
+	write_i, write_o, read_o
 	);
 
 parameter point_width = 16;
@@ -38,36 +38,42 @@ input clk_i;
 input rst_i;
 
 // Render target information, used for checking out of bounds and stride when writing pixels
-input            [31:0] target_base_i;
-input            [31:0] zbuffer_base_i;
+input [31:0] target_base_i;
+input [31:0] zbuffer_base_i;
 input [point_width-1:0] target_size_x_i;
 input [point_width-1:0] target_size_y_i;
 input [point_width-1:0] target_x0_i;
 input [point_width-1:0] target_y0_i;
 
-input             [1:0] color_depth_i;
+input [1:0] color_depth_i;
 
 input [point_width-1:0] pixel_x_i;
 input [point_width-1:0] pixel_y_i;
 input [point_width-1:0] pixel_z_i;
-input                   zbuffer_enable_i;
-input            [31:0] color_i;
+input zbuffer_enable_i;
+input [31:0] color_i;
 
-input      write_i;
-output reg write_o;
+input write_i;
+output write_o;
+output reg read_o;
 
 // Output registers connected to the wbm
-output reg  [31:0] render_addr_o;
-output reg  [31:0] render_sel_o;
+output reg [31:0] render_addr_o;
+output reg [31:0] render_sel_o;
 output reg [255:0] render_dat_o;
+input [255:0] render_dat_i;
 
-wire        [31:0] target_sel;
-wire       [255:0] target_dat;
-wire        [31:0] zbuffer_sel;
-wire       [255:0] zbuffer_dat;
+wire [31:0] target_sel;
+wire [255:0] target_dat;
+wire [31:0] zbuffer_sel;
+wire [255:0] zbuffer_dat;
+reg [255:0] target_dati;
 
 output reg ack_o;
-input      ack_i;
+input ack_i;
+
+reg write1;
+assign write_o = write1;
 
 // TODO: Fifo for incoming pixel data?
 
@@ -114,21 +120,23 @@ gfx_calc_address #(.SW(256)) ugfxca2
 
 // Color to memory converter
 color_to_memory256 color_proc(
-.color_depth_i  (color_depth_i),
-.color_i        (color_i),
-.mb_i(tmb),
-.mem_o          (target_dat),
-.sel_o          (target_sel)
+	.color_depth_i (color_depth_i),
+	.color_i (color_i),
+	.mb_i(tmb),
+	.mem_i (target_dati),
+	.mem_o (target_dat),
+	.sel_o (target_sel)
 );
 
 // Color to memory converter
 color_to_memory256 depth_proc(
-.color_depth_i  (2'b01),
-// Note: Padding because z_i is only [15:0]
-.color_i        ({ {point_width{1'b0}}, pixel_z_i[point_width-1:0] }),
-.mb_i(zmb),
-.mem_o          (zbuffer_dat),
-.sel_o          (zbuffer_sel)
+	.color_depth_i  (2'b01),
+	// Note: Padding because z_i is only [15:0]
+	.color_i        ({ {point_width{1'b0}}, pixel_z_i[point_width-1:0] }),
+	.mb_i(zmb),
+	.mem_i (256'd0),
+	.mem_o (zbuffer_dat),
+	.sel_o (zbuffer_sel)
 );
 
 // State machine
@@ -136,7 +144,7 @@ typedef enum logic [2:0] {
 	wait_state = 3'd0,
 	delay1_state,
 	delay2_state,
-	delay3_state,
+	read_pixel_state,
 	write_pixel_state,
 	write_pixel_ack_state,
 	write_z_state
@@ -150,48 +158,62 @@ begin
   //  reset, init component
   if(rst_i)
   begin
-    write_o <= 1'b0;
+    write1 <= 1'b0;
     ack_o <= 1'b0;
-    render_addr_o <= 1'b0;
-    render_sel_o <= 1'b0;
-    render_dat_o <= 1'b0;
+    render_addr_o <= 32'b0;
+    render_sel_o <= 32'b0;
+    render_dat_o <= 256'b0;
   end
   // Else, set outputs for next cycle
   else
   begin
+  	ack_o <= 1'b0;
+ 
     case (state)
 
     wait_state:
-      ack_o <= 1'b0;
+    	begin
+    		target_dati <= 256'd0;
+      	ack_o <= 1'b0;
+      end
+      
+    read_pixel_state:
+      begin
+        render_addr_o <= target_addr;
+        render_sel_o <= target_sel;
+        render_dat_o <= 256'd0;
+        read_o <= 1'b1;
+        if (ack_i) begin
+        	target_dati <= render_dat_i;
+        	read_o <= 1'b0;
+        end
+      end
 
 		write_pixel_state:
       begin
         render_addr_o <= target_addr;
         render_sel_o <= target_sel;
         render_dat_o <= target_dat;
-        write_o <= 1'b1;
+        write1 <= 1'b1;
       end
 
     // Write pixel to memory. If depth buffering is enabled, write z value too
     write_pixel_ack_state:
 	    begin
-	      if(ack_i)
-	      begin
+	      if(ack_i) begin
 	        render_addr_o <= zbuffer_addr;
-	        render_sel_o  <= zbuffer_sel;
-	        render_dat_o  <= zbuffer_dat;
+	        render_sel_o <= zbuffer_sel;
+	        render_dat_o <= zbuffer_dat;
 
-	        write_o <= zbuffer_enable_i;
+	        write1 <= zbuffer_enable_i;
 	        ack_o <= ~zbuffer_enable_i;
 	      end
-	      else
-	        write_o <= 1'b0;
 	    end
 
     write_z_state:
-	    begin
-	      write_o <= 1'b0;
-	      ack_o <= ack_i;
+	    if (ack_i) begin
+	      write1 <= 1'b0;
+	      ack_o <= 1'b1;
 	    end
 
 		default:	;
@@ -216,7 +238,14 @@ begin
     delay1_state:
     	state <= delay2_state;
     delay2_state:
-      state <= write_pixel_state;
+    	if (color_depth_i==2'b01)
+    		state <= read_pixel_state;
+    	else
+      	state <= write_pixel_state;
+
+		read_pixel_state:
+			if (ack_i)
+				state <= write_pixel_state;
 
 		write_pixel_state:
 			state <= write_pixel_ack_state;
