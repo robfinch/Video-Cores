@@ -36,6 +36,7 @@ parameter subpixel_width = 16;
 parameter fifo_depth     = 10;
 
 parameter REG_ADR_HIBIT = 9;
+parameter BPP12 = 1'b0;
 
 // Common wishbone signals
 input wb_clk_i;    // master clock input
@@ -440,7 +441,7 @@ wire                   cuvz_clip_write;
 
 wire            [31:0] cuvz_clip_color;
 
-gfx256_cuvz cuvz(
+gfx256_cuvz #(.BPP12(BPP12)) cuvz(
 .clk_i     (wb_clk_i),
 .rst_i     (wb_rst_i),
 .ack_i     (clip_ack),
@@ -539,7 +540,7 @@ wire [31:0] clip_wbmreader_z_sel;
 wire clip_wbmreader_z_request;
 
 // Apply clipping
-gfx256_clip clip(
+gfx256_clip #(.BPP12(BPP12)) clip (
 	.clk_i (wb_clk_i),
 	.rst_i (wb_rst_i),
 	.clipping_enable_i(clipping_enable_reg),
@@ -610,7 +611,7 @@ wire fragment_wbmreader_texture_request;
 
 
 // Fragment processor generates color of pixel (requires RAM read for textures)
-gfx256_fragment_processor fp0 (
+gfx256_fragment_processor #(.BPP12(BPP12)) fp0 (
   .clk_i (wb_clk_i),
   .rst_i (wb_rst_i),
   .pixel_alpha_i (clip_fragment_a),
@@ -665,7 +666,7 @@ wire blender_wbmreader_target_request;
 
 // Applies alpha blending if enabled (requires RAM read to get target pixel color)
 // Fragment processor generates color of pixel (requires RAM read for textures)
-gfx256_blender blender0 (
+gfx256_blender #(.BPP12(BPP12)) blender0 (
   .clk_i (wb_clk_i),
   .rst_i (wb_rst_i),
   .blending_enable_i (blending_enable_reg),
@@ -699,7 +700,7 @@ gfx256_blender blender0 (
 defparam blender0.point_width = point_width;
 
 // Write pixel to target (check for out of bounds)
-gfx256_renderer renderer (
+gfx256_renderer #(.BPP12(BPP12)) renderer (
   .clk_i (wb_clk_i),
   .rst_i (wb_rst_i),
   // Render target information

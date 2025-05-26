@@ -53,6 +53,7 @@ module gfx256_cuvz(
   );
 
 parameter point_width = 16;
+parameter BPP12 = 1'b0;
 
 input                        clk_i;
 input                        rst_i;
@@ -164,43 +165,43 @@ wire [point_width-1:0] bezier_factor1 = factor2;
 
 // Split colors
 wire [9:0] color0_r = (color_depth_i == 2'b00) ? color0_i[7:0] :
-                      (color_depth_i == 2'b01) ? color0_i[15:11] :
+                      (color_depth_i == 2'b01) ? (BPP12 ? color0_i[11:8] : color0_i[14:10]):
                       (color_depth_i == 2'b10) ? color0_i[23:16] :
                       color0_i[29:20];
 wire [9:0] color0_g = (color_depth_i == 2'b00) ? color0_i[7:0] :
-                      (color_depth_i == 2'b01) ? color0_i[10:5] :
+                      (color_depth_i == 2'b01) ? (BPP12 ? color0_i[7:4] : color0_i[9:5]) :
                       (color_depth_i == 2'b10) ? color0_i[15:8] :
                       color0_i[19:10];
 wire [9:0] color0_b = (color_depth_i == 2'b00) ? color0_i[7:0] :
-                      (color_depth_i == 2'b01) ? color0_i[4:0] :
+                      (color_depth_i == 2'b01) ? (BPP12 ? color0_i[3:0] : color0_i[4:0]) :
                       (color_depth_i == 2'b10) ? color0_i[7:0] :
                       color0_i[9:0];
 
 // Split colors
 wire [9:0] color1_r = (color_depth_i == 2'b00) ? color1_i[7:0] :
-                      (color_depth_i == 2'b01) ? color1_i[15:11] :
+                      (color_depth_i == 2'b01) ? (BPP12 ? color1_i[11:8] : color1_i[14:10]) :
                       (color_depth_i == 2'b10) ? color1_i[23:16] :
                       color1_i[29:20];
 wire [9:0] color1_g = (color_depth_i == 2'b00) ? color1_i[7:0] :
-                      (color_depth_i == 2'b01) ? color1_i[10:5] :
+                      (color_depth_i == 2'b01) ? (BPP12 ? color1_i[7:4] : color1_i[9:5]) :
                       (color_depth_i == 2'b10) ? color1_i[15:8] :
                       color1_i[19:10];
 wire [9:0] color1_b = (color_depth_i == 2'b00) ? color1_i[7:0] :
-                      (color_depth_i == 2'b01) ? color1_i[4:0] :
+                      (color_depth_i == 2'b01) ? (BPP12 ? color1_i[3:0] : color1_i[4:0]) :
                       (color_depth_i == 2'b10) ? color1_i[7:0] :
                       color1_i[9:0];
 
 // Split colors
 wire [9:0] color2_r = (color_depth_i == 2'b00) ? color2_i[7:0] :
-                      (color_depth_i == 2'b01) ? color2_i[15:11] :
+                      (color_depth_i == 2'b01) ? (BPP12 ? color2_i[11:8] : color2_i[14:10]) :
                       (color_depth_i == 2'b10) ? color2_i[23:16] :
                       color2_i[29:20];
 wire [9:0] color2_g = (color_depth_i == 2'b00) ? color2_i[7:0] :
-                      (color_depth_i == 2'b01) ? color2_i[10:5] :
+                      (color_depth_i == 2'b01) ? (BPP12 ? color2_i[7:4] : color2_i[9:5]) :
                       (color_depth_i == 2'b10) ? color2_i[15:8] :
                       color2_i[19:10];
 wire [9:0] color2_b = (color_depth_i == 2'b00) ? color2_i[7:0] :
-                      (color_depth_i == 2'b01) ? color2_i[4:0] :
+                      (color_depth_i == 2'b01) ? (BPP12 ? color2_i[3:0] : color2_i[4:0]) :
                       (color_depth_i == 2'b10) ? color2_i[7:0] :
                       color2_i[9:0];
 
@@ -260,7 +261,9 @@ begin
         a_o     <= a[point_width+8-1:point_width];
         // Color
         color_o <= (color_depth_i == 2'b00) ? {color_r[10+point_width-1:point_width]} : // 8 bit grayscale
-                   (color_depth_i == 2'b01) ? {color_r[5+point_width-1:point_width], color_g[5+point_width-1:point_width], color_b[5+point_width-1:point_width]} : // 16 bit
+                   (color_depth_i == 2'b01) ? (BPP12 ?
+                   		{color_r[4+point_width-1:point_width], color_g[4+point_width-1:point_width], color_b[4+point_width-1:point_width]} :	// 12 bit
+                    	{color_r[5+point_width-1:point_width], color_g[5+point_width-1:point_width], color_b[5+point_width-1:point_width]}) : // 16 bit
                    (color_depth_i == 2'b10) ? {color_r[8+point_width-1:point_width], color_g[8+point_width-1:point_width], color_b[8+point_width-1:point_width]} : // 24 bit
                    {color_r[10+point_width-1:point_width], color_g[10+point_width-1:point_width], color_b[10+point_width-1:point_width]}; // 32 bit
       end

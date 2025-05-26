@@ -22,6 +22,7 @@ Components for aligning colored pixels to memory and the inverse
 */
 
 module color_to_memory256(color_depth_i, color_i, mb_i, mem_i, mem_o, sel_o);
+parameter BPP12=1'b0;
 input  [1:0]  color_depth_i;
 input  [31:0] color_i;
 input [7:0] mb_i;
@@ -39,7 +40,7 @@ always_comb
 	endcase
 
 always_comb
-if (color_depth_i==2'b01)
+if (color_depth_i==2'b01 && BPP12)
 	sel_o = {32{1'b1}};
 else
 	sel_o = {28'd0,sel1} << mb_i[7:3];
@@ -48,7 +49,7 @@ reg [31:0] mask;
 always_comb
 case(color_depth_i)
 2'b00:	mask = 32'h000000FF;
-2'b01:	mask = 32'h0000FFFF;
+2'b01:	mask = BPP12 ? 32'h00000FFF : 32'h0000FFFF;
 2'b10:	mask = 32'h00FFFFFF;
 2'b11:	mask = 32'hFFFFFFFF;
 endcase
@@ -63,6 +64,7 @@ assign mem_o = ({32'd0,color_i & mask} << mb_i) | (mem_i & ~maskshftd);
 endmodule
 
 module memory_to_color256(color_depth_i, mem_i, mb_i, color_o, sel_o);
+parameter BPP12=1'b0;
 input  [1:0]  color_depth_i;
 input  [255:0] mem_i;
 input [7:0] mb_i;
@@ -85,7 +87,7 @@ reg [31:0] mask;
 always_comb
 case(color_depth_i)
 2'b00:	mask = 32'h000000FF;
-2'b01:	mask = 32'h0000FFFF;
+2'b01:	mask = BPP12 ? 32'h00000FFF : 32'h0000FFFF;
 2'b10:	mask = 32'h00FFFFFF;
 2'b11:	mask = 32'hFFFFFFFF;
 default:	mask = 32'h00000000;

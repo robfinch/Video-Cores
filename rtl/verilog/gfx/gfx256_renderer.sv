@@ -33,6 +33,7 @@ module gfx256_renderer(clk_i, rst_i,
 	);
 
 parameter point_width = 16;
+parameter BPP12 = 1'b0;
 
 input clk_i;
 input rst_i;
@@ -87,7 +88,7 @@ assign write_o = write1;
 wire [31:0] target_addr;
 wire [31:0] zbuffer_addr;
 wire [7:0] tmb;
-gfx_calc_address #(.SW(256)) ugfxca1
+gfx_calc_address #(.SW(256), .BPP12(BPP12)) ugfxca1
 (
 	.clk(clk_i),
 	.base_address_i(target_base_i),
@@ -101,7 +102,7 @@ gfx_calc_address #(.SW(256)) ugfxca1
 	.ce_o()
 );
 wire [7:0] zmb;
-gfx_calc_address #(.SW(256)) ugfxca2
+gfx_calc_address #(.SW(256), .BPP12(BPP12)) ugfxca2
 (
 	.clk(clk_i),
 	.base_address_i(zbuffer_base_i),
@@ -119,7 +120,7 @@ gfx_calc_address #(.SW(256)) ugfxca2
 //wire [31:5] zbuffer_addr = zbuffer_base_i + pixel_offset[31:5];
 
 // Color to memory converter
-color_to_memory256 color_proc(
+color_to_memory256 #(.BPP12(BPP12)) color_proc(
 	.color_depth_i (color_depth_i),
 	.color_i (color_i),
 	.mb_i(tmb),
@@ -129,7 +130,7 @@ color_to_memory256 color_proc(
 );
 
 // Color to memory converter
-color_to_memory256 depth_proc(
+color_to_memory256 #(.BPP12(BPP12)) depth_proc(
 	.color_depth_i  (2'b01),
 	// Note: Padding because z_i is only [15:0]
 	.color_i        ({ {point_width{1'b0}}, pixel_z_i[point_width-1:0] }),

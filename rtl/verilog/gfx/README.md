@@ -11,3 +11,6 @@ Modifications include:
 * use of synchronous resets instead of asynchronous
 * added default statements in case statements to get rid of warnings
 * case statements are used in some places instead of priority encoders
+## Status
+The 128-bit bus version has several errors in it. It was only partially updated, and is not tested. Specifically, the address bus bits need to be fixed.
+The 256-bit bus version is the one currently worked on.

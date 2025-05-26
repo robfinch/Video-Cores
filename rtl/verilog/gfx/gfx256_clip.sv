@@ -42,6 +42,7 @@ module gfx256_clip(clk_i, rst_i,
   );
 
 parameter point_width = 16;
+parameter BPP12 = 1'b0;
 
 input clk_i;
 input rst_i;
@@ -121,7 +122,7 @@ clip_state_e state;
 // Addr[31:2] = Base + (Y*width + X) * ppb
 //wire [31:0] pixel_offset;
 wire [7:0] mb;
-gfx_calc_address #(.SW(256)) ugfxca1
+gfx_calc_address #(.SW(256), .BPP12(BPP12)) ugfxca1
 (
 	.clk(clk_i),
 	.base_address_i(zbuffer_base_i),
@@ -142,7 +143,7 @@ wire [31:0] z_value_at_target32;
 wire signed [point_width-1:0] z_value_at_target = z_value_at_target32[point_width-1:0];
 
 // Memory to color converter
-memory_to_color256 memory_proc(
+memory_to_color256 #(.BPP12(BPP12)) memory_proc(
 	.color_depth_i (2'b01),
 	.mem_i (z_data_i),
 	.mb_i(mb),

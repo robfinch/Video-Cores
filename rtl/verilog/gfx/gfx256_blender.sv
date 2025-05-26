@@ -43,6 +43,7 @@ module gfx256_blender(clk_i, rst_i,
   );
 
 parameter point_width = 16;
+parameter BPP12 = 1'b0;
 
 input                   clk_i;
 input                   rst_i;
@@ -102,7 +103,7 @@ wire [7:0] alpha = combined_alpha_reg[15:8];
 // Addr[31:2] = Base + (Y*width + X) * ppb
 //reg [31:0] pixel_offset;
 wire [7:0] mb;
-gfx_calc_address #(.SW(256)) ugfxca1
+gfx_calc_address #(.SW(256), .BPP12(BPP12)) ugfxca1
 (
 	.clk(clk_i),
 	.base_address_i(target_base_i),
@@ -125,7 +126,7 @@ input [1:0] color_depth;
 input [31:0] pixel_color;
 case(color_depth)
 2'b00:	R = pixel_color[5:0];
-2'b01:	R = pixel_color[14:10];
+2'b01:	R = BPP12 ? pixel_color[11:8] : pixel_color[14:10];
 2'b10:	R = pixel_color[23:16];
 2'b11:	R = pixel_color[29:20];
 endcase
@@ -136,7 +137,7 @@ input [1:0] color_depth;
 input [31:0] pixel_color;
 case(color_depth)
 2'b00:	G = pixel_color[5:0];
-2'b01:	G = pixel_color[9:5];
+2'b01:	G = BPP12 ? pixel_color[7:4] : pixel_color[9:5];
 2'b10:	G = pixel_color[15:8];
 2'b11:	G = pixel_color[19:10];
 endcase
@@ -147,7 +148,7 @@ input [1:0] color_depth;
 input [31:0] pixel_color;
 case(color_depth)
 2'b00:	B = pixel_color[5:0];
-2'b01:	B = pixel_color[4:0];
+2'b01:	B = BPP12 ? pixel_color[3:0] : pixel_color[4:0];
 2'b10:	B = pixel_color[7:0];
 2'b11:	B = pixel_color[9:0];
 endcase
@@ -171,12 +172,12 @@ wire [17:0] alpha_color_b = blend_color_b * alpha + target_color_b * ~alpha;
 
 wire [31:0] dest_color;
 // Memory to color converter
-memory_to_color256 memory_proc(
-.color_depth_i (color_depth_i),
-.mem_i (target_data_i),
-.mb_i(mb),
-.color_o (dest_color),
-.sel_o ()
+memory_to_color256 #(.BPP12(BPP12)) memory_proc(
+	.color_depth_i (color_depth_i),
+	.mem_i (target_data_i),
+	.mb_i(mb),
+	.color_o (dest_color),
+	.sel_o ()
 );
 
 assign write_o = write1;
@@ -237,7 +238,7 @@ begin
       	  // Recombine colors
       	  case(color_depth_i)
       	  2'b00: pixel_color_o <= {pixel_color_i[7:6],alpha_color_r[13:8]};
-      	  2'b01: pixel_color_o <= {pixel_color_i[15],alpha_color_r[12:8], alpha_color_g[12:8], alpha_color_b[12:8]};
+      	  2'b01: pixel_color_o <= BPP12 ? {alpha_color_r[11:8], alpha_color_g[11:8], alpha_color_b[11:8]}: {pixel_color_i[15],alpha_color_r[12:8], alpha_color_g[12:8], alpha_color_b[12:8]};
       	  2'b10: pixel_color_o <= {alpha_color_r[15:8], alpha_color_g[15:8], alpha_color_b[15:8]};
       	  2'b11: pixel_color_o <= {pixel_color_i[31:30],alpha_color_r[17:8], alpha_color_g[17:8], alpha_color_b[17:8]};
       		endcase

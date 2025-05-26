@@ -36,6 +36,7 @@ module gfx256_fragment_processor(clk_i, rst_i,
   );
 
 parameter point_width = 16;
+parameter BPP12 = 1'b0;
 
 input clk_i;
 input rst_i;
@@ -88,7 +89,7 @@ assign write_o = write1;
 
 // Calculate the memory address of the texel to read 
 wire [7:0] mb;
-gfx_calc_address #(.SW(256)) ugfxca1
+gfx_calc_address #(.SW(256), .BPP12(BPP12)) ugfxca1
 (
 	.clk(clk_i),
 	.base_address_i(tex0_base_i),
@@ -120,7 +121,7 @@ frag_state_e state;
 wire [31:0] mem_conv_color_o;
 
 // Color converter
-memory_to_color256 color_proc(
+memory_to_color256 #(.BPP12(BPP12)) color_proc(
 	.color_depth_i (color_depth_i),
 	.mem_i (texture_data_i),
 	.mb_i(mb),
@@ -133,7 +134,7 @@ reg transparent_pixel;
 always_comb
 case(color_depth_i)
 2'b00:	transparent_pixel <= (mem_conv_color_o[7:0]  == colorkey_i[7:0]);
-2'b01:	transparent_pixel <= (mem_conv_color_o[15:0] == colorkey_i[15:0]);
+2'b01:	transparent_pixel <= BPP12 ?  (mem_conv_color_o[11:0] == colorkey_i[11:0]) : (mem_conv_color_o[15:0] == colorkey_i[15:0]);
 2'b10:	transparent_pixel <= (mem_conv_color_o[23:0] == colorkey_i[23:0]);
 2'b11:	transparent_pixel <= (mem_conv_color_o == colorkey_i);
 endcase
