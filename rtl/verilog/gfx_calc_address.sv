@@ -44,6 +44,7 @@ module gfx_calc_address(clk, base_address_i, color_depth_i, bmp_width_i, x_coord
 	address_o, mb_o, me_o, ce_o);
 parameter SW = 256;		// strip width in bits
 parameter BN = $clog2(SW)-1;
+parameter BPP12 = 1'b0;
 input clk;
 input [31:0] base_address_i;
 input [1:0] color_depth_i;
@@ -62,7 +63,7 @@ reg [23:0] coeff;
 always_comb
 	case(color_depth_i)
 	BPP8:	coeff = 8*65536/SW;
-	BPP16:	coeff = 16*65536/SW;
+	BPP16:	coeff = BPP12 ? 12*65536/SW : 16*65536/SW;
 	BPP24:	coeff = 24*65536/SW;
 	BPP32:	coeff = 32*65536/SW;
 	default:	coeff = 16*65536/SW;
@@ -73,7 +74,7 @@ reg [5:0] bpp;
 always_comb
 	case(color_depth_i)
 	BPP8:	bpp = 7;
-	BPP16:	bpp = 15;
+	BPP16:	bpp = BPP12 ? 11 : 15;
 	BPP24:	bpp = 23;
 	BPP32:	bpp = 31;
 	default:	bpp = 15;
@@ -84,7 +85,7 @@ reg [5:0] cbpp;
 always_comb
 	case(color_depth_i)
 	BPP8:	cbpp = 7;
-	BPP16:	cbpp = 15;
+	BPP16:	cbpp = BPP12 ? 11 : 15;
 	BPP24:	cbpp = 23;
 	BPP32:	cbpp = 29;
 	default:	cbpp = 15;
@@ -96,7 +97,7 @@ reg [8:0] coeff2;
 always_comb
 	case(color_depth_i)
 	BPP8:	coeff2 = SW-(SW % 8);
-	BPP16:	coeff2 = SW-(SW % 16);
+	BPP16:	coeff2 = BPP12 ? SW-(SW % 12): SW-(SW % 16);
 	BPP24:	coeff2 = SW-(SW % 24);
 	BPP32:	coeff2 = SW-(SW % 32);
 	default:	coeff2 = SW-(SW % 16);

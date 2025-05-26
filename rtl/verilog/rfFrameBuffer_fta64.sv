@@ -69,6 +69,7 @@ module rfFrameBuffer_fta64 (
 	m_fst_o, 
 	m_bus_o,
 	m_rst_busy_i,
+	fifo_rst_o,
 	video_i,
 	video_o,
 	xal_o,
@@ -111,7 +112,7 @@ parameter PHYS_ADDR_BITS = 32;
 localparam BITS_IN_ADDR_MAP = 18;
 
 parameter MDW = 256;			// Bus master data width
-parameter BURST_INTERVAL = 12'd600;
+parameter BURST_INTERVAL = 12'd3000;
 parameter BM_BASE_ADDR1 = 32'h00000000;
 parameter BM_BASE_ADDR2 = 32'h00400000;
 parameter REG_CTRL = 11'd0;
@@ -309,6 +310,7 @@ fta_bus_interface.slave s_bus_i;
 output reg m_fst_o;		// first access on scanline
 fta_bus_interface.master m_bus_o;
 input m_rst_busy_i;
+output reg fifo_rst_o;
 
 // Video
 video_bus.in video_i;
@@ -403,7 +405,7 @@ fta_cmd_response32_t s_resp1;
 fta_cmd_response32_t cfg_resp;
 `endif
 reg [5:0] max_nburst;
-reg [5:0] burst_len;
+reg [7:0] burst_len;
 
 always_ff @(posedge s_clk_i)
 	reqd <= s_req_i;
@@ -500,7 +502,7 @@ wire pe_hsync, pe_hsync2;
 wire pe_vsync;
 wire [11:0] tocnt;		// bus timeout counter
 reg [4:0] vm_cmd_o;
-reg [5:0] vm_blen_o;
+reg [7:0] vm_blen_o;
 reg vm_cyc_o;
 reg [31:0] vm_adr_o;
 reg vm_we_o;
@@ -715,7 +717,7 @@ delay3 #(MDW/8) udly3 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_sel_o), .o(m_bus_o.re
 delay3 #(14) udly5 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_adr_o[13:0]), .o(m_bus_o.req.adr[13:0]));
 delay1 #(18) udly8 (.clk(m_bus_o.clk), .ce(1'b1), .i(map_page), .o(m_bus_o.req.adr[31:14]));
 delay3 #(13) udly6 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_tid_o), .o(m_bus_o.req.tid));
-delay3 #(6) udly7 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_blen_o), .o(m_bus_o.req.blen));
+delay3 #(8) udly7 (.clk(m_bus_o.clk), .ce(1'b1), .i(vm_blen_o), .o(m_bus_o.req.blen));
 
 wire vblank;
 generate begin : gSyncGen
@@ -896,8 +898,8 @@ if (rst_i) begin
 	vBlankOn <= pvBlankOn; vBlankOff <= pvBlankOff;
 	hBorderOn <= phBorderOn; hBorderOff <= phBorderOff;
 	vBorderOn <= pvBorderOn; vBorderOff <= pvBorderOff;
-	max_nburst <= 6'd1;		// 2 bursts of 25 = 50 accesses for 800 pixels
-	burst_len <= 6'd59;		// 2 bursts of 60 = 120 access for 1920 pixels
+	max_nburst <= 6'd0;		// 2 bursts of 25 = 50 accesses for 800 pixels
+	burst_len <= 8'd119;		// 1 bursts of 120 = 120 access for 1920 pixels
 end
 else begin
 	color_depth2 <= color_depth;
@@ -923,7 +925,7 @@ else begin
 					page <= dat[24];
 					pals <= dat[29:25];
 					end
-					if (sel[4]) burst_len <= dat[37:32];
+					if (sel[4]) burst_len <= dat[39:32];
 					if (sel[5]) max_nburst <= dat[45:40];
 					if (|sel[7:6]) burst_interval <= dat[59:48];
 				end
@@ -1041,7 +1043,7 @@ else begin
 		          s_dat_o[22:20] <= vres;
 		          s_dat_o[24] <= page;
 		          s_dat_o[29:25] <= pals;
-		          s_dat_o[47:32] <= bmpWidth;
+		          s_dat_o[39:32] <= burst_len;
 		          s_dat_o[59:48] <= burst_interval;
 		      end
 		  REG_REFDELAY:		s_dat_o <= {32'h0,vrefdelay,hrefdelay};
@@ -1049,6 +1051,7 @@ else begin
 		  REG_PAGE2ADDR:	s_dat_o <= bm_base_addr2;
 		  REG_PXYZ:		    s_dat_o <= {20'h0,pz,py,px};
 		  REG_PCOLCMD:    s_dat_o <= {color_o,12'd0,raster_op,14'd0,pcmd};
+			REG_BMPSIZE:		s_dat_o <= {16'd0,bmpHeight,16'd0,bmpWidth};
 		  REG_OOB_COLOR:	s_dat_o <= {32'h0,oob_color};
 		  REG_WINDOW:			s_dat_o <= {windowTop,windowLeft,4'h0,windowHeight,4'h0,windowWidth};
 		  REG_IRQ_MSGADR:	s_dat_o <= irq_msgadr;
@@ -1070,7 +1073,7 @@ else begin
 		      end
 		  {REG_CTRL,1'b1}:
 		      begin
-		          s_dat_o[15: 0] <= bmpWidth;
+		          s_dat_o[ 7: 0] <= burst_len;
 		          s_dat_o[27:16] <= burst_interval;
 		      end
 		  {REG_REFDELAY,1'b0}:	s_dat_o <= {vrefdelay,hrefdelay};
@@ -1080,6 +1083,8 @@ else begin
 		  {REG_PXYZ,1'b1}:		  s_dat_o <= {16'h0,pz};
 		  {REG_PCOLCMD,1'b0}:   s_dat_o <= {12'd0,raster_op,14'd0,pcmd};
 		  {REG_PCOLCMD,1'b1}:   s_dat_o <= color_o;
+			{REG_BMPSIZE,1'b0}:		s_dat_o <= {16'd0,bmpWidth};
+			{REG_BMPSIZE,1'b1}:		s_dat_o <= {16'd0,bmpHeight};
 		  {REG_OOB_COLOR,1'b0}:	s_dat_o <= oob_color;
 		  {REG_WINDOW,1'b0}:		s_dat_o <= {4'h0,windowHeight,4'h0,windowWidth};
 		  {REG_WINDOW,1'b1}:		s_dat_o <= {windowTop,windowLeft};
@@ -1233,6 +1238,7 @@ else begin
 end
 
 always_comb fifo_wrst = wrstcnt!=4'd5;// && vc==4'd1;
+always_comb fifo_rst_o = fifo_wrst;
 
 wire[31:0] grAddr,xyAddr;
 reg [11:0] fetchCol;
@@ -1435,7 +1441,7 @@ reg [31:0] pcmd_adr;
 
 always_ff @(posedge m_bus_o.clk)
 if (m_bus_o.rst) begin
-	vm_blen_o <= 6'd0;
+	vm_blen_o <= 8'd0;
 	vm_cmd_o <= fta_bus_pkg::CMD_LOADZ;
 	vm_cyc_o <= LOW;
 	vm_we_o <= LOW;
@@ -1457,7 +1463,7 @@ else begin
 	end
 
 	// For burst only a single request is submitted, but many responses may occur
-	if (memreq && !m_rst_busy_i) begin
+	if (memreq && !m_rst_busy_i && !fifo_wrst) begin
 		m_fst_o <= LOW;
 		vm_blen_o <= burst_len;
 		vm_tid_o <= {CORENO,CHANNEL,4'h0};
@@ -1632,7 +1638,7 @@ modShiftCntr ushftcnt1
 reg next_strip;
 always_comb next_strip = shift_cnt==shifts;
 
-always_comb rd_fifo = next_strip & shift_en & ~pixelCol[15];
+always_comb rd_fifo = next_strip & shift_en & (~pixelCol[15] || pixelCol==16'hFFFF);
 
 modMuxRgbo3 #(.MDW(MDW)) umuxrgbo31
 (
@@ -1667,6 +1673,22 @@ modMuxRgbo umuxrgbo1
 	.rgb_o(rgb_o)
 );
 
+/*
+always_ff @(posedge vclk)
+if (rst_i)
+	addrb <= 10'd0;
+else begin
+	if (memreq && !m_rst_busy_i && !fifo_wrst) begin
+    if (m_fst_o)
+	    addrb <= adr[14:5];
+    else
+	    addrb <= (next_adr + ({10'd0,burst_len} + 2'd1) * (MDW/8)) >> 4'd5;
+	end
+	else if (rd_fifo)
+		addrb <= addrb + 10'd1;
+end
+*/
+
 /* Debugging
 wire [127:0] dat;
 assign dat[11:0] = pixelRow[0] ? 12'hEA4 : 12'h000;
@@ -1692,7 +1714,7 @@ modOobColor #(.MDW(MDW)) uoobdat1
 // Could maybe set pixel color here on timeout, otherwise likely random data
 // will be used for the color.
 
-
+/*
 rescan_fifo #(.WIDTH(MDW), .DEPTH(256)) uf1
 (
 	.wrst(fifo_wrst),
@@ -1707,12 +1729,100 @@ rescan_fifo #(.WIDTH(MDW), .DEPTH(256)) uf1
 	.dout(rgbo1e),
 	.cnt()
 );
-
+*/
 /*
+   // xpm_memory_sdpram: Simple Dual Port RAM
+   // Xilinx Parameterized Macro, version 2024.2
+
+   xpm_memory_sdpram #(
+      .ADDR_WIDTH_A(10),               // DECIMAL
+      .ADDR_WIDTH_B(10),               // DECIMAL
+      .AUTO_SLEEP_TIME(0),            // DECIMAL
+      .BYTE_WRITE_WIDTH_A(MDW),        // DECIMAL
+      .CASCADE_HEIGHT(0),             // DECIMAL
+      .CLOCKING_MODE("independent_clock"), // String
+      .ECC_BIT_RANGE("7:0"),          // String
+      .ECC_MODE("no_ecc"),            // String
+      .ECC_TYPE("none"),              // String
+      .IGNORE_INIT_SYNTH(0),          // DECIMAL
+      .MEMORY_INIT_FILE("none"),      // String
+      .MEMORY_INIT_PARAM("0"),        // String
+      .MEMORY_OPTIMIZATION("true"),   // String
+      .MEMORY_PRIMITIVE("auto"),      // String
+      .MEMORY_SIZE(1024*MDW),         // DECIMAL
+      .MESSAGE_CONTROL(0),            // DECIMAL
+      .RAM_DECOMP("auto"),            // String
+      .READ_DATA_WIDTH_B(MDW),         // DECIMAL
+      .READ_LATENCY_B(1),             // DECIMAL
+      .READ_RESET_VALUE_B("0"),       // String
+      .RST_MODE_A("SYNC"),            // String
+      .RST_MODE_B("SYNC"),            // String
+      .SIM_ASSERT_CHK(0),             // DECIMAL; 0=disable simulation messages, 1=enable simulation messages
+      .USE_EMBEDDED_CONSTRAINT(0),    // DECIMAL
+      .USE_MEM_INIT(1),               // DECIMAL
+      .USE_MEM_INIT_MMI(0),           // DECIMAL
+      .WAKEUP_TIME("disable_sleep"),  // String
+      .WRITE_DATA_WIDTH_A(MDW),        // DECIMAL
+      .WRITE_MODE_B("no_change"),     // String
+      .WRITE_PROTECT(1)               // DECIMAL
+   )
+   xpm_memory_sdpram_inst (
+      .dbiterrb(),             // 1-bit output: Status signal to indicate double bit error occurrence
+                                       // on the data output of port B.
+
+      .doutb(rgbo1e),                   // READ_DATA_WIDTH_B-bit output: Data output for port B read operations.
+      .sbiterrb(),             // 1-bit output: Status signal to indicate single bit error occurrence
+                                       // on the data output of port B.
+
+      .addra(m_bus_o.resp.adr[14:5]),  // ADDR_WIDTH_A-bit input: Address for port A write operations.
+      .addrb(addrb),                   // ADDR_WIDTH_B-bit input: Address for port B read operations.
+      .clka(m_bus_o.clk),              // 1-bit input: Clock signal for port A. Also clocks port B when
+                                       // parameter CLOCKING_MODE is "common_clock".
+
+      .clkb(vclk),                     // 1-bit input: Clock signal for port B when parameter CLOCKING_MODE is
+                                       // "independent_clock". Unused when parameter CLOCKING_MODE is
+                                       // "common_clock".
+
+      .dina(m_bus_o.resp.dat),         // WRITE_DATA_WIDTH_A-bit input: Data input for port A write operations.
+      .ena(1'b1),                       // 1-bit input: Memory enable signal for port A. Must be high on clock
+                                       // cycles when write operations are initiated. Pipelined internally.
+
+      .enb(1'b1),                       // 1-bit input: Memory enable signal for port B. Must be high on clock
+                                       // cycles when read operations are initiated. Pipelined internally.
+
+      .injectdbiterra(1'b0), 					// 1-bit input: Controls double bit error injection on input data when
+                                       // ECC enabled (Error injection capability is not available in
+                                       // "decode_only" mode).
+
+      .injectsbiterra(1'b0), 						// 1-bit input: Controls single bit error injection on input data when
+                                       // ECC enabled (Error injection capability is not available in
+                                       // "decode_only" mode).
+
+      .regceb(1'b1),                 // 1-bit input: Clock Enable for the last register stage on the output
+                                       // data path.
+
+      .rstb(m_bus_o.rst),              // 1-bit input: Reset signal for the final port B output register stage.
+                                       // Synchronously resets output port doutb to the value specified by
+                                       // parameter READ_RESET_VALUE_B.
+
+      .sleep(!on),	                  // 1-bit input: sleep signal to enable the dynamic power saving feature.
+      .wea(m_bus_o.resp.ack && m_bus_o.resp.tid.tranid==4'h0)   // WRITE_DATA_WIDTH_A/BYTE_WRITE_WIDTH_A-bit input: Write enable vector
+                                       // for port A input data port dina. 1 bit wide when word-wide writes are
+                                       // used. In byte-wide write configurations, each bit controls the
+                                       // writing one byte of dina to address addra. For example, to
+                                       // synchronously write only bits [15-8] of dina when WRITE_DATA_WIDTH_A
+                                       // is 32, wea would be 4'b0010.
+
+   );
+
+   // End of xpm_memory_sdpram_inst instantiation
+*/			
+
+
 wire wr_rst_busy, rd_rst_busy;
 reg rd_en;
 always_comb
-	rd_en = next_strip && shift_en && !rd_rst_busy;
+	rd_en = rd_fifo && !rd_rst_busy;
 reg wr_en;
 always_comb	
 	wr_en = (m_bus_o.resp.ack && m_bus_o.resp.tid.tranid==4'h0) && !rst_i && !fifo_wrst && !wr_rst_busy;
@@ -1838,7 +1948,7 @@ always_comb
 
    // End of xpm_fifo_async_inst instantiation
 				
-*/				
+				
 /*
 rescan_fifo #(.WIDTH(MDW), .DEPTH(256)) uf2
 (
@@ -1954,7 +2064,7 @@ module modMemReqGen(rst, clk, max_nburst, burst_len, on, pe_hsync, vFetch, ack, 
 input rst;
 input clk;
 input [5:0] max_nburst;				// maximum number of bursts per scan-line
-input [5:0] burst_len;
+input [7:0] burst_len;
 input on;
 input pe_hsync;
 input vFetch;
@@ -2257,11 +2367,11 @@ module modBurstCntr(rst, clk, memreq, nburst);
 input rst;
 input clk;
 input memreq;
-output reg [5:0] nburst;
+output reg [7:0] nburst;
 
 always_ff @(posedge clk)
 if (rst)
-	nburst <= 6'd0;
+	nburst <= 8'd0;
 else begin
  	if (memreq)
 		nburst <= nburst + 2'd1;
