@@ -33,6 +33,7 @@ module gfx256_clip(clk_i, rst_i,
   zbuffer_base_i, target_size_x_i, target_size_y_i, target_x0_i, target_y0_i, target_x1_i, target_y1_i,
   clip_pixel0_x_i, clip_pixel0_y_i, clip_pixel1_x_i, clip_pixel1_y_i,                              //clip pixel 0 and pixel 1
   raster_pixel_x_i, raster_pixel_y_i, raster_u_i, raster_v_i, flat_color_i, raster_write_i, ack_o, // from raster
+  raster_strip_i, strip_o,
   cuvz_pixel_x_i, cuvz_pixel_y_i, cuvz_pixel_z_i, cuvz_u_i, cuvz_v_i, cuvz_color_i, cuvz_write_i,  // from cuvz
   cuvz_a_i,                                                                                        // from cuvz
   z_ack_i, z_addr_o, z_data_i, z_sel_o, z_request_o, wbm_busy_i,                                   // from/to wbm reader
@@ -43,6 +44,7 @@ module gfx256_clip(clk_i, rst_i,
 
 parameter point_width = 16;
 parameter BPP12 = 1'b0;
+parameter MDW = 256;
 
 input clk_i;
 input rst_i;
@@ -77,6 +79,8 @@ input [point_width-1:0] raster_pixel_x_i;
 input [point_width-1:0] raster_pixel_y_i;
 input [point_width-1:0] raster_u_i;
 input [point_width-1:0] raster_v_i;
+input raster_strip_i;
+output reg strip_o;
 input [31:0] flat_color_i;
 input raster_write_i;
 output reg ack_o;
@@ -113,6 +117,7 @@ typedef enum logic [2:0] {
 	wait_state = 3'd0,
 	delay1_state,
 	delay2_state,
+	delay3_state,
 	z_read_state,
 	write_pixel_state
 } clip_state_e;
@@ -122,7 +127,7 @@ clip_state_e state;
 // Addr[31:2] = Base + (Y*width + X) * ppb
 //wire [31:0] pixel_offset;
 wire [7:0] mb;
-gfx_calc_address #(.SW(256), .BPP12(BPP12)) ugfxca1
+gfx_calc_address #(.SW(MDW), .BPP12(BPP12)) ugfxca1
 (
 	.clk(clk_i),
 	.base_address_i(zbuffer_base_i),
@@ -194,6 +199,16 @@ begin
   end
 end
 
+reg discard_strip;
+reg [point_width-1:0] x_end;
+always_comb
+case(color_depth_i)
+2'b00:	x_end = raster_pixel_x_i + 6'd32;
+2'b01:	x_end = raster_pixel_x_i + 6'd16;
+2'b11:	x_end = raster_pixel_x_i + 6'd8;
+default:	x_end = raster_pixel_x_i + 6'd16;
+endcase
+
 // Check if we should discard this pixel due to failing depth check
 wire fail_z_check   = z_value_at_target > cuvz_pixel_z_i;
 
@@ -208,8 +223,14 @@ wire outside_clip = raster_write_i
 											 : (cuvz_pixel_x_i < clip_pixel0_x_i) | (cuvz_pixel_y_i < clip_pixel0_y_i) | (cuvz_pixel_x_i >= clip_pixel1_x_i) | (cuvz_pixel_y_i >= clip_pixel1_y_i);
 wire discard_pixel = outside_target | (clipping_enable_i & outside_clip);
 
+wire outside_target2 = raster_write_i ? (x_end < target_x0_i) | (x_end >= target_x1_i) : 1'b1;
+wire outside_clip2 = raster_write_i ? (x_end < clip_pixel0_x_i) | (x_end >= clip_pixel1_x_i) : 1'b1;
+
 // Check if there is a write signal
 wire write_i = raster_write_i | cuvz_write_i;
+
+always_comb
+	discard_strip = discard_pixel | outside_target2 | (clipping_enable_i & outside_clip2);
 
 // Acknowledge when a command has completed
 always_ff @(posedge clk_i)
@@ -230,6 +251,7 @@ begin
   wait_state:
 	  begin
 			ack_o <= 1'b0;
+			strip_o <= raster_strip_i & ~discard_strip;
       if(write_i)
         ack_o <= discard_pixel;
       if(write_i & zbuffer_enable_i) begin
@@ -240,7 +262,7 @@ begin
         write1 <= ~discard_pixel;
 	  end
 
-  delay2_state:
+  delay3_state:
     z_request_o <= 1'b1;
 
   // Do a depth check. If it fails, discard pixel, ack and go back to wait. If it succeeds, go to write state
@@ -286,6 +308,8 @@ else
   delay1_state:
   	state <= delay2_state;
   delay2_state:
+  	state <= delay3_state;
+  delay3_state:
     state <= z_read_state;
 
   z_read_state:

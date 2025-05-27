@@ -30,13 +30,16 @@ import gfx256_pkg::*;
 module gfx256_fragment_processor(clk_i, rst_i,
   pixel_alpha_i,
   x_counter_i, y_counter_i, z_i, u_i, v_i, bezier_factor0_i, bezier_factor1_i, bezier_inside_i, write_i, curve_write_i, ack_o, // from raster
+  strip_i,
   pixel_x_o, pixel_y_o, pixel_z_o, pixel_color_i, pixel_color_o, pixel_alpha_o, write_o, ack_i,  // to blender
+  strip_o,
   texture_ack_i, texture_data_i, texture_addr_o, texture_sel_o, texture_request_o, // to/from wishbone master read
   texture_enable_i, tex0_base_i, tex0_size_x_i, tex0_size_y_i, color_depth_i, colorkey_enable_i, colorkey_i // from wishbone slave
   );
 
 parameter point_width = 16;
 parameter BPP12 = 1'b0;
+parameter MDW = 256;
 
 input clk_i;
 input rst_i;
@@ -55,6 +58,7 @@ input bezier_inside_i;
 input [31:0] pixel_color_i;
 input write_i;
 input curve_write_i;
+input strip_i;
 output reg ack_o;
 
 //to render
@@ -64,6 +68,7 @@ output reg signed [point_width-1:0] pixel_z_o;
 output reg [31:0] pixel_color_o;
 output reg [7:0] pixel_alpha_o;
 output write_o;
+output reg strip_o;
 input ack_i;
 
 // to/from wishbone master read
@@ -89,7 +94,7 @@ assign write_o = write1;
 
 // Calculate the memory address of the texel to read 
 wire [7:0] mb;
-gfx_calc_address #(.SW(256), .BPP12(BPP12)) ugfxca1
+gfx_calc_address #(.SW(MDW), .BPP12(BPP12)) ugfxca1
 (
 	.clk(clk_i),
 	.base_address_i(tex0_base_i),
@@ -112,6 +117,7 @@ typedef enum logic [2:0] {
 	wait_state = 3'd0,
 	delay1_state,
 	delay2_state,
+	delay3_state,
 	texture_read_state,
 	texture_read_ack_state,
 	write_pixel_ack_state
@@ -162,10 +168,12 @@ begin
     pixel_alpha_o <= 1'b0;
     texture_request_o <= 1'b0;
     texture_sel_o <= 32'hFFFFFFFF;
+  	strip_o <= 1'b0;
   end
   // Else, set outputs for next cycle
   else begin
   	ack_o <= 1'b0;
+  	strip_o <= 1'b0;
     case (state)
 
     wait_state:
@@ -181,6 +189,7 @@ begin
           pixel_z_o <= z_i;
           pixel_color_o <= pixel_color_i;// Note, colorkey only supported for texture reads
           pixel_alpha_o <= pixel_alpha_i;
+          strip_o <= strip_i;
           write1 <= 1'b1;
         end
       end
@@ -195,6 +204,7 @@ begin
         pixel_z_o <= z_i;
         pixel_color_o <= mem_conv_color_o;
         pixel_alpha_o <= pixel_alpha_i;
+        strip_o <= strip_i;
         texture_request_o <= 1'b0;	// clear this after one cycle??
         if(colorkey_enable_i & transparent_pixel)
           ack_o <= 1'b1; // Colorkey enabled: Only write if the pixel doesn't match the colorkey
@@ -232,6 +242,8 @@ begin
     delay1_state:
     	state <= delay2_state;
     delay2_state:
+    	state <= delay3_state;
+    delay3_state:
       state <= texture_read_state;
 
 		texture_read_state:

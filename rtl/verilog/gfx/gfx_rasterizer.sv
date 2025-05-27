@@ -31,7 +31,7 @@ If texturing is enabled, texture coordinates u (horizontal) and v (vertical) are
 
 When all pixels have been generated and acked, the rasterizer acks the operation and returns to wait state.
 */
-module gfx_rasterizer (clk_i, rst_i,
+module gfx_rasterizer (clk_i, rst_i, color_depth_i,
   clip_ack_i, interp_ack_i, ack_o, point_write_i,
   rect_write_i, line_write_i, triangle_write_i, interpolate_i, texture_enable_i,
   //source pixel 0 and pixel 1
@@ -48,17 +48,20 @@ module gfx_rasterizer (clk_i, rst_i,
   x_counter_o, y_counter_o, u_o,v_o,
   clip_write_o, interp_write_o,
   triangle_edge0_o, triangle_edge1_o, triangle_area_o,
+  strip_o,
   // character
   char_x_i, char_y_i, char_write_i, char_ack_i
 );
 
 parameter point_width    = 16;
 parameter subpixel_width = 16;
-parameter delay_width    = 5;
+parameter delay_width    = 7;
+parameter BPP12 = 1'b0;
 
 input clk_i;
 input rst_i;
 
+input [1:0] color_depth_i;
 input clip_ack_i;
 input interp_ack_i;
 output reg ack_o;
@@ -112,6 +115,7 @@ output reg [point_width-1:0] v_o;
 // Write pixel output signals
 output reg clip_write_o;
 output reg interp_write_o;
+output reg strip_o;
 
 output [2*point_width-1:0] triangle_edge0_o;
 output [2*point_width-1:0] triangle_edge1_o;
@@ -289,6 +293,19 @@ else
 wire interp_ready   = interpolate_i ? (ack_counter <= point_width)   & ~interp_write_o : ack_i;
 wire triangle_ready = interpolate_i ? (ack_counter <= point_width-1) & ~interp_write_o : ack_i;
 
+// Calculate when it is possible to use a strip.
+always_comb
+begin
+	strip_o = 1'b0;
+	if (x_counter_o != rect_p1_x && state==rect_state)
+		case(color_depth_i)
+		2'b00:	if (x_counter_o[4:0]==5'd0 && rect_p1_x[4:0]==5'd0) strip_o = 1'b1;
+		2'b01:	if (x_counter_o[3:0]==5'd0 && rect_p1_x[3:0]==5'd0 && !BPP12) strip_o = 1'b1;
+		2'b11:	if (x_counter_o[2:0]==5'd0 && rect_p1_x[2:0]==5'd0) strip_o = 1'b1;
+		default:	strip_o = 1'b0;
+		endcase
+end
+
 // Manage outputs (mealy machine)
 always_ff @(posedge clk_i)
 begin
@@ -296,15 +313,15 @@ begin
   if(rst_i)
   begin
     ack_o          <= 1'b0;
-    x_counter_o    <= 1'b0;
-    y_counter_o    <= 1'b0;
+    x_counter_o    <= 16'b0;
+    y_counter_o    <= 16'b0;
     clip_write_o   <= 1'b0;
     interp_write_o <= 1'b0;
     u_o            <= 1'b0;
     v_o            <= 1'b0;
 
     //reset line regs
-    draw_line      <= 1'b0;
+    draw_line <= 1'b0;
   end
   else
   begin
@@ -325,8 +342,8 @@ begin
         ack_o <= 1'b0;
         clip_write_o <= 1'b1;
         // Generate pixel coordinates
-        x_counter_o  <= rect_p0_x;
-        y_counter_o  <= rect_p0_y;
+        x_counter_o <= rect_p0_x;
+        y_counter_o <= rect_p0_y;
         // Generate texture coordinates
         u_o <= (($signed(clip_pixel0_x_i) < p0_x) ? 1'b0 :
                  $signed(clip_pixel0_x_i) - p0_x) + src_pixel0_x_i;
@@ -366,8 +383,18 @@ begin
           end
           else
           begin
-            x_counter_o <= x_counter_o + 1'b1;
-            u_o <= u_o + 1'b1;
+          	if (strip_o) begin
+          		case(color_depth_i)
+          		2'b00:	begin x_counter_o <= x_counter_o + 6'd32; u_o <= u_o + 6'd32; end
+          		2'b01:	begin x_counter_o <= x_counter_o + 6'd16; u_o <= u_o + 6'd16; end
+          		2'b11:	begin x_counter_o <= x_counter_o + 6'd8; u_o <= u_o + 6'd8; end
+          		default:	begin x_counter_o <= x_counter_o + 6'd16; u_o <= u_o + 6'd16; end
+          		endcase
+          	end
+          	else begin
+            	x_counter_o <= x_counter_o + 1'b1;
+            	u_o <= u_o + 1'b1;
+            end
           end
         end
 

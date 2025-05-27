@@ -63,7 +63,7 @@ reg [point_width-1:-subpixel_width] delta_minor; // if x is minor this value is 
 
 reg minor_slope_positive; // true if slope is in first quadrant 
 
-reg  signed          [point_width-1:0] major_goal;
+reg  signed [point_width-1:0] major_goal;
 reg  signed [2*point_width-1:-subpixel_width] eps;
 wire signed [2*point_width-1:-subpixel_width] eps_delta_minor;
 wire done;

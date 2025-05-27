@@ -26,7 +26,7 @@ module gfx256_renderer(clk_i, rst_i,
 	target_base_i, zbuffer_base_i, target_size_x_i, target_size_y_i,
 	target_x0_i, target_y0_i,
 	color_depth_i,
-	pixel_x_i, pixel_y_i, pixel_z_i, zbuffer_enable_i, color_i,
+	pixel_x_i, pixel_y_i, pixel_z_i, zbuffer_enable_i, color_i, strip_color_i, strip_i,
 	render_addr_o, render_sel_o, render_dat_o, render_dat_i,
 	ack_o, ack_i,
 	write_i, write_o, read_o
@@ -34,6 +34,7 @@ module gfx256_renderer(clk_i, rst_i,
 
 parameter point_width = 16;
 parameter BPP12 = 1'b0;
+parameter MDW = 256;
 
 input clk_i;
 input rst_i;
@@ -53,6 +54,8 @@ input [point_width-1:0] pixel_y_i;
 input [point_width-1:0] pixel_z_i;
 input zbuffer_enable_i;
 input [31:0] color_i;
+input strip_i;
+input [255:0] strip_color_i;
 
 input write_i;
 output write_o;
@@ -88,7 +91,7 @@ assign write_o = write1;
 wire [31:0] target_addr;
 wire [31:0] zbuffer_addr;
 wire [7:0] tmb;
-gfx_calc_address #(.SW(256), .BPP12(BPP12)) ugfxca1
+gfx_calc_address #(.SW(MDW), .BPP12(BPP12)) ugfxca1
 (
 	.clk(clk_i),
 	.base_address_i(target_base_i),
@@ -102,7 +105,7 @@ gfx_calc_address #(.SW(256), .BPP12(BPP12)) ugfxca1
 	.ce_o()
 );
 wire [7:0] zmb;
-gfx_calc_address #(.SW(256), .BPP12(BPP12)) ugfxca2
+gfx_calc_address #(.SW(MDW), .BPP12(BPP12)) ugfxca2
 (
 	.clk(clk_i),
 	.base_address_i(zbuffer_base_i),
@@ -145,6 +148,7 @@ typedef enum logic [2:0] {
 	wait_state = 3'd0,
 	delay1_state,
 	delay2_state,
+	delay3_state,
 	read_pixel_state,
 	write_pixel_state,
 	write_pixel_ack_state,
@@ -194,7 +198,10 @@ begin
       begin
         render_addr_o <= target_addr;
         render_sel_o <= target_sel;
-        render_dat_o <= target_dat;
+        if (strip_i)
+        	render_dat_o <= strip_color_i;
+        else
+        	render_dat_o <= target_dat;
         write1 <= 1'b1;
       end
 
@@ -239,7 +246,9 @@ begin
     delay1_state:
     	state <= delay2_state;
     delay2_state:
-    	if (color_depth_i==2'b01)
+    	state <= delay3_state;
+    delay3_state:
+    	if (color_depth_i==2'b01 && BPP12)
     		state <= read_pixel_state;
     	else
       	state <= write_pixel_state;

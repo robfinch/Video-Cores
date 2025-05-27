@@ -33,9 +33,9 @@ parameter CID = 4'd5;
 // Set default parameters
 parameter point_width    = 16;
 parameter subpixel_width = 16;
-parameter fifo_depth     = 10;
+parameter fifo_depth     = 11;
 
-parameter REG_ADR_HIBIT = 9;
+parameter REG_ADR_HIBIT = 7;
 parameter BPP12 = 1'b0;
 
 // Common wishbone signals
@@ -329,12 +329,14 @@ wire [point_width-1:0] char_x_o;
 wire [point_width-1:0] char_y_o;
 wire char_write_o;
 wire char_ack_o;
+wire raster_strip;
 
 // Rasterizer generates pixels to calculate
-gfx_rasterizer rasterizer0 (
+gfx_rasterizer #(.BPP12(BPP12)) rasterizer0 (
   .clk_i            (wb_clk_i),
   .rst_i            (wb_rst_i),
 
+	.color_depth_i (color_depth_reg),
   .clip_ack_i       (clip_ack),
   .interp_ack_i     (interp_raster_ack),
   .ack_o            (raster_wbs_ack),
@@ -381,6 +383,7 @@ gfx_rasterizer rasterizer0 (
   .u_o              (raster_clip_u),
   .v_o              (raster_clip_v),
   .clip_write_o     (raster_clip_write),
+  .strip_o (raster_strip),
   // To interp
   .triangle_edge0_o (raster_interp_edge0),
   .triangle_edge1_o (raster_interp_edge1),
@@ -538,6 +541,7 @@ wire [31:0] clip_wbmreader_z_addr;
 wire [255:0] wbmreader_clip_z_data;
 wire [31:0] clip_wbmreader_z_sel;
 wire clip_wbmreader_z_request;
+wire clip_fragment_strip;
 
 // Apply clipping
 gfx256_clip #(.BPP12(BPP12)) clip (
@@ -561,6 +565,7 @@ gfx256_clip #(.BPP12(BPP12)) clip (
 	.raster_pixel_y_i (raster_y_pixel),
 	.raster_u_i (raster_clip_u),
 	.raster_v_i (raster_clip_v),
+	.raster_strip_i (raster_strip),
 	.flat_color_i (color0_reg),
 	.raster_write_i (raster_clip_write),
 	.cuvz_pixel_x_i (cuvz_clip_x),
@@ -581,6 +586,7 @@ gfx256_clip #(.BPP12(BPP12)) clip (
 	.pixel_x_o (clip_fragment_x_pixel),
 	.pixel_y_o (clip_fragment_y_pixel),
 	.pixel_z_o (clip_fragment_z_pixel),
+	.strip_o (clip_fragment_strip),
 	.u_o (clip_fragment_u),
 	.v_o (clip_fragment_v),
 	.a_o (clip_fragment_a),
@@ -608,6 +614,7 @@ wire [255:0] wbmreader_fragment_texture_data;
 wire [31:0] fragment_wbmreader_texture_addr;
 wire [31:0] fragment_wbmreader_texture_sel;
 wire fragment_wbmreader_texture_request;
+wire fragement_blender_strip;
 
 
 // Fragment processor generates color of pixel (requires RAM read for textures)
@@ -620,6 +627,7 @@ gfx256_fragment_processor #(.BPP12(BPP12)) fp0 (
   .z_i (clip_fragment_z_pixel),
   .u_i (clip_fragment_u),
   .v_i (clip_fragment_v),
+  .strip_i(clip_fragment_strip),
   .bezier_factor0_i (clip_fragment_bezier_factor0),
   .bezier_factor1_i (clip_fragment_bezier_factor1),
   .bezier_inside_i (inside_reg),
@@ -632,6 +640,7 @@ gfx256_fragment_processor #(.BPP12(BPP12)) fp0 (
   .pixel_color_i (clip_fragment_color),
   .pixel_color_o (fragment_blender_color),
   .pixel_alpha_o (fragment_blender_alpha),
+  .strip_o(fragment_blender_strip),
   .write_o (fragment_blender_write_enable),
   .ack_o (fragment_clip_ack),
   .texture_ack_i (wbmreader_fragment_texture_ack), 
@@ -663,6 +672,8 @@ wire [31:0] blender_wbmreader_target_addr;
 wire [255:0] wbmreader_blender_target_data;
 wire [31:0] blender_wbmreader_target_sel;
 wire blender_wbmreader_target_request;
+wire blender_render_strip;
+wire [255:0] blender_render_strip_color;
 
 // Applies alpha blending if enabled (requires RAM read to get target pixel color)
 // Fragment processor generates color of pixel (requires RAM read for textures)
@@ -678,6 +689,7 @@ gfx256_blender #(.BPP12(BPP12)) blender0 (
   .x_counter_i (fragment_blender_x_pixel),
   .y_counter_i (fragment_blender_y_pixel),
   .z_i (fragment_blender_z_pixel),
+  .strip_i (fragment_blender_strip),
   .alpha_i (fragment_blender_alpha),
   .global_alpha_i (global_alpha_reg),
   .ack_i (render_blender_ack),
@@ -693,6 +705,8 @@ gfx256_blender #(.BPP12(BPP12)) blender0 (
   .pixel_z_o (blender_render_z_pixel),
   .pixel_color_i (fragment_blender_color),
   .pixel_color_o (blender_render_color),
+  .strip_o (blender_render_strip),
+  .strip_color_o (blender_render_strip_color),
   .write_o (blender_render_write_enable),
   .ack_o (blender_fragment_ack)
 );
@@ -715,6 +729,8 @@ gfx256_renderer #(.BPP12(BPP12)) renderer (
   .pixel_z_i (blender_render_z_pixel),
   .zbuffer_enable_i(zbuffer_enable_reg),
   .color_i (blender_render_color),
+  .strip_i(blender_render_strip),
+  .strip_color_i(blender_render_strip_color),
 
   .render_addr_o (render_wbmwriter_addr),
   .render_sel_o (render_wbmwriter_sel),

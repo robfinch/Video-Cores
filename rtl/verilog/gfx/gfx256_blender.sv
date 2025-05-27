@@ -37,13 +37,14 @@ import gfx256_pkg::*;
 
 module gfx256_blender(clk_i, rst_i,
   blending_enable_i, target_base_i, target_size_x_i, target_size_y_i, color_depth_i,
-  x_counter_i, y_counter_i, z_i, alpha_i, global_alpha_i, write_i, ack_o,                      // from fragment
+  x_counter_i, y_counter_i, z_i, alpha_i, global_alpha_i, write_i, ack_o, strip_i,        // from fragment
   target_ack_i, target_addr_o, target_data_i, target_sel_o, target_request_o, wbm_busy_i, // from/to wbm reader
-  pixel_x_o, pixel_y_o, pixel_z_o, pixel_color_i, pixel_color_o, write_o, ack_i                      // to render
+  pixel_x_o, pixel_y_o, pixel_z_o, pixel_color_i, pixel_color_o, strip_color_o, strip_o, write_o, ack_i    // to render
   );
 
 parameter point_width = 16;
 parameter BPP12 = 1'b0;
+parameter MDW = 256;
 
 input                   clk_i;
 input                   rst_i;
@@ -62,6 +63,7 @@ input             [7:0] alpha_i;
 input             [7:0] global_alpha_i;
 input            [31:0] pixel_color_i;
 input                   write_i;
+input strip_i;
 output reg              ack_o;
 
 // Interface against wishbone master (reader)
@@ -78,6 +80,8 @@ output reg [point_width-1:0] pixel_y_o;
 output reg signed [point_width-1:0] pixel_z_o;
 output reg            [31:0] pixel_color_o;
 output write_o;
+output reg strip_o;
+output reg [255:0] strip_color_o;
 input ack_i;
 
 reg write1;
@@ -87,6 +91,7 @@ typedef enum logic [2:0] {
 	wait_state = 3'd0,
 	delay1_state,
 	delay2_state,
+	delay3_state,
 	target_read_state,
 	target_read_ack_state,
 	write_pixel_state,
@@ -103,7 +108,7 @@ wire [7:0] alpha = combined_alpha_reg[15:8];
 // Addr[31:2] = Base + (Y*width + X) * ppb
 //reg [31:0] pixel_offset;
 wire [7:0] mb;
-gfx_calc_address #(.SW(256), .BPP12(BPP12)) ugfxca1
+gfx_calc_address #(.SW(MDW), .BPP12(BPP12)) ugfxca1
 (
 	.clk(clk_i),
 	.base_address_i(target_base_i),
@@ -196,10 +201,12 @@ begin
     pixel_color_o    <= 1'b0;
     target_request_o <= 1'b0;
     target_sel_o     <= 32'hFFFFFFFF;
+    strip_o <= 1'b0;
   end
   // Else, set outputs for next cycle
   else
   begin
+    strip_o <= 1'b0;
     case (state)
 
     wait_state:
@@ -214,6 +221,13 @@ begin
             pixel_y_o     <= y_counter_i;
             pixel_z_o     <= z_i;
             pixel_color_o <= pixel_color_i;
+            strip_o <= strip_i;
+            case(color_depth_i)
+            2'b00:	strip_color_o <= {32{pixel_color_i[7:0]}};
+            2'b01:	strip_color_o <= {16{pixel_color_i[15:0]}};
+            2'b11:	strip_color_o <= {8{pixel_color_i[31:0]}};
+            default:	strip_color_o <= {16{pixel_color_i[15:0]}};
+          	endcase
             write1 <= 1'b1;
           end
           else
@@ -279,6 +293,8 @@ begin
     delay1_state:
     	state <= delay2_state;
     delay2_state:
+    	state <= delay3_state;
+    delay3_state:
       state <= target_read_state;
 
 		target_read_state:
