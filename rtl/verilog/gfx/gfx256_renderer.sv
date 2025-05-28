@@ -47,7 +47,6 @@ input [point_width-1:0] target_size_y_i;
 input [point_width-1:0] target_x0_i;
 input [point_width-1:0] target_y0_i;
 
-input [1:0] color_depth_i;
 input [5:0] bpp_i;
 input [5:0] cbpp_i;
 input [15:0] coeff1_i;

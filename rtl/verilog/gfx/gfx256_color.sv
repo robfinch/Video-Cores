@@ -73,6 +73,7 @@ input [7:0] mb_i;
 output reg [31:0] color_o;
 output reg [31:0]  sel_o;
 
+integer n1;
 reg [3:0] sel1;
 always_comb
 	case (cbpp_i[5:3])
@@ -84,7 +85,7 @@ always_comb
 	endcase
 
 always_comb
-if (rwm_i)
+if (rmw_i)
 	sel_o = {32{1'b1}};
 else
 	sel_o = {28'd0,sel1} << mb_i[7:3];

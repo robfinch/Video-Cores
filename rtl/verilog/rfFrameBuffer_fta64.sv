@@ -1138,23 +1138,24 @@ reg [5:0] bpp;
 reg [5:0] cbpp;
 reg [2:0] bytpp;
 reg [15:0] coeff1;
+reg [9:0] coeff2;
 
 // Bits per pixel minus one.
-always_ff @(posedge clk)
+always_ff @(posedge s_clk_i)
 	bpp <= pad_comp+red_comp+green_comp+blue_comp-1'd1;
 
 // Color bits per pixel minus one.
-always_ff @(posedge clk)
+always_ff @(posedge s_clk_i)
 	cbpp <= red_comp+green_comp+blue_comp-1'd1;
 
 // Bytes per pixel.
-always_ff @(posedge clk)
+always_ff @(posedge s_clk_i)
 	bytpp <= (bpp + 3'd7) >> 2'd3;
 
 // This coefficient is a fixed point fraction representing the inverse of the
 // number of pixels per strip. The inverse (reciprocal) is used for a high
 // speed divide operation.
-always_ff @(posedge clk)
+always_ff @(posedge s_clk_i)
 	coeff1 <= bpp * (65536/MDW);	// 9x6 multiply - could use a lookup table
 
 // This coefficient is the number of bits used by all pixels in the strip. 
@@ -1163,12 +1164,12 @@ reg [9:0] coeff2a [0:63];
 
 generate begin : gCoeff2
 	for (g = 0; g < 64; g = g + 1)
-always_ff @(posedge clk)
+always_ff @(posedge s_clk_i)
 	coeff2a[g] <= (MDW/g) * g;
 end
 endgenerate
 
-always_ff @(posedge clk)
+always_ff @(posedge s_clk_i)
 	coeff2 <= coeff2a[bpp];
 
 //`ifdef USE_CLOCK_GATE

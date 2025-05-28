@@ -250,9 +250,9 @@ begin
         // Alpha
         a_o     <= a[point_width+8-1:point_width];
         // Color
-        color_o <= {((color_r >> point_width) & red_mask) << red_shift,
-        					  ((color_g >> point_width) & green_mask) << green_shift,
-        					  ((color_b >> point_width) & bluemask)
+        color_o <= {(((color_r >> point_width) & red_mask) << red_shift)|
+        					  (((color_g >> point_width) & green_mask) << green_shift) |
+        					  ((color_b >> point_width) & blue_mask)
         					 };
       end
 

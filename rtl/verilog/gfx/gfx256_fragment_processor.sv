@@ -34,7 +34,7 @@ module gfx256_fragment_processor(clk_i, rst_i, bpp_i, cbpp_i, coeff1_i, coeff2_i
   pixel_x_o, pixel_y_o, pixel_z_o, pixel_color_i, pixel_color_o, pixel_alpha_o, write_o, ack_i,  // to blender
   strip_o,
   texture_ack_i, texture_data_i, texture_addr_o, texture_sel_o, texture_request_o, // to/from wishbone master read
-  texture_enable_i, tex0_base_i, tex0_size_x_i, tex0_size_y_i, color_depth_i, colorkey_enable_i, colorkey_i // from wishbone slave
+  texture_enable_i, tex0_base_i, tex0_size_x_i, tex0_size_y_i, colorkey_enable_i, colorkey_i // from wishbone slave
   );
 
 parameter point_width = 16;
@@ -134,7 +134,7 @@ frag_state_e state;
 wire [31:0] mem_conv_color_o;
 
 // Color converter
-memory_to_color256 #(.BPP12(BPP12)) color_proc(
+memory_to_color256 color_proc(
 	.rmw_i(rmw_i),
 	.cbpp_i(cbpp_i),
 	.mem_i (texture_data_i),

@@ -551,6 +551,7 @@ always_ff @(posedge wbs_clk_i)
 // This coefficient is the number of bits used by all pixels in the strip. 
 // Used to determine pixel placement in the strip.
 reg [9:0] coeff2a [0:63];
+genvar g;
 
 generate begin : gCoeff2
 	for (g = 0; g < 64; g = g + 1)

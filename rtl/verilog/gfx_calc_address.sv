@@ -63,7 +63,7 @@ output reg [BN:0] ce_o;			// color bits end
 // point places.
 reg [31:0] strip_num65k;
 always_ff @(posedge clk)
-	strip_num65k <= x_coord_i * coeff;
+	strip_num65k <= x_coord_i * coeff1_i;
 // Truncate off the binary fraction to get the strip number. The strip
 // number will be used to form part of the address.
 wire [9:0] strip_num = strip_num65k[25:16];
@@ -75,11 +75,11 @@ reg [17:0] ndx;
 always_ff @(posedge clk)
 begin
 	case(SW)
-	32:		ndx <= strip_fract[15:7] * {coeff2,3'b0};
-	64:		ndx <= strip_fract[15:7] * {coeff2,2'b0};
-	128:	ndx <= strip_fract[15:7] * {coeff2,1'b0};
-	256:	ndx <= strip_fract[15:7] * coeff2;
-	default:	ndx <= strip_fract[15:7] * coeff2;
+	32:		ndx <= strip_fract[15:7] * {coeff2_i,3'b0};
+	64:		ndx <= strip_fract[15:7] * {coeff2_i,2'b0};
+	128:	ndx <= strip_fract[15:7] * {coeff2_i,1'b0};
+	256:	ndx <= strip_fract[15:7] * coeff2_i;
+	default:	ndx <= strip_fract[15:7] * coeff2_i;
 	endcase
 end
 // Get whole pixel position (discard fraction)
@@ -93,14 +93,14 @@ begin
 	default:	mb_o = ndx[17:9];
 	endcase
 end
-always_comb me_o = mb_o + bpp; // Set high order position for mask
-always_comb ce_o = mb_o + cbpp;
+always_comb me_o = mb_o + bpp_i; // Set high order position for mask
+always_comb ce_o = mb_o + cbpp_i;
 // num_strips is essentially a constant value unless the screen resolution changes.
 // Gain performance here by regstering the multiply so that there aren't two
 // cascaded multiplies when calculating the offset.
 reg [31:0] num_strips65k;
 always_ff @(posedge clk)
-	num_strips65k <= bmp_width_i * coeff;
+	num_strips65k <= bmp_width_i * coeff1_i;
 wire [9:0] num_strips = num_strips65k[25:16];
 reg [31:0] offset;
 always_ff @(posedge clk)
