@@ -5,7 +5,7 @@
 //
 //
 //        __
-//   \\__/ o\    (C) 2008-2023  Robert Finch, Waterloo
+//   \\__/ o\    (C) 2008-2025  Robert Finch, Waterloo
 //    \  __ /    All rights reserved.
 //     \/_//     robfinch<remove>@finitron.ca
 //       ||
@@ -110,12 +110,12 @@ parameter IRQ_MSGADR = 64'h0FD0900C1;
 parameter IRQ_MSGDAT = 64'h1;
 
 parameter PHYS_ADDR_BITS = 32;
-localparam BITS_IN_ADDR_MAP = PHYS_ADDR_BITS - 16;
+localparam BITS_IN_ADDR_MAP = PHYS_ADDR_BITS - 14;
 
 parameter MDW = `BUSMWID;		// Bus master data width
 parameter MAP = 12'd0;
-parameter BM_BASE_ADDR1 = 32'h00200000;
-parameter BM_BASE_ADDR2 = 32'h00280000;
+parameter BM_BASE_ADDR1 = 32'h00000000;
+parameter BM_BASE_ADDR2 = 32'h00400000;
 parameter REG_CTRL = 11'd0;
 parameter REG_REFDELAY = 11'd1;
 parameter REG_PAGE1ADDR = 11'd2;
@@ -262,11 +262,11 @@ always_ff @(posedge s_clk_i)
 always_ff @(posedge s_clk_i)
 	we <= s_we_i;
 always_ff @(posedge s_clk_i)
-	sel <= BUSWID==64 ? s_sel_i : s_sel_i << {s_adr_i[3],2'b00};
+	sel <= BUSWID==64 ? s_sel_i : {4'd0,s_sel_i} << {s_adr_i[3],2'b00};
 always_ff @(posedge s_clk_i)
 	adri <= BUSWID==64 ? s_adr_i : s_adr_i;
 always_ff @(posedge s_clk_i)
-	dat <= BUSWID==64 ? s_dat_i : s_dat_i << {s_adr_i[3],5'd0};
+	dat <= BUSWID==64 ? s_dat_i : {32'd0,s_dat_i} << {s_adr_i[3],5'd0};
 
 always_ff @(posedge s_clk_i)
 	cs_config <= s_cyc_i & s_stb_i & cs_config_i && adri[27:20]==CFG_BUS && adri[19:15]==CFG_DEVICE && adri[14:12]==CFG_FUNC;
@@ -345,6 +345,7 @@ wire pe_vsync;
 reg [11:0] tocnt;		// bus timeout counter
 reg vm_cyc_o;
 reg [31:0] vm_adr_o;
+wire [BITS_IN_ADDR_MAP-1:0] map_out;
 
 // config
 reg [63:0] irq_msgadr = IRQ_MSGADR;
@@ -433,7 +434,7 @@ generate begin : gConfigSpace
 end
 endgenerate
 
-wire [15:0] map_page;
+wire [BITS_IN_ADDR_MAP-1:0] map_page;
 
    // xpm_memory_tdpram: True Dual Port RAM
    // Xilinx Parameterized Macro, version 2022.2
@@ -447,7 +448,7 @@ wire [15:0] map_page;
       .CASCADE_HEIGHT(0),             // DECIMAL
       .CLOCKING_MODE("common_clock"), // String
       .ECC_MODE("no_ecc"),            // String
-      .MEMORY_INIT_FILE("fb_map.mem"),      // String
+      .MEMORY_INIT_FILE("fb_map2.mem"),      // String
       .MEMORY_INIT_PARAM(""),        // String
       .MEMORY_OPTIMIZATION("true"),   // String
       .MEMORY_PRIMITIVE("auto"),      // String
@@ -466,8 +467,8 @@ wire [15:0] map_page;
       .USE_MEM_INIT(1),               // DECIMAL
       .USE_MEM_INIT_MMI(0),           // DECIMAL
       .WAKEUP_TIME("disable_sleep"),  // String
-      .WRITE_DATA_WIDTH_A(16),        // DECIMAL
-      .WRITE_DATA_WIDTH_B(16),        // DECIMAL
+      .WRITE_DATA_WIDTH_A(BITS_IN_ADDR_MAP),        // DECIMAL
+      .WRITE_DATA_WIDTH_B(BITS_IN_ADDR_MAP),        // DECIMAL
       .WRITE_MODE_A("no_change"),     // String
       .WRITE_MODE_B("no_change"),     // String
       .WRITE_PROTECT(1)               // DECIMAL
@@ -496,8 +497,8 @@ wire [15:0] map_page;
                                        // "independent_clock". Unused when parameter CLOCKING_MODE is
                                        // "common_clock".
 
-      .dina(dat[15:0]),                // WRITE_DATA_WIDTH_A-bit input: Data input for port A write operations.
-      .dinb(16'd0),                    // WRITE_DATA_WIDTH_B-bit input: Data input for port B write operations.
+      .dina(dat[17:0]),                // WRITE_DATA_WIDTH_A-bit input: Data input for port A write operations.
+      .dinb(18'd0),                    // WRITE_DATA_WIDTH_B-bit input: Data input for port B write operations.
       .ena(cs_map),                    // 1-bit input: Memory enable signal for port A. Must be high on clock
                                        // cycles when read or write operations are initiated. Pipelined
                                        // internally.
@@ -554,11 +555,11 @@ wire [15:0] map_page;
    );
 
 always_comb
-	wbm_req.padr <= {map_page,vm_adr_o[15:0]};
+	wbm_req.padr <= {map_page,vm_adr_o[13:0]};
 	
    // End of xpm_memory_tdpram_inst instantiation
 				
-delay3 #(1) udly1 (.clk(m_clk_i), .i(vm_cyc_o), .o(wbm_req.cyc));
+delay3 #(1) udly1 (.clk(m_clk_i), .ce(1'b1), .i(vm_cyc_o), .o(wbm_req.cyc));
 
 `ifdef INTERNAL_SYNC_GEN
 wire hsync_i, vsync_i, blank_i;
@@ -1124,7 +1125,7 @@ else begin
   else
     mapctr <= mapctr + 12'd1;
 end
-wire memreq = mapctr==12'd0 && vc==4'd1;
+wire memreq = mapctr==12'd0 && vc==4'd1 && vFetch && onoff && xonoff_i;
 
 // The following bypasses loading the fifo when all the pixels from a scanline
 // are buffered in the fifo and the pixel row doesn't change. Since the fifo
@@ -1168,10 +1169,7 @@ always @(posedge m_clk_i)
 		do_loads <= 1'b0;
 */
 always_comb wbm_req.bte = wishbone_pkg::LINEAR;
-always_comb wbm_req.cti = wishbone_pkg::CLASSIC;
-always_comb wbm_req.blen = 6'd63;
 always_comb wbm_req.stb = wbm_req.cyc;
-always_comb wbm_req.sel = MDW==256 ? 32'hFFFFFFFF : MDW==128 ? 16'hFFFF : MDW==64 ? 8'hFF : 4'hF;
 always_comb wbm_req.cid = 4'd0;
 
 reg [31:0] adr;
@@ -1181,15 +1179,16 @@ typedef enum logic [3:0] {
 	LOADSTRIP = 4'd3,
 	STORESTRIP = 4'd4,
 	ACKSTRIP = 4'd5,
-	WAITLOAD = 4'd6,
-	WAITRST = 4'd7,
-	ICOLOR1 = 4'd8,
-	ICOLOR2 = 4'd9,
-	ICOLOR3 = 4'd10,
-	ICOLOR4 = 4'd11,
-	LOAD_OOB = 4'd12
+	WAITLOAD1 = 4'd6,
+	WAITLOAD = 4'd7,
+	WAITRST = 4'd8,
+	ICOLOR1 = 4'd9,
+	ICOLOR2 = 4'd10,
+	ICOLOR3 = 4'd11,
+	ICOLOR4 = 4'd12,
+	LOAD_OOB = 4'd13
 } state_t;
-state_t state;
+state_t state,prev_state;
 reg [MDW-1:0] icolor1;
 
 function rastop;
@@ -1262,14 +1261,22 @@ else begin
 		tocnt <= 'd0;
 end
 
+reg [6:0] bcnt;
+
 always @(posedge m_clk_i)
 if (rst_i) begin
+	wbm_req.tid <= 8'd0;
+	wbm_req.cti <= wishbone_pkg::CLASSIC;
 	vm_cyc_o <= LOW;
 	wbm_req.we <= LOW;
-	vm_adr_o <= 'd0;
+	wbm_req.sel <= 32'h0;
+	wbm_req.blen <= 6'd0;
+	vm_adr_o <= 32'd0;
   rstcmd <= 1'b0;
   state <= IDLE;
+  prev_state <= IDLE;
   rst_irq <= 1'b0;
+  bcnt <= 7'd0;
 end
 else begin
   rst_irq <= 1'b0;
@@ -1279,42 +1286,69 @@ else begin
   WAITRST:
     if (pcmd==2'b00 && ~wbm_resp.ack) begin
       rstcmd <= 1'b0;
+      prev_state <= WAITRST;
       state <= IDLE;
     end
     else
       rstcmd <= 1'b1;
   IDLE:
-  	if (load_fifo && !(legal_x && legal_y))
- 			state <= LOAD_OOB;
-    else if (load_fifo & ~wbm_resp.ack) begin
-      vm_cyc_o <= HIGH;
-      vm_adr_o <= adr;
-      wbm_req.sel <= 16'hFFFF;
-      state <= WAITLOAD;
-    end
-    // Send an IRQ message if needed.
-    else if (irq & ~wbm_resp.ack & MSIX) begin
-    	vm_cyc_o <= HIGH;
-    	vm_adr_o <= irq_msgadr;
-    	wbm_req.we <= HIGH;
-    	wbm_req.sel <= irq_msgadr[3] ? 16'hFF00 : 16'h00FF;
-    	wbm_req.dat <= {2{irq_msgdat}};
-    	rst_irq <= 1'b1;
-    end
-    // The adr_o[5:3]==3'b111 causes the controller to wait until all eight
-    // 64 bit strips from the memory controller have been processed. Otherwise
-    // there would be cache thrashing in the memory controller and the memory
-    // bandwidth available would be greatly reduced. However fetches are also
-    // allowed when loads are not active or all strips for the current scan-
-    // line have been fetched.
-    else if (pcmd!=2'b00 && (modd || !(vFetch && onoff && xonoff_i && fetchCol < windowWidth))) begin
-      vm_cyc_o <= HIGH;
-      vm_adr_o <= xyAddr;
-      wbm_req.sel <= 16'hFFFF;
-      state <= LOADSTRIP;
-    end
+  	begin
+  		prev_state <= IDLE;
+	  	if (load_fifo && !(legal_x && legal_y)) begin
+	  		wb_nack();
+	 			state <= LOAD_OOB;
+	 		end
+	    else if (load_fifo & ~wbm_resp.ack) begin
+	    	wbm_req.tid <= 8'd0;
+	    	wbm_req.cti <= wishbone_pkg::INCR;
+	    	wbm_req.blen <= 6'd63;
+	      vm_cyc_o <= HIGH;
+	      vm_adr_o <= adr;
+	      wbm_req.sel <= {MDW/8{1'b1}};
+	      bcnt <= 7'd0;
+	      state <= WAITLOAD1;
+	    end
+	    // Send an IRQ message if needed.
+	    else if (irq & ~wbm_resp.ack & MSIX) begin
+	    	wbm_req.tid.tranid <= 4'd1;
+	    	vm_cyc_o <= HIGH;
+	    	vm_adr_o <= irq_msgadr;
+	    	wbm_req.we <= HIGH;
+	    	case(MDW)
+	    	256:
+	    		begin 
+	    			wbm_req.sel <= 32'h0FF << {irq_msgadr[4:3],3'b0};
+				    wbm_req.dat <= {4{irq_msgdat}};
+	    		end
+	    	128:
+	    		begin
+	    			wbm_req.sel <= irq_msgadr[3] ? 16'hFF00 : 16'h00FF;
+				    wbm_req.dat <= {2{irq_msgdat}};
+				  end
+	    	64:	
+	    		begin
+	    			wbm_req.sel <= 8'hFF;
+				    wbm_req.dat <= irq_msgdat;
+	    		end
+	    	endcase
+	    	rst_irq <= 1'b1;
+	    end
+	    // The adr_o[5:3]==3'b111 causes the controller to wait until all eight
+	    // 64 bit strips from the memory controller have been processed. Otherwise
+	    // there would be cache thrashing in the memory controller and the memory
+	    // bandwidth available would be greatly reduced. However fetches are also
+	    // allowed when loads are not active or all strips for the current scan-
+	    // line have been fetched.
+	    else if (pcmd!=2'b00 && (modd || !(vFetch && onoff && xonoff_i && fetchCol < windowWidth))) begin
+	    	wbm_req.tid <= 8'd2;
+	      vm_cyc_o <= HIGH;
+	      vm_adr_o <= xyAddr;
+	      wbm_req.sel <= {MDW/8{1'b1}};
+	      state <= LOADSTRIP;
+	    end
+  	end
   LOADSTRIP:
-    if (wbm_resp.ack|tocnt[10]) begin
+    if ((wbm_resp.ack && wbm_resp.tid==8'd2) || tocnt[8]) begin
       wb_nack();
       mem_strip <= wbm_resp.dat;
       icolor1 <= {{MDW-32{1'b0}},color} << mb;
@@ -1326,12 +1360,18 @@ else begin
       else begin
         state <= WAITRST;
       end
+      prev_state <= LOADSTRIP;
+      if (prev_state != IDLE)
+      	state <= IDLE;
     end
   // Registered inline mem2color
   ICOLOR3:
     begin
       color_o <= mem_strip >> mb;
       state <= ICOLOR4;
+      prev_state <= ICOLOR3;
+      if (prev_state != LOADSTRIP)
+      	state <= IDLE;
     end
   ICOLOR4:
     begin
@@ -1340,6 +1380,7 @@ else begin
       state <= pcmd == 2'b0 ? (~wbm_resp.ack ? IDLE : WAITRST) : WAITRST;
       if (pcmd==2'b00)
         rstcmd <= 1'b0;
+      prev_state <= ICOLOR4;
     end
   // Registered inline color2mem
   ICOLOR2:
@@ -1348,30 +1389,67 @@ else begin
         wbm_req.dat[n] <= (n >= mb && n <= me)
         	? ((n <= ce) ?	rastop(raster_op, mem_strip[n], icolor1[n]) : icolor1[n])
         	: mem_strip[n];
-      state <= STORESTRIP;
+      if (prev_state != LOADSTRIP)
+      	 state <= IDLE;
+      else
+      	state <= STORESTRIP;
+      prev_state <= ICOLOR2;
     end
   STORESTRIP:
     if (~wbm_resp.ack) begin
+    	wbm_req.tid <= 8'd3;
       vm_cyc_o <= HIGH;
       wbm_req.we <= HIGH;
-      wbm_req.sel <= 16'hFFFF;
+      wbm_req.sel <= {MDW/8{1'b1}};
       vm_adr_o <= xyAddr;
       state <= ACKSTRIP;
+   		prev_state <= STORESTRIP;
+    end
+    else begin
+    	if (prev_state != ICOLOR2) begin
+    		state <= IDLE;
+    		prev_state <= STORESTRIP;
+    		wb_nack();
+    	end
+    	else
+    		state <= ACKSTRIP;
     end
   ACKSTRIP:
-    if (wbm_resp.ack|tocnt[10]) begin
+    if ((wbm_resp.ack && wbm_resp.tid==8'd3)||tocnt[8]) begin
       wb_nack();
       state <= pcmd == 2'b0 ? IDLE : WAITRST;
       if (pcmd==2'b00)
         rstcmd <= 1'b0;
+      prev_state <= ACKSTRIP;
     end
+  WAITLOAD1:
+  	begin
+    	wbm_req.tid <= 8'd0;
+    	wbm_req.cti <= wishbone_pkg::INCR;
+    	wbm_req.blen <= 6'd63;
+ 			vm_cyc_o <= HIGH;
+      vm_adr_o <= adr;
+      wbm_req.sel <= {MDW/8{1'b1}};
+    	state <= WAITLOAD;
+      prev_state <= WAITLOAD1;
+  	end
   WAITLOAD:
-    if (wbm_resp.ack|tocnt[10]) begin
-      wb_nack();
-      state <= IDLE;
-    end
+  	begin
+  		if (wbm_resp.ack) begin
+  			vm_adr_o <= vm_adr_o + (MDW/8);
+  			bcnt <= bcnt + 1'd1;
+  		end
+  		if (bcnt==7'd63) begin
+  			wb_nack();
+      	state <= IDLE;
+      	prev_state <= WAITLOAD;
+    	end
+  	end
   LOAD_OOB:
-  	state <= IDLE;
+  	begin
+      state <= IDLE;
+      prev_state <= LOAD_OOB;
+  	end
   default:	state <= IDLE;
   endcase
 end
@@ -1379,9 +1457,12 @@ end
 task wb_nack;
 begin
 	m_fst_o <= LOW;
+	wbm_req.cti <= wishbone_pkg::CLASSIC;
+	wbm_req.blen <= 6'd0;
 	vm_cyc_o <= LOW;
 	wbm_req.we <= LOW;
-	wbm_req.sel <= 16'h0000;
+	wbm_req.sel <= 32'h0000;
+	vm_adr_o <= 32'h0;
 end
 endtask
 
@@ -1514,7 +1595,7 @@ rfVideoFifo #(MDW) uf1
 (
 	.wrst(fifo_wrst),
 	.wclk(m_clk_i),
-	.wr((((wbm_resp.ack|tocnt[10]) && state==WAITLOAD) || state==LOAD_OOB) && lef),
+	.wr((((wbm_resp.ack|tocnt[10]) && wbm_resp.tid==8'd0) || state==LOAD_OOB) && lef),
 	.di((state==LOAD_OOB) ? oob_dat : wbm_resp.dat),
 	.rrst(fifo_rrst),
 	.rclk(vclk),
@@ -1527,7 +1608,7 @@ rfVideoFifo #(MDW) uf2
 (
 	.wrst(fifo_wrst),
 	.wclk(m_clk_i),
-	.wr((((wbm_resp.ack|tocnt[10]) && state==WAITLOAD) || state==LOAD_OOB) && lof),
+	.wr((((wbm_resp.ack|tocnt[10]) && wbm_resp.tid==8'd0) || state==LOAD_OOB) && lof),
 	.di((state==LOAD_OOB) ? oob_dat : wbm_resp.dat),
 	.rrst(fifo_rrst),
 	.rclk(vclk),

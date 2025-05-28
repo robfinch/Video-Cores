@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 // ============================================================================
 //        __
-//   \\__/ o\    (C) 2006-2024  Robert Finch, Waterloo
+//   \\__/ o\    (C) 2006-2025  Robert Finch, Waterloo
 //    \  __ /    All rights reserved.
 //     \/_//     robfinch<remove>@finitron.ca
 //       ||
@@ -113,7 +113,7 @@ import video_pkg::*;
 import fta_bus_pkg::*;
 
 module rfTextController_fta64 (rst_busy_o, cs_config_i, xonoff_i,
-	slave_i, video_i, video_o
+	s_bus_i, video_i, video_o
 );
 parameter num = 4'd1;
 `ifdef WXGA800x600
@@ -208,7 +208,7 @@ input xonoff_i;
 input cs_config_i;
 
 // Slave signals
-fta_bus_interface.slave slave_i;
+fta_bus_interface.slave s_bus_i;
 
 // Video signals
 video_bus.in video_i;
@@ -238,15 +238,15 @@ integer n2,n3;
 
 wire rst_i, clk_i;
 fta_cmd_request64_t req_i;
-assign rst_i = slave_i.rst;
-assign clk_i = slave_i.clk;
+assign rst_i = s_bus_i.rst;
+assign clk_i = s_bus_i.clk;
 
-assign req_i = slave_i.req;
-assign slave_i.resp.next = 1'b0;
-assign slave_i.resp.stall = 1'b0;
-assign slave_i.resp.err = fta_bus_pkg::OKAY;
-assign slave_i.resp.rty = 1'b0;
-assign slave_i.resp.pri = 4'd7;
+assign req_i = s_bus_i.req;
+assign s_bus_i.resp.next = 1'b0;
+assign s_bus_i.resp.stall = 1'b0;
+assign s_bus_i.resp.err = fta_bus_pkg::OKAY;
+assign s_bus_i.resp.rty = 1'b0;
+assign s_bus_i.resp.pri = 4'd7;
 
 reg controller_enable;
 reg [31:0] bkColor40, bkColor40d, bkColor40d2, bkColor40d3;	// background color
@@ -353,7 +353,7 @@ always_ff @(posedge clk_i)
 always_ff @(posedge clk_i)
 	erc <= req_i.cti==fta_bus_pkg::ERC;
 always_ff @(posedge clk_i)
-	cs_config <= req_i.cyc & req_i.stb & cs_config_i;
+	cs_config <= req_i.cyc & cs_config_i;
 always_comb
 	cs_rom1 <= cs_rom2;
 always_comb
@@ -368,31 +368,30 @@ always_comb
 	cs_text <= cs_text1;
 always_ff @(posedge clk_i)
 	wrs_i <= (BUSWID==64) ? {8{req_i.we}} & req_i.sel :
-		req_i.padr[2] ? {{4{req_i.we}} & req_i.sel,4'h0} : {4'h0,{4{req_i.we}} & req_i.sel};
+		req_i.adr[2] ? {{4{req_i.we}} & req_i.sel,4'h0} : {4'h0,{4{req_i.we}} & req_i.sel};
 always_ff @(posedge clk_i)
 	rwr_i <= req_i.we;
 always_ff @(posedge clk_i)
 	rsel_i <= req_i.sel;
 always_ff @(posedge clk_i)
-	radr_i <= req_i.padr;
+	radr_i <= req_i.adr;
 always_ff @(posedge clk_i)
 	rdat_i <= req_i.dat;
 
 // Register outputs
 always_ff @(posedge clk_i)
 if (cfg_resp.ack)
-	slave_i.resp.dat <= cfg_resp.dat;
+	s_bus_i.resp.dat <= cfg_resp.dat;
 else if (ack) begin
 	casez({cs_rom,cs_reg,cs_text})
-	3'b1??:	slave_i.resp.dat <= chdat_o;
-	3'b01?:	slave_i.resp.dat <= rego;
-	3'b001:	slave_i.resp.dat <= tdat_o;
-	default:	slave_i.resp.dat <= 64'h0;
+	3'b1??:	s_bus_i.resp.dat <= chdat_o;
+	3'b01?:	s_bus_i.resp.dat <= rego;
+	3'b001:	s_bus_i.resp.dat <= tdat_o;
+	default:	s_bus_i.resp.dat <= 64'h0;
 	endcase
 end
 else
-	slave_i.resp.dat <= 'd0;
-always_comb slave_i.resp.asid = 16'h0;
+	s_bus_i.resp.dat <= 'd0;
 
 //always @(posedge clk_i)
 //	if (cs_text) begin
@@ -406,10 +405,9 @@ always_comb slave_i.resp.asid = 16'h0;
 //   ack a write
 
 vtdl #(.WID(1), .DEP(16)) urdyd1 (.clk(clk_i), .ce(1'b1), .a(4'd3), .d(cs_rom|cs_reg|cs_text|cs_config), .q(ack));
-vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(clk_i), .ce(1'b1), .a(4'd4), .d((cs_rom|cs_reg|cs_text|cs_config)&(erc|~rwr_i)), .q(slave_i.resp.ack));
-//vtdl #(.WID(6), .DEP(16)) urdyd3 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req.cid), .q(resp.cid));
-vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req_i.tid), .q(slave_i.resp.tid));
-vtdl #(.WID($bits(fta_address_t)), .DEP(16)) urdyd5 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req_i.padr), .q(slave_i.resp.adr));
+vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(clk_i), .ce(1'b1), .a(4'd4), .d((cs_rom|cs_reg|cs_text|cs_config)&(erc|~rwr_i)), .q(s_bus_i.resp.ack));
+vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req_i.tid), .q(s_bus_i.resp.tid));
+vtdl #(.WID($bits(fta_address_t)), .DEP(16)) urdyd5 (.clk(clk_i), .ce(1'b1), .a(4'd5), .d(req_i.adr), .q(s_bus_i.resp.adr));
 
 //--------------------------------------------------------------------
 // config
@@ -1167,7 +1165,7 @@ counter #(12) u2syncgen (.rst(rst_i), .clk(dot_clk), .ce(eol1), .ld(eof1), .d(12
 counter #(6)  u3syncgen (.rst(rst_i), .clk(dot_clk), .ce(eof1), .ld(1'b0), .d(6'd1), .q(frame_cnt), .tc() );
 
 always @(posedge dot_clk)
-if (rst)
+if (rst_i)
   hBlank1 <= 1'b0;
 else begin
   if (hCtr==phBlankOn)
@@ -1178,7 +1176,7 @@ end
 
 modHborder u4syncgen
 (
-	.rst(rst),
+	.rst(rst_i),
 	.dot_clk(dot_clk),
 	.hCtr(hCtr), 
 	.border_on(phBorderOn),

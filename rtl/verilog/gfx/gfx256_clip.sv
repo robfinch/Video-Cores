@@ -29,7 +29,7 @@ This module also performs z-buffer culling (requires reading from memory)
 import gfx256_pkg::*;
 
 module gfx256_clip(clk_i, rst_i,
-  clipping_enable_i, zbuffer_enable_i, color_depth_i,
+  clipping_enable_i, zbuffer_enable_i, color_depth_i, bpp_i, cbpp_i, coeff1_i, coeff2_i, pps_i,
   zbuffer_base_i, target_size_x_i, target_size_y_i, target_x0_i, target_y0_i, target_x1_i, target_y1_i,
   clip_pixel0_x_i, clip_pixel0_y_i, clip_pixel1_x_i, clip_pixel1_y_i,                              //clip pixel 0 and pixel 1
   raster_pixel_x_i, raster_pixel_y_i, raster_u_i, raster_v_i, flat_color_i, raster_write_i, ack_o, // from raster
@@ -52,6 +52,12 @@ input rst_i;
 input clipping_enable_i;
 input zbuffer_enable_i;
 input [1:0] color_depth_i;
+input [5:0] bpp_i;
+input [5:0] cbpp_i;
+input [15:0] coeff1_i;
+input [9:0] coeff2_i;
+input [9:0] pps_i;
+input rmw_i;
 input [31:0] zbuffer_base_i;
 input [point_width-1:0] target_size_x_i;
 input [point_width-1:0] target_size_y_i;
@@ -131,7 +137,10 @@ gfx_calc_address #(.SW(MDW), .BPP12(BPP12)) ugfxca1
 (
 	.clk(clk_i),
 	.base_address_i(zbuffer_base_i),
-	.color_depth_i(color_depth_i),
+	.bpp_i(bpp_i),
+	.cbpp_i(cbpp_i),
+	.coeff1_i(coeff1_i),
+	.coeff2_i(coeff2_i),
 	.bmp_width_i(target_size_x_i),
 	.x_coord_i(cuvz_pixel_x_i),
 	.y_coord_i(cuvz_pixel_y_i),
@@ -148,8 +157,9 @@ wire [31:0] z_value_at_target32;
 wire signed [point_width-1:0] z_value_at_target = z_value_at_target32[point_width-1:0];
 
 // Memory to color converter
-memory_to_color256 #(.BPP12(BPP12)) memory_proc(
-	.color_depth_i (2'b01),
+memory_to_color256 memory_proc(
+	.rmw_i(rmw_i),
+	.cbpp_i(6'd16),
 	.mem_i (z_data_i),
 	.mb_i(mb),
 	.color_o (z_value_at_target32),
@@ -202,12 +212,7 @@ end
 reg discard_strip;
 reg [point_width-1:0] x_end;
 always_comb
-case(color_depth_i)
-2'b00:	x_end = raster_pixel_x_i + 6'd32;
-2'b01:	x_end = raster_pixel_x_i + 6'd16;
-2'b11:	x_end = raster_pixel_x_i + 6'd8;
-default:	x_end = raster_pixel_x_i + 6'd16;
-endcase
+	x_end = raster_pixel_x_i + pps_i;
 
 // Check if we should discard this pixel due to failing depth check
 wire fail_z_check   = z_value_at_target > cuvz_pixel_z_i;
@@ -262,7 +267,7 @@ begin
         write1 <= ~discard_pixel;
 	  end
 
-  delay3_state:
+  delay2_state:
     z_request_o <= 1'b1;
 
   // Do a depth check. If it fails, discard pixel, ack and go back to wait. If it succeeds, go to write state
@@ -307,9 +312,9 @@ else
 	// Two cycle delay is for address calc. 
   delay1_state:
   	state <= delay2_state;
+//  delay2_state:
+//  	state <= delay3_state;
   delay2_state:
-  	state <= delay3_state;
-  delay3_state:
     state <= z_read_state;
 
   z_read_state:

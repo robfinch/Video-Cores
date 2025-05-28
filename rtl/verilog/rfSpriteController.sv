@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 // ============================================================================
 //        __
-//   \\__/ o\    (C) 2005-2022  Robert Finch, Waterloo
+//   \\__/ o\    (C) 2005-2025  Robert Finch, Waterloo
 //    \  __ /    All rights reserved.
 //     \/_//     robfinch<remove>@finitron.ca
 //       ||
@@ -92,7 +92,7 @@
 //				* the product of width * height cannot exceed 2048 !
 //				if it does, the display will begin repeating
 //			[27:24] output plane
-//			[31:30] color depth 01=RGB332,10=RGB555+A,11=RGB888+A
+//			[31:30] color depth 00=RGB332,01=RGB555+A,10=RGB888+A
 //				
 //	08: ADR	[31:12] 20 bits sprite image address bits
 //			This registers contain the high order address bits of the
@@ -157,29 +157,31 @@ input	wb_write_request32_t wbs_req,
 output wb_read_response32_t wbs_resp,
 //------------------------------
 // Bus Master Signals
-input m_clk_i,				// clock
-output wb_write_request128_t wbm_req,
-input wb_read_response128_t wbm_resp,
+fta_bus_interface.master m_bus,
 output [4:0] m_spriteno_o,
 //--------------------------
 // interrupt
 output [31:0] irq_o,
 //--------------------------
-input dot_clk_i,		// video dot clock
-input hsync_i,			// horizontal sync pulse
-input vsync_i,			// vertical sync pulse
-input blank_i,			// blanking signal
-input [39:0] zrgb_i,			// input pixel stream
-output [39:0] zrgb_o,	// output pixel stream 12-12-12-4
+// Video
+video_bus.in video_i,
+video_bus.out video_o,
+
 input test,
 input xonoff_i
 );
 
 reg m_soc_o;
-wire vclk = dot_clk_i;
-wire hSync = hsync_i;
-wire vSync = vsync_i;
-reg [39:0] zrgb_o;
+reg [31:0] zrgb_o;
+wire vclk = video_i.clk;
+wire hSync = video_i.hsync;
+wire vSync = video_i.vsync;
+always_comb
+begin
+	video_o = video_i;
+	video_o.data = zrgb_o;
+end
+
 
 //--------------------------------------------------------------------
 // Core Parameters
@@ -413,12 +415,12 @@ reg [8:0] cob;	// count of burst cycles
 reg irq;
 reg rst_irq;
 
-assign wbm_req.bte = LINEAR;
-assign wbm_req.cti = CLASSIC;
-assign wbm_req.blen = 6'd63;
-assign wbm_req.stb = wbm_req.cyc;
-assign wbm_req.sel = 16'hFFFF;
-assign wbm_req.cid = 4'd5;
+assign m_bus_o.req.bte = LINEAR;
+assign m_bus_o.req.cti = CLASSIC;
+assign m_bus_o.req.blen = 6'd63;
+assign m_bus_o.req.stb = wbm_req.cyc;
+assign m_bus_o.req.sel = 32'hFFFFFFFF;
+assign m_bus_o.req.cid = 4'd5;
 assign m_spriteno_o = dmaOwner;
 
 reg [2:0] mstate;
@@ -428,7 +430,7 @@ parameter ACK = 3'd2;
 parameter NACK = 3'd3;
 
 wire pe_m_ack_i;
-edge_det ued2 (.rst(rst_i), .clk(m_clk_i), .ce(1'b1), .i(wbm_resp.ack), .pe(pe_m_ack_i), .ne(), .ee());
+edge_det ued2 (.rst(rst_i), .clk(m_clk_i), .ce(1'b1), .i(m_bus_o.resp.ack), .pe(pe_m_ack_i), .ne(), .ee());
 
 always_ff @(posedge m_clk_i)
 if (rst_i)
@@ -470,10 +472,10 @@ else begin
 	ACTIVE:
 		mstate <= ACK;
 	ACK:
-		if (wbm_resp.ack | wbm_resp.err | tocnt[10])
+		if (m_bus_o.resp.ack || (m_bus_o.resp.err!=fta_bus_pkg::OKAY) || tocnt[10])
 			mstate <= NACK;
 	NACK:
-		if (~(wbm_resp.ack|wbm_resp.err))
+		if (~(m_bus_o.resp.ack||(m_bus_o.resp.err!=fta_bus_pkg::OKAY)))
 			mstate <= cob==sprBurstEnd[dmaOwner] ? IDLE : ACTIVE;
 	default:
 		mstate <= IDLE;
@@ -533,20 +535,20 @@ else begin
 		wb_m_nack();
 	IRQ:
 		begin
-			wbm_req.cyc <= 1'b1;
-			wbm_req.we <= 1'b1;
-			wbm_req.sel <= irq_msgadr[3] ? 16'hFF00 : 16'h00FF;
-			wbm_req.adr <= irq_msg_adr;
-			wbm_req.data1 <= {48'h0,irq_msg_data};
+			m_bus_o.req.cyc <= 1'b1;
+			m_bus_o.req.we <= 1'b1;
+			m_bus_o.req.sel <= irq_msgadr[3] ? 16'hFF00 : 16'h00FF;
+			m_bus_o.req.adr <= irq_msg_adr;
+			m_bus_o.req.data1 <= {48'h0,irq_msg_data};
 		end
 	ACTIVE:
 		begin
-			wbm_req.cyc <= 1'b1;
-			wbm_req.sel <= 16'hFFFF;
-			wbm_req.adr <= {sprSysAddr[dmaOwner],cob[8:1],4'h0};
+			m_bus_o.req.cyc <= 1'b1;
+			m_bus_o.req.sel <= 32'hFFFFFFFF;
+			m_bus_o.req.adr <= {sprSysAddr[dmaOwner],cob[7:1],5'h0};
 		end
 	ACK:
-		if (wbm_resp.ack|wbm_resp.err|tocnt[10])
+		if (m_bus_o.resp.ack||(m_bus_o.resp.err!=fta_bus_pkg::OKAY)||tocnt[10])
 			wb_m_nack();
 	endcase
 end
@@ -562,9 +564,9 @@ end
 
 task wb_m_nack;
 begin
-	wbm_req.cyc <= 1'b0;
-	wbm_req.we <= 1'b0;
-	wbm_req.sel <= 16'h0000;
+	m_bus_o.req.cyc <= 1'b0;
+	m_bus_o.req.we <= 1'b0;
+	m_bus_o.req.sel <= 32'h00000000;
 end
 endtask
 

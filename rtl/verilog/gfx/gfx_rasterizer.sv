@@ -31,7 +31,7 @@ If texturing is enabled, texture coordinates u (horizontal) and v (vertical) are
 
 When all pixels have been generated and acked, the rasterizer acks the operation and returns to wait state.
 */
-module gfx_rasterizer (clk_i, rst_i, color_depth_i,
+module gfx_rasterizer (clk_i, rst_i, pps_i,
   clip_ack_i, interp_ack_i, ack_o, point_write_i,
   rect_write_i, line_write_i, triangle_write_i, interpolate_i, texture_enable_i,
   //source pixel 0 and pixel 1
@@ -61,7 +61,8 @@ parameter BPP12 = 1'b0;
 input clk_i;
 input rst_i;
 
-input [1:0] color_depth_i;
+input [9:0] pps_i;		// pixels per strip
+
 input clip_ack_i;
 input interp_ack_i;
 output reg ack_o;
@@ -143,6 +144,12 @@ reg  draw_line; // trigger the line drawing.
 wire [point_width-1:0] major_out; // the major axis
 wire [point_width-1:0] minor_out; // the minor axis
 wire request_next_pixel;
+
+// triangle
+wire triangle_ack;
+wire [point_width-1:0] triangle_x_o;
+wire [point_width-1:0] triangle_y_o;
+wire triangle_write_o;
 
 // State machine
 typedef enum logic [2:0] 
@@ -297,13 +304,21 @@ wire triangle_ready = interpolate_i ? (ack_counter <= point_width-1) & ~interp_w
 always_comb
 begin
 	strip_o = 1'b0;
+	/*
 	if (x_counter_o != rect_p1_x && state==rect_state)
 		case(color_depth_i)
-		2'b00:	if (x_counter_o[4:0]==5'd0 && rect_p1_x[4:0]==5'd0) strip_o = 1'b1;
-		2'b01:	if (x_counter_o[3:0]==5'd0 && rect_p1_x[3:0]==5'd0 && !BPP12) strip_o = 1'b1;
-		2'b11:	if (x_counter_o[2:0]==5'd0 && rect_p1_x[2:0]==5'd0) strip_o = 1'b1;
-		default:	strip_o = 1'b0;
+		2'b00:	if (x_counter_o[4:0]==5'd0 && x_counter_o+6'd32 <= rect_p1_x) strip_o = 1'b1;
+		2'b01:	
+			if (BPP12) begin
+				if (x_counter_o % 21==16'd0 && x_counter_o+6'd21 <= rect_p1_x) strip_o = 1'b1;
+			end
+			else begin
+				if (x_counter_o[3:0]==4'd0 && x_counter_o+6'd16 <= rect_p1_x) strip_o = 1'b1;
+			end
+		2'b10:	if (x_counter_o % 10==16'd0 && x_counter_o+6'd10 <= rect_p1_x) strip_o = 1'b1;
+		2'b11:	if (x_counter_o[2:0]==3'd0 && x_counter_o+6'd8 <= rect_p1_x) strip_o = 1'b1;
 		endcase
+	*/
 end
 
 // Manage outputs (mealy machine)
@@ -381,15 +396,10 @@ begin
                     $signed(clip_pixel0_x_i) - p0_x) + $signed(src_pixel0_x_i);
             v_o <= v_o + 1'b1;
           end
-          else
-          begin
+          else begin
           	if (strip_o) begin
-          		case(color_depth_i)
-          		2'b00:	begin x_counter_o <= x_counter_o + 6'd32; u_o <= u_o + 6'd32; end
-          		2'b01:	begin x_counter_o <= x_counter_o + 6'd16; u_o <= u_o + 6'd16; end
-          		2'b11:	begin x_counter_o <= x_counter_o + 6'd8; u_o <= u_o + 6'd8; end
-          		default:	begin x_counter_o <= x_counter_o + 6'd16; u_o <= u_o + 6'd16; end
-          		endcase
+          		x_counter_o <= x_counter_o + pps_i;
+          		u_o <= u_o + pps_i;
           	end
           	else begin
             	x_counter_o <= x_counter_o + 1'b1;
@@ -477,11 +487,6 @@ bresenham_line bresenham(
 
 defparam bresenham.point_width = point_width;
 defparam bresenham.subpixel_width = subpixel_width;
-
-wire                   triangle_ack;
-wire [point_width-1:0] triangle_x_o;
-wire [point_width-1:0] triangle_y_o;
-wire                   triangle_write_o;
 
 // Triangle module instanciated
 gfx_triangle triangle(

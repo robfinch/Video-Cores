@@ -21,38 +21,40 @@ Components for aligning colored pixels to memory and the inverse
 
 */
 
-module color_to_memory256(color_depth_i, color_i, mb_i, mem_i, mem_o, sel_o);
-parameter BPP12=1'b0;
-input  [1:0]  color_depth_i;
+module color_to_memory256(rmw_i, cbpp_i, color_i, mb_i, mem_i, mem_o, sel_o);
+input rmw_i;
+input [5:0] cbpp_i;
 input  [31:0] color_i;
 input [7:0] mb_i;
 input [255:0] mem_i;
 output [255:0] mem_o;
 output reg [31:0] sel_o;
 
+integer n1;
+
 reg [3:0] sel1;
 always_comb
-	case (color_depth_i)
-	2'd0:	sel1 = 4'h1;
-	2'd1:	sel1 = 4'h3;
-	2'd2:	sel1 = 4'h7;
-	2'd3:	sel1 = 4'hF;
+	case (cbpp_i[5:3])
+	3'd0:	sel1 = 4'h1;
+	3'd1:	sel1 = 4'h3;
+	3'd2:	sel1 = 4'h7;
+	3'd3:	sel1 = 4'hF;
+	default:	sel1 = 4'hF;
 	endcase
 
 always_comb
-if (color_depth_i==2'b01 && BPP12)
+if (rmw_i)
 	sel_o = {32{1'b1}};
 else
 	sel_o = {28'd0,sel1} << mb_i[7:3];
 
 reg [31:0] mask;
 always_comb
-case(color_depth_i)
-2'b00:	mask = 32'h000000FF;
-2'b01:	mask = BPP12 ? 32'h00000FFF : 32'h0000FFFF;
-2'b10:	mask = 32'h00FFFFFF;
-2'b11:	mask = 32'hFFFFFFFF;
-endcase
+	for (n1 = 0; n1 < 32; n1 = n1 + 1)
+		if (n1 < cbpp_i)
+			mask[n1] = 1'b1;
+		else
+			mask[n1] = 1'b0;
 
 reg [255:0] maskshftd;
 
@@ -63,35 +65,37 @@ assign mem_o = ({32'd0,color_i & mask} << mb_i) | (mem_i & ~maskshftd);
 
 endmodule
 
-module memory_to_color256(color_depth_i, mem_i, mb_i, color_o, sel_o);
-parameter BPP12=1'b0;
-input  [1:0]  color_depth_i;
-input  [255:0] mem_i;
+module memory_to_color256(rmw_i, cbpp_i, mem_i, mb_i, color_o, sel_o);
+input rmw_i;
+input [5:0] cbpp_i;
+input [255:0] mem_i;
 input [7:0] mb_i;
 output reg [31:0] color_o;
 output reg [31:0]  sel_o;
 
 reg [3:0] sel1;
 always_comb
-	case (color_depth_i)
-	2'd0:	sel1 = 4'h1;
-	2'd1:	sel1 = 4'h3;
-	2'd2:	sel1 = 4'h7;
-	2'd3:	sel1 = 4'hF;
+	case (cbpp_i[5:3])
+	3'd0:	sel1 = 4'h1;
+	3'd1:	sel1 = 4'h3;
+	3'd2:	sel1 = 4'h7;
+	3'd3:	sel1 = 4'hF;
+	default: sel1 = 4'hF;
 	endcase
 
 always_comb
+if (rwm_i)
+	sel_o = {32{1'b1}};
+else
 	sel_o = {28'd0,sel1} << mb_i[7:3];
 
 reg [31:0] mask;
 always_comb
-case(color_depth_i)
-2'b00:	mask = 32'h000000FF;
-2'b01:	mask = BPP12 ? 32'h00000FFF : 32'h0000FFFF;
-2'b10:	mask = 32'h00FFFFFF;
-2'b11:	mask = 32'hFFFFFFFF;
-default:	mask = 32'h00000000;
-endcase
+	for (n1 = 0; n1 < 32; n1 = n1 + 1)
+		if (n1 < cbpp_i)
+			mask[n1] = 1'b1;
+		else
+			mask[n1] = 1'b0;
 
 always_comb
 	color_o = (mem_i >> mb_i) & mask;

@@ -33,8 +33,9 @@ module gfx256_cuvz(
   // Variables needed for interpolation
   factor0_i, factor1_i,
   // Color
-  color0_i, color1_i, color2_i, color_depth_i,
+  color0_i, color1_i, color2_i,
   color_o,
+  color_comp_i,
   // Depth
   z0_i, z1_i, z2_i,
   z_o,
@@ -71,7 +72,7 @@ input      [point_width-1:0] factor1_i;
 input                 [31:0] color0_i;
 input                 [31:0] color1_i;
 input                 [31:0] color2_i;
-input                  [1:0] color_depth_i;
+input [15:0] color_comp_i;
 // Interpolated color
 output reg            [31:0] color_o;
 
@@ -163,47 +164,36 @@ wire [point_width-1:0] bezier_factor1 = factor2;
 // Interpolate color //
 // ***************** //
 
-// Split colors
-wire [9:0] color0_r = (color_depth_i == 2'b00) ? color0_i[7:0] :
-                      (color_depth_i == 2'b01) ? (BPP12 ? color0_i[11:8] : color0_i[14:10]):
-                      (color_depth_i == 2'b10) ? color0_i[23:16] :
-                      color0_i[29:20];
-wire [9:0] color0_g = (color_depth_i == 2'b00) ? color0_i[7:0] :
-                      (color_depth_i == 2'b01) ? (BPP12 ? color0_i[7:4] : color0_i[9:5]) :
-                      (color_depth_i == 2'b10) ? color0_i[15:8] :
-                      color0_i[19:10];
-wire [9:0] color0_b = (color_depth_i == 2'b00) ? color0_i[7:0] :
-                      (color_depth_i == 2'b01) ? (BPP12 ? color0_i[3:0] : color0_i[4:0]) :
-                      (color_depth_i == 2'b10) ? color0_i[7:0] :
-                      color0_i[9:0];
+integer nr,ng,nb;
+reg [9:0] red_mask,green_mask,blue_mask;
+reg [4:0] red_shift;
+reg [3:0] green_shift;
+always_ff @(posedge clk_i)
+	for (nr = 0; nr < 10; nr = nr + 1)
+		red_mask <= nr < color_comp_i[11:8];
+always_ff @(posedge clk_i)
+	for (ng = 0; ng < 10; ng = ng + 1)
+		green_mask <= ng < color_comp_i[7:4];
+always_ff @(posedge clk_i)
+	for (nb = 0; nb < 10; nb = nb + 1)
+		blue_mask <= nb < color_comp_i[3:0];
+always_ff @(posedge clk_i)
+	red_shift <= color_comp_i[3:0] + color_comp_i[7:4];		
+always_ff @(posedge clk_i)
+	green_shift <= color_comp_i[3:0];	
 
 // Split colors
-wire [9:0] color1_r = (color_depth_i == 2'b00) ? color1_i[7:0] :
-                      (color_depth_i == 2'b01) ? (BPP12 ? color1_i[11:8] : color1_i[14:10]) :
-                      (color_depth_i == 2'b10) ? color1_i[23:16] :
-                      color1_i[29:20];
-wire [9:0] color1_g = (color_depth_i == 2'b00) ? color1_i[7:0] :
-                      (color_depth_i == 2'b01) ? (BPP12 ? color1_i[7:4] : color1_i[9:5]) :
-                      (color_depth_i == 2'b10) ? color1_i[15:8] :
-                      color1_i[19:10];
-wire [9:0] color1_b = (color_depth_i == 2'b00) ? color1_i[7:0] :
-                      (color_depth_i == 2'b01) ? (BPP12 ? color1_i[3:0] : color1_i[4:0]) :
-                      (color_depth_i == 2'b10) ? color1_i[7:0] :
-                      color1_i[9:0];
+wire [9:0] color0_r = (color0_i >> red_shift) & red_mask;
+wire [9:0] color0_g = (color0_i >> green_shift) & green_mask;
+wire [9:0] color0_b = color0_i & blue_mask;
 
-// Split colors
-wire [9:0] color2_r = (color_depth_i == 2'b00) ? color2_i[7:0] :
-                      (color_depth_i == 2'b01) ? (BPP12 ? color2_i[11:8] : color2_i[14:10]) :
-                      (color_depth_i == 2'b10) ? color2_i[23:16] :
-                      color2_i[29:20];
-wire [9:0] color2_g = (color_depth_i == 2'b00) ? color2_i[7:0] :
-                      (color_depth_i == 2'b01) ? (BPP12 ? color2_i[7:4] : color2_i[9:5]) :
-                      (color_depth_i == 2'b10) ? color2_i[15:8] :
-                      color2_i[19:10];
-wire [9:0] color2_b = (color_depth_i == 2'b00) ? color2_i[7:0] :
-                      (color_depth_i == 2'b01) ? (BPP12 ? color2_i[3:0] : color2_i[4:0]) :
-                      (color_depth_i == 2'b10) ? color2_i[7:0] :
-                      color2_i[9:0];
+wire [9:0] color1_r = (color1_i >> red_shift) & red_mask;
+wire [9:0] color1_g = (color1_i >> green_shift) & green_mask;
+wire [9:0] color1_b = color1_i & blue_mask;
+
+wire [9:0] color2_r = (color2_i >> red_shift) & red_mask;
+wire [9:0] color2_g = (color2_i >> green_shift) & green_mask;
+wire [9:0] color2_b = color2_i & blue_mask;
 
 // Interpolation
 wire [10+point_width-1:0] color_r = factor0*color0_r +  factor1*color1_r +  factor2*color2_r;
@@ -260,12 +250,10 @@ begin
         // Alpha
         a_o     <= a[point_width+8-1:point_width];
         // Color
-        color_o <= (color_depth_i == 2'b00) ? {color_r[10+point_width-1:point_width]} : // 8 bit grayscale
-                   (color_depth_i == 2'b01) ? (BPP12 ?
-                   		{color_r[4+point_width-1:point_width], color_g[4+point_width-1:point_width], color_b[4+point_width-1:point_width]} :	// 12 bit
-                    	{color_r[5+point_width-1:point_width], color_g[5+point_width-1:point_width], color_b[5+point_width-1:point_width]}) : // 16 bit
-                   (color_depth_i == 2'b10) ? {color_r[8+point_width-1:point_width], color_g[8+point_width-1:point_width], color_b[8+point_width-1:point_width]} : // 24 bit
-                   {color_r[10+point_width-1:point_width], color_g[10+point_width-1:point_width], color_b[10+point_width-1:point_width]}; // 32 bit
+        color_o <= {((color_r >> point_width) & red_mask) << red_shift,
+        					  ((color_g >> point_width) & green_mask) << green_shift,
+        					  ((color_b >> point_width) & bluemask)
+        					 };
       end
 
     write_state:

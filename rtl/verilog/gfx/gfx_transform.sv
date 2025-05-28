@@ -108,6 +108,16 @@ reg signed [2*point_width-1:-subpixel_width*2] cax;
 reg signed [2*point_width-1:-subpixel_width*2] cby;
 reg signed [2*point_width-1:-subpixel_width*2] ccz;
 
+wire [subpixel_width-1:0] zeroes = 1'b0;
+
+wire signed [2*point_width-1:-subpixel_width*2] x_prime = aax + aby + acz + {tx,zeroes};
+wire signed [2*point_width-1:-subpixel_width*2] y_prime = bax + bby + bcz + {ty,zeroes};
+wire signed [2*point_width-1:-subpixel_width*2] z_prime = cax + cby + ccz + {tz,zeroes};
+
+wire signed [point_width-1:-subpixel_width] x_prime_trunc = x_prime[point_width-1:-subpixel_width];
+wire signed [point_width-1:-subpixel_width] y_prime_trunc = y_prime[point_width-1:-subpixel_width];
+wire signed [point_width-1:-subpixel_width] z_prime_trunc = z_prime[point_width-1:-subpixel_width];
+
 always_ff @(posedge clk_i)
 if(rst_i)
 begin
@@ -207,16 +217,6 @@ else begin
   default:	;
   endcase
 end
-
-wire [subpixel_width-1:0] zeroes = 1'b0;
-
-wire signed [2*point_width-1:-subpixel_width*2] x_prime = aax + aby + acz + {tx,zeroes};
-wire signed [2*point_width-1:-subpixel_width*2] y_prime = bax + bby + bcz + {ty,zeroes};
-wire signed [2*point_width-1:-subpixel_width*2] z_prime = cax + cby + ccz + {tz,zeroes};
-
-wire signed [point_width-1:-subpixel_width] x_prime_trunc = x_prime[point_width-1:-subpixel_width];
-wire signed [point_width-1:-subpixel_width] y_prime_trunc = y_prime[point_width-1:-subpixel_width];
-wire signed [point_width-1:-subpixel_width] z_prime_trunc = z_prime[point_width-1:-subpixel_width];
 
 // State machine
 always_ff @(posedge clk_i)

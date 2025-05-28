@@ -25,7 +25,7 @@ import gfx256_pkg::*;
 module gfx256_renderer(clk_i, rst_i,
 	target_base_i, zbuffer_base_i, target_size_x_i, target_size_y_i,
 	target_x0_i, target_y0_i,
-	color_depth_i,
+	bpp_i, cbpp_i, coeff1_i, coeff2_i, rmw_i,
 	pixel_x_i, pixel_y_i, pixel_z_i, zbuffer_enable_i, color_i, strip_color_i, strip_i,
 	render_addr_o, render_sel_o, render_dat_o, render_dat_i,
 	ack_o, ack_i,
@@ -48,6 +48,11 @@ input [point_width-1:0] target_x0_i;
 input [point_width-1:0] target_y0_i;
 
 input [1:0] color_depth_i;
+input [5:0] bpp_i;
+input [5:0] cbpp_i;
+input [15:0] coeff1_i;
+input [9:0] coeff2_i;
+input rmw_i;
 
 input [point_width-1:0] pixel_x_i;
 input [point_width-1:0] pixel_y_i;
@@ -91,11 +96,14 @@ assign write_o = write1;
 wire [31:0] target_addr;
 wire [31:0] zbuffer_addr;
 wire [7:0] tmb;
-gfx_calc_address #(.SW(MDW), .BPP12(BPP12)) ugfxca1
+gfx_calc_address #(.SW(MDW)) ugfxca1
 (
 	.clk(clk_i),
 	.base_address_i(target_base_i),
-	.color_depth_i(color_depth_i),
+	.bpp_i(bpp_i),
+	.cbpp_i(cbpp_i),
+	.coeff1_i(coeff1_i),
+	.coeff2_i(coeff2_i),
 	.bmp_width_i(target_size_x_i),
 	.x_coord_i(pixel_x_i),
 	.y_coord_i(pixel_y_i),
@@ -105,11 +113,14 @@ gfx_calc_address #(.SW(MDW), .BPP12(BPP12)) ugfxca1
 	.ce_o()
 );
 wire [7:0] zmb;
-gfx_calc_address #(.SW(MDW), .BPP12(BPP12)) ugfxca2
+gfx_calc_address #(.SW(MDW)) ugfxca2
 (
 	.clk(clk_i),
 	.base_address_i(zbuffer_base_i),
-	.color_depth_i(color_depth_i),
+	.bpp_i(bpp_i),
+	.cbpp_i(cbpp_i),
+	.coeff1_i(coeff1_i),
+	.coeff2_i(coeff2_i),
 	.bmp_width_i(target_size_x_i),
 	.x_coord_i(pixel_x_i),
 	.y_coord_i(pixel_y_i),
@@ -123,8 +134,9 @@ gfx_calc_address #(.SW(MDW), .BPP12(BPP12)) ugfxca2
 //wire [31:5] zbuffer_addr = zbuffer_base_i + pixel_offset[31:5];
 
 // Color to memory converter
-color_to_memory256 #(.BPP12(BPP12)) color_proc(
-	.color_depth_i (color_depth_i),
+color_to_memory256 color_proc(
+	.rmw_i(rmw_i),
+	.cbpp_i(cbpp_i),
 	.color_i (color_i),
 	.mb_i(tmb),
 	.mem_i (target_dati),
@@ -133,10 +145,11 @@ color_to_memory256 #(.BPP12(BPP12)) color_proc(
 );
 
 // Color to memory converter
-color_to_memory256 #(.BPP12(BPP12)) depth_proc(
-	.color_depth_i  (2'b01),
+color_to_memory256 depth_proc(
+	.rmw_i(rmw_i),
+	.cbpp_i(6'd16),
 	// Note: Padding because z_i is only [15:0]
-	.color_i        ({ {point_width{1'b0}}, pixel_z_i[point_width-1:0] }),
+	.color_i ({ {point_width{1'b0}}, pixel_z_i[point_width-1:0] }),
 	.mb_i(zmb),
 	.mem_i (256'd0),
 	.mem_o (zbuffer_dat),
@@ -197,11 +210,14 @@ begin
 		write_pixel_state:
       begin
         render_addr_o <= target_addr;
-        render_sel_o <= target_sel;
-        if (strip_i)
-        	render_dat_o <= strip_color_i;
-        else
+        if (strip_i) begin
+	        render_sel_o <= 32'hFFFFFFFF;
+  	    	render_dat_o <= strip_color_i;
+        end
+        else begin
+	        render_sel_o <= target_sel;
         	render_dat_o <= target_dat;
+        end
         write1 <= 1'b1;
       end
 
@@ -248,7 +264,7 @@ begin
     delay2_state:
     	state <= delay3_state;
     delay3_state:
-    	if (color_depth_i==2'b01 && BPP12)
+    	if (rmw_i)
     		state <= read_pixel_state;
     	else
       	state <= write_pixel_state;

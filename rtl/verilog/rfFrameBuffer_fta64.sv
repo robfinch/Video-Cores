@@ -132,6 +132,7 @@ parameter REG_WINDOW = 11'd15;
 parameter REG_IRQ_MSGADR = 11'd16;
 parameter REG_IRQ_MSGDAT = 11'd17;
 parameter REG_TRANS_COLOR = 11'd18;
+parameter REG_COLOR_COMPONENT = 11'd19;
 
 parameter OPBLACK = 4'd0;
 parameter OPCOPY = 4'd1;
@@ -317,7 +318,7 @@ video_bus.in video_i;
 video_bus.out video_o;
 output vblank_o;
 
-
+genvar g;
 wire s_clk_i = s_bus_i.clk;
 `ifdef BUSWID64
 fta_cmd_request64_t s_req_i;
@@ -329,6 +330,7 @@ fta_cmd_response32_t s_resp_o;
 `endif
 always_comb
 begin
+	s_req_i = {$bits(fta_cmd_request32_t){1'b0}};
 	s_req_i.tid = s_bus_i.req.tid;
 	s_req_i.cyc = s_bus_i.req.cyc;
 	s_req_i.we = s_bus_i.req.we;
@@ -497,6 +499,8 @@ reg [11:0] hBlankOn = phBlankOn, hBlankOff = phBlankOff;
 reg [11:0] vBlankOn = pvBlankOn, vBlankOff = pvBlankOff;
 reg [11:0] hBorderOn = phBorderOn, hBorderOff = phBorderOff;
 reg [11:0] vBorderOn = pvBorderOn, vBorderOff = pvBorderOff;
+reg [3:0] red_comp,green_comp,blue_comp,pad_comp;
+reg [5:0] comp_total;
 reg sgLock;
 wire pe_hsync, pe_hsync2;
 wire pe_vsync;
@@ -875,6 +879,10 @@ if (rst_i) begin
 	onoff <= 1'b1;
 	color_depth <= BPP16;
 	color_depth2 <= BPP16;
+	red_comp = 4'd5;
+	green_comp = 4'd5;
+	blue_comp = 4'd5;
+	pad_comp = 4'd1;
 	greyscale <= 1'b0;
 	bm_base_addr1 <= BM_BASE_ADDR1;
 	bm_base_addr2 <= BM_BASE_ADDR2;
@@ -888,6 +896,7 @@ if (rst_i) begin
 	rst_irq <= 1'b0;
 	rastcmp <= 12'hFFF;
 	oob_color <= 32'h00003C00;
+	trans_color <= 32'hBFFFFFFF;
 	irq_msgadr <= IRQ_MSGADR;
 	irq_msgdat <= IRQ_MSGDAT;
 	hTotal <= phTotal;
@@ -962,6 +971,7 @@ else begin
 			REG_OOB_COLOR:
 				begin
 					if (|sel[3:0]) oob_color[31:0] <= dat[31:0];
+					if (|sel[7:4]) trans_color[31:0] <= dat[63:32];
 				end
 			REG_WINDOW:
 				begin
@@ -969,6 +979,11 @@ else begin
 					if (|sel[3:2])  windowHeight <= dat[27:16];
 					if (|sel[5:4])	windowLeft <= dat[47:32];
 					if (|sel[7:6])  windowTop <= dat[63:48];
+				end
+			REG_COLOR_COMPONENT:
+				begin
+					if (sel[0]) {green_comp,blue_comp} <= dat[7:0];
+					if (sel[1]) {pad_comp,red_comp} <= dat[15:8];
 				end
 			REG_IRQ_MSGADR:
 				begin
@@ -1052,8 +1067,13 @@ else begin
 		  REG_PXYZ:		    s_dat_o <= {20'h0,pz,py,px};
 		  REG_PCOLCMD:    s_dat_o <= {color_o,12'd0,raster_op,14'd0,pcmd};
 			REG_BMPSIZE:		s_dat_o <= {16'd0,bmpHeight,16'd0,bmpWidth};
-		  REG_OOB_COLOR:	s_dat_o <= {32'h0,oob_color};
+		  REG_OOB_COLOR:	s_dat_o <= {trans_color,oob_color};
 		  REG_WINDOW:			s_dat_o <= {windowTop,windowLeft,4'h0,windowHeight,4'h0,windowWidth};
+			REG_COLOR_COMPONENT:
+				begin
+					s_dat_o[7:0] <= {green_comp,blue_comp};
+					s_dat_o[15:8] <= {pad_comp,red_comp} <= dat[15:8];
+				end
 		  REG_IRQ_MSGADR:	s_dat_o <= irq_msgadr;
 		  REG_IRQ_MSGDAT:	s_dat_o <= irq_msgdat;
 		  11'b1?_????_????_?:	s_dat_o <= pal_wo;
@@ -1086,8 +1106,14 @@ else begin
 			{REG_BMPSIZE,1'b0}:		s_dat_o <= {16'd0,bmpWidth};
 			{REG_BMPSIZE,1'b1}:		s_dat_o <= {16'd0,bmpHeight};
 		  {REG_OOB_COLOR,1'b0}:	s_dat_o <= oob_color;
+		  {REG_OOB_COLOR,1'b1}:	s_dat_o <= trans_color;
 		  {REG_WINDOW,1'b0}:		s_dat_o <= {4'h0,windowHeight,4'h0,windowWidth};
 		  {REG_WINDOW,1'b1}:		s_dat_o <= {windowTop,windowLeft};
+			{REG_COLOR_COMPONENT,1'b0}:
+				begin
+					s_dat_o[7:0] <= {green_comp,blue_comp};
+					s_dat_o[15:8] <= {pad_comp,red_comp} <= dat[15:8];
+				end
 		  {REG_IRQ_MSGADR,1'b0}:	s_dat_o <= irq_msgadr[31:0];
 		  {REG_IRQ_MSGADR,1'b1}:	s_dat_o <= irq_msgadr[63:32];
 		  {REG_IRQ_MSGDAT,1'b0}:	s_dat_o <= irq_msgdat[31:0];
@@ -1107,6 +1133,43 @@ else begin
 	if (latch_map)
 		map_out_latch <= map_out;
 end
+
+reg [5:0] bpp;
+reg [5:0] cbpp;
+reg [2:0] bytpp;
+reg [15:0] coeff1;
+
+// Bits per pixel minus one.
+always_ff @(posedge clk)
+	bpp <= pad_comp+red_comp+green_comp+blue_comp-1'd1;
+
+// Color bits per pixel minus one.
+always_ff @(posedge clk)
+	cbpp <= red_comp+green_comp+blue_comp-1'd1;
+
+// Bytes per pixel.
+always_ff @(posedge clk)
+	bytpp <= (bpp + 3'd7) >> 2'd3;
+
+// This coefficient is a fixed point fraction representing the inverse of the
+// number of pixels per strip. The inverse (reciprocal) is used for a high
+// speed divide operation.
+always_ff @(posedge clk)
+	coeff1 <= bpp * (65536/MDW);	// 9x6 multiply - could use a lookup table
+
+// This coefficient is the number of bits used by all pixels in the strip. 
+// Used to determine pixel placement in the strip.
+reg [9:0] coeff2a [0:63];
+
+generate begin : gCoeff2
+	for (g = 0; g < 64; g = g + 1)
+always_ff @(posedge clk)
+	coeff2a[g] <= (MDW/g) * g;
+end
+endgenerate
+
+always_ff @(posedge clk)
+	coeff2 <= coeff2a[bpp];
 
 //`ifdef USE_CLOCK_GATE
 //BUFHCE ucb1
@@ -1193,28 +1256,6 @@ always_comb
 always_ff @(posedge vclk)
 	xal_o <= vc != 4'd1;
 
-// Bits per pixel minus one.
-reg [4:0] bpp;
-always_comb
-case(color_depth2)
-BPP8:	bpp = 7;
-BPP16:	bpp = 15;
-BPP24:	bpp = 23;
-BPP32:	bpp = 31;
-default:	bpp = 15;
-endcase
-
-// Bytes per pixel.
-reg [2:0] bytpp;
-always_comb
-case(color_depth2)
-BPP8:	bytpp = 1;
-BPP16:	bytpp = 2;
-BPP24:	bytpp = 3;
-BPP32:	bytpp = 4;
-default:	bytpp = 2;
-endcase
-
 modCalcShifts ucalcshft 
 (
 	.color_depth(color_depth2),
@@ -1259,7 +1300,10 @@ u1
 (
   .clk(m_bus_o.clk),
 	.base_address_i(baseAddrDisplay),
-	.color_depth_i(color_depth2),
+	.coeff1_i(coeff1),
+	.coeff2_i(coeff2),
+	.bpp_i(bpp),
+	.cbpp_i(cbpp),
 	.bmp_width_i(bmpWidth),
 	.x_coord_i(windowLeft),
 	.y_coord_i(windowTop + pixelRow),
@@ -1278,7 +1322,10 @@ u2
 (
   .clk(m_bus_o.clk),
 	.base_address_i(baseAddrWork),
-	.color_depth_i(color_depth2),
+	.coeff1_i(coeff1),
+	.coeff2_i(coeff2),
+	.bpp_i(bpp),
+	.cbpp_i(cbpp),
 	.bmp_width_i(bmpWidth),
 	.x_coord_i(windowLeft+px),
 	.y_coord_i(windowTop+py),
@@ -1463,7 +1510,7 @@ else begin
 	end
 
 	// For burst only a single request is submitted, but many responses may occur
-	if (memreq && !m_rst_busy_i && !fifo_wrst) begin
+	if (memreq && !m_rst_busy_i && !fifo_wrst && !m_bus_o.resp.stall) begin
 		m_fst_o <= LOW;
 		vm_blen_o <= burst_len;
 		vm_tid_o <= {CORENO,CHANNEL,4'h0};
@@ -1506,7 +1553,7 @@ else begin
   	state <= PCMD3;
   PCMD3:
   	// Make sure a strip request will not be present before using the bus.
-		if (!(memreq && !m_rst_busy_i)) begin
+		if (!(memreq && !m_rst_busy_i && !m_bus_o.resp.stall)) begin
 			if (pcmd_adr != xyAddr) begin
 				pcmd_adr <= xyAddr;
 	    	vm_blen_o <= 6'd0;
@@ -1560,7 +1607,7 @@ else begin
       state <= STORESTRIP;
     end
   STORESTRIP:
-    if (!(memreq && !m_rst_busy_i)) begin
+    if (!(memreq && !m_rst_busy_i && !m_bus_o.resp.stall)) begin
     	mem_strip <= m_bus_o.req.data1;		// cache the new value
     	vm_blen_o <= 6'd0;
 			vm_tid_o <= {CORENO,CHANNEL,4'h3};
@@ -2077,7 +2124,7 @@ output reg first_memreq;			// first memreq on line
 reg first;
 reg memreq1;
 reg [15:0] bi_ctr;
-wire [5:0] nburst;
+wire [7:0] nburst;
 
 modBurstCntr ubc1
 (

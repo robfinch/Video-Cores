@@ -40,14 +40,17 @@
 //
 import gfx_pkg::*;
 
-module gfx_calc_address(clk, base_address_i, color_depth_i, bmp_width_i, x_coord_i, y_coord_i,
+module gfx_calc_address(clk, base_address_i, coeff1_i, coeff2_i, bpp_i, cbpp_i, bmp_width_i, x_coord_i, y_coord_i,
 	address_o, mb_o, me_o, ce_o);
 parameter SW = 256;		// strip width in bits
 parameter BN = $clog2(SW)-1;
 parameter BPP12 = 1'b0;
 input clk;
 input [31:0] base_address_i;
-input [1:0] color_depth_i;
+input [15:0] coeff1_i;
+input [9:0] coeff2_i;
+input [5:0] bpp_i;
+input [5:0] cbpp_i;
 input [15:0] bmp_width_i;	// pixel per line
 input [15:0] x_coord_i;
 input [15:0] y_coord_i;
@@ -55,53 +58,6 @@ output reg [31:0] address_o;
 output reg [BN:0] mb_o;			// mask begin
 output reg [BN:0] me_o;			// mask end
 output reg [BN:0] ce_o;			// color bits end
-
-// This coefficient is a fixed point fraction representing the inverse of the
-// number of pixels per strip. The inverse (reciprocal) is used for a high
-// speed divide operation.
-reg [23:0] coeff;
-always_comb
-	case(color_depth_i)
-	BPP8:	coeff = 8*65536/SW;
-	BPP16:	coeff = BPP12 ? 12*65536/SW : 16*65536/SW;
-	BPP24:	coeff = 24*65536/SW;
-	BPP32:	coeff = 32*65536/SW;
-	default:	coeff = 16*65536/SW;
-	endcase
-
-// Bits per pixel minus one.
-reg [5:0] bpp;
-always_comb
-	case(color_depth_i)
-	BPP8:	bpp = 7;
-	BPP16:	bpp = BPP12 ? 11 : 15;
-	BPP24:	bpp = 23;
-	BPP32:	bpp = 31;
-	default:	bpp = 15;
-	endcase
-
-// Color bits per pixel minus one.
-reg [5:0] cbpp;
-always_comb
-	case(color_depth_i)
-	BPP8:	cbpp = 7;
-	BPP16:	cbpp = BPP12 ? 11 : 15;
-	BPP24:	cbpp = 23;
-	BPP32:	cbpp = 29;
-	default:	cbpp = 15;
-	endcase
-
-// This coefficient is the number of bits used by all pixels in the strip. 
-// Used to determine pixel placement in the strip.
-reg [8:0] coeff2;
-always_comb
-	case(color_depth_i)
-	BPP8:	coeff2 = SW-(SW % 8);
-	BPP16:	coeff2 = BPP12 ? SW-(SW % 12): SW-(SW % 16);
-	BPP24:	coeff2 = SW-(SW % 24);
-	BPP32:	coeff2 = SW-(SW % 32);
-	default:	coeff2 = SW-(SW % 16);
-	endcase
 
 // Compute the fixed point horizonal strip number value. This has 16 binary
 // point places.

@@ -160,6 +160,14 @@ wire [31:0] font_table_base_reg;
 wire [15:0] font_id_reg;
 wire [15:0] char_code_reg;
 
+wire [5:0] bpp;
+wire [5:0] cbpp;
+wire [15:0] coeff1;
+wire [9:0] coeff2;
+wire [9:0] pps;
+wire rmw;
+wire [15:0] color_comp;
+
 // Slave wishbone interface. Reads wishbone bus and fills registers
 gfx256_wbs wb_databus(
   .clk_i (wb_clk_i),
@@ -254,7 +262,15 @@ gfx256_wbs wb_databus(
   .zbuffer_base_o (zbuffer_base_reg),
   .char_code_o (char_code_reg),
   .font_table_base_o (font_table_base_reg),
-  .font_id_o (font_id_reg)
+  .font_id_o (font_id_reg),
+  
+  .bpp_o(bpp),
+  .cbpp_o(cbpp),
+  .coeff1_o(coeff1),
+  .coeff2_o(coeff2),
+  .pps_o(pps),
+  .rmw_o(rmw),
+	.color_comp_o(color_comp)  
 );
 
 defparam wb_databus.point_width    = point_width;
@@ -332,11 +348,11 @@ wire char_ack_o;
 wire raster_strip;
 
 // Rasterizer generates pixels to calculate
-gfx_rasterizer #(.BPP12(BPP12)) rasterizer0 (
+gfx_rasterizer rasterizer0 (
   .clk_i            (wb_clk_i),
   .rst_i            (wb_rst_i),
 
-	.color_depth_i (color_depth_reg),
+	.pps_i(pps),
   .clip_ack_i       (clip_ack),
   .interp_ack_i     (interp_raster_ack),
   .ack_o            (raster_wbs_ack),
@@ -444,50 +460,55 @@ wire                   cuvz_clip_write;
 
 wire            [31:0] cuvz_clip_color;
 
-gfx256_cuvz #(.BPP12(BPP12)) cuvz(
-.clk_i     (wb_clk_i),
-.rst_i     (wb_rst_i),
-.ack_i     (clip_ack),
-.ack_o     (cuvz_interp_ack),
-.write_i   (interp_cuvz_write),
-// Variables needed for interpolation
-.factor0_i (interp_cuvz_factor0),
-.factor1_i (interp_cuvz_factor1),
-// Color
-.color0_i  (color0_reg),
-.color1_i  (color1_reg),
-.color2_i  (color2_reg),
-.color_depth_i (color_depth_reg),
-.color_o   (cuvz_clip_color),
-// Depth
-.z0_i      (transform_cuvz_dest_pixel0_z),
-.z1_i      (transform_cuvz_dest_pixel1_z),
-.z2_i      (transform_cuvz_dest_pixel2_z),
-.z_o       (cuvz_clip_z),
-// Alpha
-.a0_i      (alpha0_reg),
-.a1_i      (alpha1_reg),
-.a2_i      (alpha2_reg),
-.a_o       (cuvz_clip_alpha),
-// Texture coordinates
-.u0_i      (u0_reg),
-.v0_i      (v0_reg),
-.u1_i      (u1_reg),
-.v1_i      (v1_reg),
-.u2_i      (u2_reg),
-.v2_i      (v2_reg),
-.u_o       (cuvz_clip_u),
-.v_o       (cuvz_clip_v),
-// Bezier calculations
-.bezier_factor0_o (cuvz_clip_bezier_factor0),
-.bezier_factor1_o (cuvz_clip_bezier_factor1),
-// Raster position
-.x_i       (interp_cuvz_x),
-.y_i       (interp_cuvz_y),
-.x_o       (cuvz_clip_x),
-.y_o       (cuvz_clip_y),
+gfx256_cuvz cuvz(
+	.clk_i     (wb_clk_i),
+	.rst_i     (wb_rst_i),
+	.ack_i     (clip_ack),
+	.ack_o     (cuvz_interp_ack),
+	.write_i   (interp_cuvz_write),
+	// Variables needed for interpolation
+	.factor0_i (interp_cuvz_factor0),
+	.factor1_i (interp_cuvz_factor1),
+	// Color
+	.color0_i  (color0_reg),
+	.color1_i  (color1_reg),
+	.color2_i  (color2_reg),
+	.color_depth_i (color_depth_reg),
+	.color_o   (cuvz_clip_color),
+	.color_comp_i(color_comp),
+  .bpp_i(bpp),
+  .cbpp_i(cbpp),
+  .coeff1_i(coeff1),
+  .coeff2_i(coeff2),
+	// Depth
+	.z0_i      (transform_cuvz_dest_pixel0_z),
+	.z1_i      (transform_cuvz_dest_pixel1_z),
+	.z2_i      (transform_cuvz_dest_pixel2_z),
+	.z_o       (cuvz_clip_z),
+	// Alpha
+	.a0_i      (alpha0_reg),
+	.a1_i      (alpha1_reg),
+	.a2_i      (alpha2_reg),
+	.a_o       (cuvz_clip_alpha),
+	// Texture coordinates
+	.u0_i      (u0_reg),
+	.v0_i      (v0_reg),
+	.u1_i      (u1_reg),
+	.v1_i      (v1_reg),
+	.u2_i      (u2_reg),
+	.v2_i      (v2_reg),
+	.u_o       (cuvz_clip_u),
+	.v_o       (cuvz_clip_v),
+	// Bezier calculations
+	.bezier_factor0_o (cuvz_clip_bezier_factor0),
+	.bezier_factor1_o (cuvz_clip_bezier_factor1),
+	// Raster position
+	.x_i       (interp_cuvz_x),
+	.y_i       (interp_cuvz_y),
+	.x_o       (cuvz_clip_x),
+	.y_o       (cuvz_clip_y),
 
-.write_o   (cuvz_clip_write)
+	.write_o   (cuvz_clip_write)
 );
 
 defparam cuvz.point_width     = point_width;
@@ -520,8 +541,8 @@ gfx256_textblit textblit
 	.clip_ack_i(clip_ack),
 	.char_i(wbs_char_write),
 	.char_code(char_code_reg),
-  .char_pos_x_i(transform_raster_dest_pixel0_x),
-  .char_pos_y_i(transform_raster_dest_pixel0_y),
+  .char_pos_x_i(transform_raster_dest_pixel0_x[15:0]),
+  .char_pos_y_i(transform_raster_dest_pixel0_y[15:0]),
 	.char_x_o(char_x_o),
 	.char_y_o(char_y_o),
 	.char_write_o(char_write_o),
@@ -544,11 +565,16 @@ wire clip_wbmreader_z_request;
 wire clip_fragment_strip;
 
 // Apply clipping
-gfx256_clip #(.BPP12(BPP12)) clip (
+gfx256_clip clip (
 	.clk_i (wb_clk_i),
 	.rst_i (wb_rst_i),
 	.clipping_enable_i(clipping_enable_reg),
-	.color_depth_i (color_depth_reg),
+	.rmw_i(rmw),
+  .bpp_i(bpp),
+  .cbpp_i(cbpp),
+  .coeff1_i(coeff1),
+  .coeff2_i(coeff2),
+  .pps_i(pps),
 	.zbuffer_enable_i (zbuffer_enable_reg),
 	.zbuffer_base_i (zbuffer_base_reg),
 	.target_size_x_i (target_size_x_reg),
@@ -652,7 +678,11 @@ gfx256_fragment_processor #(.BPP12(BPP12)) fp0 (
   .tex0_base_i (wbs_fragment_tex0_base), 
   .tex0_size_x_i (wbs_fragment_tex0_size_x), 
   .tex0_size_y_i (wbs_fragment_tex0_size_y),
-  .color_depth_i (color_depth_reg),
+  .rmw_i(rmw),
+  .bpp_i(bpp),
+  .cbpp_i(cbpp),
+  .coeff1_i(coeff1),
+  .coeff2_i(coeff2),
   .colorkey_enable_i (colorkey_enable_reg),
   .colorkey_i (colorkey_reg)
   );
@@ -677,7 +707,7 @@ wire [255:0] blender_render_strip_color;
 
 // Applies alpha blending if enabled (requires RAM read to get target pixel color)
 // Fragment processor generates color of pixel (requires RAM read for textures)
-gfx256_blender #(.BPP12(BPP12)) blender0 (
+gfx256_blender blender0 (
   .clk_i (wb_clk_i),
   .rst_i (wb_rst_i),
   .blending_enable_i (blending_enable_reg),
@@ -685,7 +715,12 @@ gfx256_blender #(.BPP12(BPP12)) blender0 (
   .target_base_i (target_base_reg),
   .target_size_x_i (target_size_x_reg),
   .target_size_y_i (target_size_y_reg),
-  .color_depth_i (color_depth_reg),
+  .rmw_i(rmw),
+  .color_comp_i(color_comp),
+  .bpp_i(bpp),
+  .cbpp_i(cbpp),
+  .coeff1_i(coeff1),
+  .coeff2_i(coeff2),
   .x_counter_i (fragment_blender_x_pixel),
   .y_counter_i (fragment_blender_y_pixel),
   .z_i (fragment_blender_z_pixel),
@@ -714,7 +749,7 @@ gfx256_blender #(.BPP12(BPP12)) blender0 (
 defparam blender0.point_width = point_width;
 
 // Write pixel to target (check for out of bounds)
-gfx256_renderer #(.BPP12(BPP12)) renderer (
+gfx256_renderer renderer (
   .clk_i (wb_clk_i),
   .rst_i (wb_rst_i),
   // Render target information
@@ -722,7 +757,14 @@ gfx256_renderer #(.BPP12(BPP12)) renderer (
   .zbuffer_base_i (zbuffer_base_reg),
   .target_size_x_i (target_size_x_reg),
   .target_size_y_i (target_size_y_reg),
+	.target_x0_i (target_x0_reg),
+	.target_y0_i (target_y0_reg),
   .color_depth_i (color_depth_reg),
+  .bpp_i(bpp),
+  .cbpp_i(cbpp),
+  .coeff1_i(coeff1),
+  .coeff2_i(coeff2),
+  .rmw_i(rmw),
   // Input pixel
   .pixel_x_i (blender_render_x_pixel),
   .pixel_y_i (blender_render_y_pixel),
@@ -749,6 +791,7 @@ wire wbmreader_arbiter_ack;
 wire [31:0] arbiter_wbmreader_addr;
 wire [255:0] wbmreader_arbiter_data;
 wire [255:0] wbmwriter_arbiter_data;
+wire arbiter_wbmreader_we;
 wire [31:0] arbiter_wbmreader_sel;
 wire arbiter_wbmreader_request;
 wire arbiter_wbmwriter_request;
@@ -760,6 +803,7 @@ gfx256_wbm_readwrite_arbiter wbm_arbiter (
   .read_request_o (arbiter_wbmreader_request),
   .write_request_o (arbiter_wbmwriter_request),
   .addr_o (arbiter_wbmreader_addr),
+  .we_o (arbiter_wbmreader_we),
   .sel_o (arbiter_wbmreader_sel),
   .dat_i (wbmreader_arbiter_data),
   .dat_o (wbmwriter_arbiter_data),
