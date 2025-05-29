@@ -138,13 +138,13 @@ reg [4:0] red_shift;
 reg [4:0] green_shift;
 always_ff @(posedge clk_i)
 	for (nr = 0; nr < 10; nr = nr + 1)
-		red_mask <= nr < color_comp_i[11:8];
+		red_mask[nr] <= nr < color_comp_i[11:8];
 always_ff @(posedge clk_i)
 	for (ng = 0; ng < 10; ng = ng + 1)
-		green_mask <= ng < color_comp_i[7:4];
+		green_mask[ng] <= ng < color_comp_i[7:4];
 always_ff @(posedge clk_i)
 	for (nb = 0; nb < 10; nb = nb + 1)
-		blue_mask <= nb < color_comp_i[3:0];
+		blue_mask[nb] <= nb < color_comp_i[3:0];
 always_ff @(posedge clk_i)
 	red_shift <= color_comp_i[3:0] + color_comp_i[7:4];		
 always_ff @(posedge clk_i)
@@ -198,7 +198,7 @@ begin
     pixel_x_o        <= 1'b0;
     pixel_y_o        <= 1'b0;
     pixel_z_o        <= 1'b0;
-    pixel_color_o    <= 1'b0;
+    pixel_color_o    <= 32'b0;
     target_request_o <= 1'b0;
     target_sel_o     <= 32'hFFFFFFFF;
     strip_o <= 1'b0;
@@ -279,7 +279,7 @@ begin
           target_request_o <= 1'b0;
 
       	  // Recombine colors
-      	  pixel_color_o <= {(((alpha_color_r >> 4'd8) & red_mask) << red_shift)|
+      	  pixel_color_o <= {(((alpha_color_r >> 4'd8) & red_mask) << red_shift) |
       	  									(((alpha_color_g >> 4'd8) & green_mask) << green_shift) |
       	  									((alpha_color_b >> 4'd8) & blue_mask)
       	  								 };

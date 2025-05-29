@@ -38,7 +38,6 @@ module gfx256_fragment_processor(clk_i, rst_i, bpp_i, cbpp_i, coeff1_i, coeff2_i
   );
 
 parameter point_width = 16;
-parameter BPP12 = 1'b0;
 parameter MDW = 256;
 
 input clk_i;

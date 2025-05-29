@@ -639,7 +639,7 @@ wire fragement_blender_strip;
 
 
 // Fragment processor generates color of pixel (requires RAM read for textures)
-gfx256_fragment_processor #(.BPP12(BPP12)) fp0 (
+gfx256_fragment_processor fp0 (
   .clk_i (wb_clk_i),
   .rst_i (wb_rst_i),
   .pixel_alpha_i (clip_fragment_a),

@@ -170,13 +170,13 @@ reg [4:0] red_shift;
 reg [3:0] green_shift;
 always_ff @(posedge clk_i)
 	for (nr = 0; nr < 10; nr = nr + 1)
-		red_mask <= nr < color_comp_i[11:8];
+		red_mask[nr] <= nr < color_comp_i[11:8];
 always_ff @(posedge clk_i)
 	for (ng = 0; ng < 10; ng = ng + 1)
-		green_mask <= ng < color_comp_i[7:4];
+		green_mask[ng] <= ng < color_comp_i[7:4];
 always_ff @(posedge clk_i)
 	for (nb = 0; nb < 10; nb = nb + 1)
-		blue_mask <= nb < color_comp_i[3:0];
+		blue_mask[nb] <= nb < color_comp_i[3:0];
 always_ff @(posedge clk_i)
 	red_shift <= color_comp_i[3:0] + color_comp_i[7:4];		
 always_ff @(posedge clk_i)

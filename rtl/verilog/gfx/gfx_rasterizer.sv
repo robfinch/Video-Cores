@@ -56,7 +56,6 @@ module gfx_rasterizer (clk_i, rst_i, pps_i,
 parameter point_width    = 16;
 parameter subpixel_width = 16;
 parameter delay_width    = 7;
-parameter BPP12 = 1'b0;
 
 input clk_i;
 input rst_i;
