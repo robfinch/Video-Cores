@@ -2298,26 +2298,28 @@ input [31:0] rgbo3;
 output reg [31:0] rgbo4;
 
 integer nr,ng,nb;
-reg [9:0] red, green, blue;
+reg [29:0] red;
+reg [19:0] green;
+reg [9:0] blue;
 reg [4:0] red_shift, green_shift;
 reg [4:0] red_shift2, green_shift2, blue_shift2;
 reg [9:0] red_mask, green_mask, blue_mask;
 
 always_ff @(posedge clk)
-	for (nr = 1; nr < 10; nr = nr + 1)
+	for (nr = 0; nr < 10; nr = nr + 1)
 		red_mask[nr] = nr < color_comp[11:8];
 always_ff @(posedge clk)
-	for (ng = 1; ng < 10; ng = ng + 1)
+	for (ng = 0; ng < 10; ng = ng + 1)
 		green_mask[ng] = ng < color_comp[7:4];
 always_ff @(posedge clk)
-	for (nb = 1; nb < 10; nb = nb + 1)
+	for (nb = 0; nb < 10; nb = nb + 1)
 		blue_mask[nb] = nb < color_comp[3:0];
 always_ff @(posedge clk)
-	red_shift2 = 30 - color_comp[11:8];
+	red_shift2 = 6'd30 - color_comp[11:8];
 always_ff @(posedge clk)
-	green_shift2 = 20 - color_comp[7:4];
+	green_shift2 = 6'd20 - color_comp[7:4];
 always_ff @(posedge clk)
-	blue_shift2 = 10 - color_comp[3:0];
+	blue_shift2 = 6'd10 - color_comp[3:0];
 
 always_ff @(posedge clk)
 	red_shift <= color_comp[7:4] + color_comp[3:0];
