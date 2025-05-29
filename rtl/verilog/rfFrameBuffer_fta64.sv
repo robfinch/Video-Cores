@@ -499,6 +499,7 @@ reg [11:0] hBlankOn = phBlankOn, hBlankOff = phBlankOff;
 reg [11:0] vBlankOn = pvBlankOn, vBlankOff = pvBlankOff;
 reg [11:0] hBorderOn = phBorderOn, hBorderOff = phBorderOff;
 reg [11:0] vBorderOn = pvBorderOn, vBorderOff = pvBorderOff;
+reg [31:0] color_comp;
 reg [3:0] red_comp,green_comp,blue_comp,pad_comp;
 reg [5:0] comp_total;
 reg sgLock;
@@ -982,8 +983,7 @@ else begin
 				end
 			REG_COLOR_COMPONENT:
 				begin
-					if (sel[0]) {green_comp,blue_comp} <= dat[7:0];
-					if (sel[1]) {pad_comp,red_comp} <= dat[15:8];
+					if (&sel[3:0]) color_comp <= dat[31:0];
 				end
 			REG_IRQ_MSGADR:
 				begin
@@ -1069,11 +1069,7 @@ else begin
 			REG_BMPSIZE:		s_dat_o <= {16'd0,bmpHeight,16'd0,bmpWidth};
 		  REG_OOB_COLOR:	s_dat_o <= {trans_color,oob_color};
 		  REG_WINDOW:			s_dat_o <= {windowTop,windowLeft,4'h0,windowHeight,4'h0,windowWidth};
-			REG_COLOR_COMPONENT:
-				begin
-					s_dat_o[7:0] <= {green_comp,blue_comp};
-					s_dat_o[15:8] <= {pad_comp,red_comp} <= dat[15:8];
-				end
+			REG_COLOR_COMPONENT:	s_dat_o <= {32'd0,color_comp};
 		  REG_IRQ_MSGADR:	s_dat_o <= irq_msgadr;
 		  REG_IRQ_MSGDAT:	s_dat_o <= irq_msgdat;
 		  11'b1?_????_????_?:	s_dat_o <= pal_wo;
@@ -1109,11 +1105,7 @@ else begin
 		  {REG_OOB_COLOR,1'b1}:	s_dat_o <= trans_color;
 		  {REG_WINDOW,1'b0}:		s_dat_o <= {4'h0,windowHeight,4'h0,windowWidth};
 		  {REG_WINDOW,1'b1}:		s_dat_o <= {windowTop,windowLeft};
-			{REG_COLOR_COMPONENT,1'b0}:
-				begin
-					s_dat_o[7:0] <= {green_comp,blue_comp};
-					s_dat_o[15:8] <= {pad_comp,red_comp} <= dat[15:8];
-				end
+			{REG_COLOR_COMPONENT,1'b0}:	s_dat_o <= color_comp;
 		  {REG_IRQ_MSGADR,1'b0}:	s_dat_o <= irq_msgadr[31:0];
 		  {REG_IRQ_MSGADR,1'b1}:	s_dat_o <= irq_msgadr[63:32];
 		  {REG_IRQ_MSGDAT,1'b0}:	s_dat_o <= irq_msgdat[31:0];
@@ -1134,7 +1126,6 @@ else begin
 		map_out_latch <= map_out;
 end
 
-reg [15:0] color_comp;
 reg [5:0] bpp;
 reg [5:0] cbpp;
 reg [2:0] bytpp;
@@ -1143,7 +1134,13 @@ reg [9:0] coeff2;
 reg [9:0] pps;
 
 always_ff @(posedge s_clk_i)
-	color_comp <= {pad_comp,red_comp,green_comp,blue_comp};
+	pad_comp <= color_comp[15:12];
+always_ff @(posedge s_clk_i)
+	red_comp <= color_comp[11:8];
+always_ff @(posedge s_clk_i)
+	green_comp <= color_comp[7:4];
+always_ff @(posedge s_clk_i)
+	blue_comp <= color_comp[3:0];
 
 // Bits per pixel minus one.
 always_ff @(posedge s_clk_i)
@@ -1168,7 +1165,9 @@ always_ff @(posedge s_clk_i)
 reg [9:0] coeff2a [0:63];
 
 generate begin : gCoeff2
-	for (g = 0; g < 64; g = g + 1)
+always_ff @(posedge s_clk_i)
+	coeff2a[0] <= MDW;
+	for (g = 1; g < 64; g = g + 1)
 always_ff @(posedge s_clk_i)
 	coeff2a[g] <= (MDW/g) * g;
 end
@@ -1179,7 +1178,7 @@ always_ff @(posedge s_clk_i)
 
 // Pixels per strip
 always_ff @(posedge s_clk_i)
-	pps <= (coeff1 * MDW) >> 5'd16;
+	pps <= ({16'd0,coeff1} * MDW) >> 5'd16;
 
 //`ifdef USE_CLOCK_GATE
 //BUFHCE ucb1
@@ -2276,7 +2275,7 @@ always_ff @(posedge clk)
 
 always_ff @(posedge clk)
 	for (n1 = 0; n1 < 32; n1 = n1 + 1)
-		mask <= n1 <= cbpp;
+		mask[n1] <= n1 <= cbpp;
 
 always_ff @(posedge clk)
 	if (en) begin
@@ -2306,13 +2305,13 @@ reg [9:0] red_mask, green_mask, blue_mask;
 
 always_ff @(posedge clk)
 	for (nr = 1; nr < 10; nr = nr + 1)
-		red_mask = nr < color_comp[11:8];
+		red_mask[nr] = nr < color_comp[11:8];
 always_ff @(posedge clk)
 	for (ng = 1; ng < 10; ng = ng + 1)
-		green_mask = ng < color_comp[7:4];
+		green_mask[ng] = ng < color_comp[7:4];
 always_ff @(posedge clk)
 	for (nb = 1; nb < 10; nb = nb + 1)
-		blue_mask = nb < color_comp[3:0];
+		blue_mask[nb] = nb < color_comp[3:0];
 always_ff @(posedge clk)
 	red_shift2 = 30 - color_comp[11:8];
 always_ff @(posedge clk)
