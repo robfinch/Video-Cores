@@ -169,7 +169,7 @@ parameter pvBorderOn = 519;		//  600 display
 //parameter pvBorderOn = 584;		//  512 display
 parameter pvBlankOn = 525;  	//   44 border	0
 parameter pvTotal = 525;		//  628 total scan lines
-/*
+
 // Driven by a 25.175MHz clock
 parameter phSyncOn  = 16;		//   16 front porch
 parameter phSyncOff = 112;		//  96 sync
@@ -380,8 +380,8 @@ reg rst_irq,rst_irq2;
 wire vclk;
 wire [15:0] hctr;
 wire [11:0] scanline;
-wire [5:0] shifts;
-wire [5:0] shift_cnt;
+reg [9:0] shifts;
+wire [9:0] shift_cnt;
 reg cs2;
 reg cs_config;
 reg cs_map;
@@ -1134,11 +1134,16 @@ else begin
 		map_out_latch <= map_out;
 end
 
+reg [15:0] color_comp;
 reg [5:0] bpp;
 reg [5:0] cbpp;
 reg [2:0] bytpp;
 reg [15:0] coeff1;
 reg [9:0] coeff2;
+reg [9:0] pps;
+
+always_ff @(posedge s_clk_i)
+	color_comp <= {pad_comp,red_comp,green_comp,blue_comp};
 
 // Bits per pixel minus one.
 always_ff @(posedge s_clk_i)
@@ -1171,6 +1176,10 @@ endgenerate
 
 always_ff @(posedge s_clk_i)
 	coeff2 <= coeff2a[bpp];
+
+// Pixels per strip
+always_ff @(posedge s_clk_i)
+	pps <= (coeff1 * MDW) >> 5'd16;
 
 //`ifdef USE_CLOCK_GATE
 //BUFHCE ucb1
@@ -1257,11 +1266,8 @@ always_comb
 always_ff @(posedge vclk)
 	xal_o <= vc != 4'd1;
 
-modCalcShifts ucalcshft 
-(
-	.color_depth(color_depth2),
-	.shifts(shifts)
-);
+always_comb
+	shifts = pps;
 
 wire vFetch = !vblank;//pixelRow < windowHeight;
 reg fifo_rrst;
@@ -1279,7 +1285,8 @@ else begin
 		wrstcnt <= wrstcnt + 2'd1;
 end
 
-always_comb fifo_wrst = wrstcnt!=4'd5;// && vc==4'd1;
+always_comb fifo_wrst = wrstcnt!=4'd5;
+//always_comb fifo_rrst = wrstcnt!=4'd5;// && vc==4'd1;
 always_comb fifo_rst_o = fifo_wrst;
 
 wire[31:0] grAddr,xyAddr;
@@ -1377,12 +1384,11 @@ reg load_fifo = 1'b0;
 wire [15:0] hCmp;
 modPixelsInFifo 
 #(
-	.MDW(256),
 	.FIFO_DEPTH(256)
 )
 upif1
 (
-	.color_depth(color_depth2),
+	.pps(pps),
 	.pif(hCmp)
 );
 /*
@@ -1694,14 +1700,15 @@ modMuxRgbo3 #(.MDW(MDW)) umuxrgbo31
 	.en(shift_en),
 	.rd_fifo(rd_fifo),
 	.rgbo1e(rgbo1e),
-	.color_depth(color_depth2),
+	.bpp(bpp),
+	.cbpp(cbpp),
 	.rgbo(rgbo3)
 );
 
 modMuxRgbo4 umuxrgbo41
 (
 	.clk(vclk),
-	.color_depth(color_depth2),
+	.color_comp(color_comp),
 	.rgbo3(rgbo3),
 	.rgbo4(rgbo4)
 );
@@ -1712,7 +1719,7 @@ modMuxRgbo umuxrgbo1
 	.onoff(onoff),
 	.xonoff(xonoff_i),
 	.blank(blank_i),
-	.color_depth(color_depth2),
+	.bpp(bpp),
 	.greyscale(greyscale),
 	.pal_o(pal_o),
 	.trans_color(trans_color),
@@ -1754,7 +1761,8 @@ assign dat[119:108] = pixelRow[9] ? 12'hEA4 : 12'h000;
 wire [MDW-1:0] oob_dat;
 modOobColor #(.MDW(MDW)) uoobdat1
 (
-	.color_depth(color_depth2),
+	.clk(s_clk_i),
+	.bpp(bpp),
 	.oob_color(oob_color),
 	.oob_dat(oob_dat)
 );
@@ -2048,58 +2056,6 @@ end
 
 endmodule
 
-// Compute the number of shifts required to empty out pixels in the memory
-// strip.
-
-module modCalcShifts(color_depth, shifts);
-input color_depth_t color_depth;
-output reg [5:0] shifts;
-
-parameter MDW=256;
-
-always_comb
-case(MDW)
-256:
-	case(color_depth)
-	BPP8: 	shifts = 6'd32;
-	BPP16:	shifts = 6'd16;
-	BPP24:	shifts = 6'd10;
-	BPP32:	shifts = 6'd8;
-	default:  shifts = 6'd16;
-	endcase
-128:
-	case(color_depth)
-	BPP8: 	shifts = 6'd16;
-	BPP16:	shifts = 6'd8;
-	BPP24:	shifts = 6'd5;
-	BPP32:	shifts = 6'd4;
-	default:  shifts = 6'd8;
-	endcase
-64:
-	case(color_depth)
-	BPP8: 	shifts = 6'd8;
-	BPP16:	shifts = 6'd4;
-	BPP24:	shifts = 6'd2;
-	BPP32:	shifts = 6'd2;
-	default:  shifts = 6'd4;
-	endcase
-32:
-	case(color_depth)
-	BPP8: 	shifts = 6'd4;
-	BPP16:	shifts = 6'd2;
-	BPP24:	shifts = 6'd1;
-	BPP32:	shifts = 6'd1;
-	default:  shifts = 6'd2;
-	endcase
-default:
-	begin
-	$display("rfFramBuffer_fta64: Bad master bus width");
-	$finish;
-	end
-endcase
-
-endmodule
-
 
 // Figure out when to request a strip of pixels.
 // burst_interval may be set to zero for a continuous fetch.
@@ -2150,7 +2106,7 @@ if (rst|pe_hsync)
 	memreq1 <= FALSE;
 else begin
 	// vc ties the request to the first row of pixels
-	if (bi_ctr==12'd24 && vc==3'd1 && vFetch && on)
+	if (bi_ctr==12'd24 && vFetch && on)
 		memreq1 <= TRUE;
 	else if (ack)
 		memreq1 <= FALSE;
@@ -2174,20 +2130,13 @@ endmodule
 // The following table indicates the number of pixel that will fit into the
 // video fifo. The fifo contains 256 rows that are MDW bits wide.
 
-module modPixelsInFifo(color_depth, pif);
-parameter MDW = 256;
+module modPixelsInFifo(pps, pif);
 parameter FIFO_DEPTH = 256;
-input color_depth_t color_depth;
+input [9:0] pps;
 output reg [15:0] pif;
 
 always_comb
-case(color_depth)
-BPP8:	pif = FIFO_DEPTH * MDW/8;
-BPP16:	pif = FIFO_DEPTH * MDW/16;
-BPP24:	pif = FIFO_DEPTH * MDW/24;
-BPP32:	pif = FIFO_DEPTH * MDW/32;
-default:	pif = FIFO_DEPTH * MDW/16;
-endcase
+	pif = FIFO_DEPTH * pps;
 
 endmodule
 
@@ -2282,24 +2231,24 @@ input clk;
 input pe_hsync;
 input en;
 input [15:0] pixel_col;
-input [5:0] shifts;
-output reg [5:0] shift_cnt;
+input [9:0] shifts;
+output reg [9:0] shift_cnt;
 
 always_ff @(posedge clk)
 if (pe_hsync)
-	shift_cnt <= 6'd1;
+	shift_cnt <= 10'd1;
 else begin
 	if (en) begin
 		if (pixel_col==16'hFFFF) begin
 			shift_cnt <= shifts;
 		end
 		else if (!pixel_col[15]) begin
-			shift_cnt <= shift_cnt + 6'd1;
+			shift_cnt <= shift_cnt + 10'd1;
 			if (shift_cnt==shifts)
-				shift_cnt <= 6'd1;
+				shift_cnt <= 10'd1;
 		end
 		else
-			shift_cnt <= 6'd1;
+			shift_cnt <= 10'd1;
 	end
 end
 
@@ -2307,61 +2256,92 @@ endmodule
 
 // This mux extracts pixels from the memory strip.
 
-module modMuxRgbo3(clk, en, rd_fifo, rgbo1e, color_depth, rgbo);
+module modMuxRgbo3(clk, en, rd_fifo, rgbo1e, bpp, cbpp, rgbo);
 parameter MDW=256;
 input clk;
 input en;
 input rd_fifo;
 input [MDW-1:0] rgbo1e;
-input color_depth_t color_depth;
+input [5:0] bpp;
+input [5:0] cbpp;
 output reg [31:0] rgbo;
 
+integer n1;
+reg [31:0] mask;
 reg [MDW-1:0] rgbo3;
+reg [5:0] bpp2;
+
+always_ff @(posedge clk)
+	bpp2 <= bpp + 6'd1;
+
+always_ff @(posedge clk)
+	for (n1 = 0; n1 < 32; n1 = n1 + 1)
+		mask <= n1 <= cbpp;
 
 always_ff @(posedge clk)
 	if (en) begin
 		if (rd_fifo)
 			rgbo3 <= rgbo1e;
-		else begin
-			case(color_depth)
-			BPP8:	rgbo3 <= {8'h0,rgbo3[MDW-1:8]};
-			BPP16:	rgbo3 <= {16'h0,rgbo3[MDW-1:16]};
-			BPP24:	rgbo3 <= {24'h0,rgbo3[MDW-1:24]};
-			BPP32:	rgbo3 <= {32'h0,rgbo3[MDW-1:32]};
-			default: rgbo3 <= {16'h0,rgbo3[MDW-1:16]};
-			endcase
-		end
+		else
+			rgbo3 <= rgbo3 >> bpp2;
 	end
 
-always_comb rgbo = rgbo3[31:0];
+always_comb rgbo = rgbo3[31:0] & mask;
 
 endmodule
 
 // This mux takes the color bits and converts them into a 32-bit value.
 
-module modMuxRgbo4(clk, color_depth, rgbo3, rgbo4);
+module modMuxRgbo4(clk, color_comp, rgbo3, rgbo4);
 input clk;
-input color_depth_t color_depth;
+input [15:0] color_comp;
 input [31:0] rgbo3;
 output reg [31:0] rgbo4;
 
+integer nr,ng,nb;
+reg [9:0] red, green, blue;
+reg [4:0] red_shift, green_shift;
+reg [4:0] red_shift2, green_shift2, blue_shift2;
+reg [9:0] red_mask, green_mask, blue_mask;
+
 always_ff @(posedge clk)
-case(color_depth)
-BPP8:	rgbo4 <= {24'h0,rgbo3[7:0]};		// feeds into palette
-BPP16:	rgbo4 <= {rgbo3[14:10],5'b0,rgbo3[9:5],5'b0,rgbo3[4:0],5'b0};
-BPP24:	rgbo4 <= {rgbo3[23:16],2'b0,rgbo3[15:8],2'b0,rgbo3[7:0],2'b0};
-BPP32:	rgbo4 <= {rgbo3[31:30],rgbo3[29:20],rgbo3[19:10],rgbo3[9:0]};
-default:	rgbo4 <= {rgbo3[14:10],5'b0,rgbo3[9:5],5'b0,rgbo3[4:0],5'b0};
-endcase
+	for (nr = 1; nr < 10; nr = nr + 1)
+		red_mask = nr < color_comp[11:8];
+always_ff @(posedge clk)
+	for (ng = 1; ng < 10; ng = ng + 1)
+		green_mask = ng < color_comp[7:4];
+always_ff @(posedge clk)
+	for (nb = 1; nb < 10; nb = nb + 1)
+		blue_mask = nb < color_comp[3:0];
+always_ff @(posedge clk)
+	red_shift2 = 30 - color_comp[11:8];
+always_ff @(posedge clk)
+	green_shift2 = 20 - color_comp[7:4];
+always_ff @(posedge clk)
+	blue_shift2 = 10 - color_comp[3:0];
+
+always_ff @(posedge clk)
+	red_shift <= color_comp[7:4] + color_comp[3:0];
+always_ff @(posedge clk)
+	green_shift <= color_comp[3:0];
+always_comb
+	red = ((rgbo3 >> red_shift) & red_mask) << red_shift2;
+always_comb
+	green = ((rgbo3 >> green_shift) & green_mask) << green_shift2;
+always_comb
+	blue = (rgbo3 & blue_mask) << blue_shift2;
+
+always_ff @(posedge clk)
+	rgbo4 <= red | green | blue;
 
 endmodule
 
-module modMuxRgbo(clk, onoff, xonoff, blank, color_depth, greyscale, pal_o, trans_color, rgbo4, rgb_i, rgb_o);
+module modMuxRgbo(clk, onoff, xonoff, blank, bpp, greyscale, pal_o, trans_color, rgbo4, rgb_i, rgb_o);
 input clk;
 input onoff;
 input xonoff;
 input blank;
-input color_depth_t color_depth;
+input [5:0] bpp;
 input greyscale;
 input [31:0] pal_o;
 input [31:0] trans_color;
@@ -2373,7 +2353,7 @@ reg [31:0] zrgb;
 
 always_ff @(posedge clk)
 	if (onoff && xonoff && !blank) begin
-		if (color_depth==BPP8) begin
+		if (bpp < 6'd9) begin
 			if (!greyscale)
 				zrgb <= pal_o;
 			else
@@ -2393,20 +2373,25 @@ always_ff @(posedge clk)
 
 endmodule
 
-module modOobColor(color_depth, oob_color, oob_dat);
+module modOobColor(clk, bpp, oob_color, oob_dat);
 parameter MDW=256;
-input color_depth_t color_depth;
+input clk;
+input [5:0] bpp;
 input [31:0] oob_color;
 output reg [MDW-1:0] oob_dat;
 
-always_comb
-case(color_depth)
-BPP8:	oob_dat <= {MDW/8{oob_color[7:0]}};
-BPP16:	oob_dat <= {MDW/16{oob_color[15:0]}};
-BPP24:	oob_dat <= {MDW/24{oob_color[23:0]}};
-BPP32:	oob_dat <= {MDW/32{oob_color[31:0]}};
-default:	oob_dat <= {MDW/16{oob_color[15:0]}};
-endcase
+wire [MDW-1:0] oob [0:32];
+
+genvar g;
+generate begin : gOOBcolor
+	assign oob[0] = {MDW{1'b0}};
+	for (g = 1; g < 33; g = g + 1)
+		assign oob[g] = {MDW/g{oob_color[g-1:0]}};
+end
+endgenerate
+
+always_ff @(posedge clk)
+	oob_dat <= oob[bpp];
 
 endmodule
 
