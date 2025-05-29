@@ -21,7 +21,7 @@ TOP MODULE
 
 */
 import wishbone_pkg::*;
-import gfx256_pkg::*;
+import gfx_pkg::*;
 
 module gfx256_top (wb_clk_i, wb_rst_i, wb_inta_o, wbs_cs_i,
   // Wishbone master signals (interfaces with video memory, write)
@@ -36,7 +36,7 @@ parameter subpixel_width = 16;
 parameter fifo_depth     = 11;
 
 parameter REG_ADR_HIBIT = 7;
-parameter BPP12 = 1'b0;
+parameter MDW = 256;
 
 // Common wishbone signals
 input wb_clk_i;    // master clock input
@@ -169,7 +169,7 @@ wire rmw;
 wire [15:0] color_comp;
 
 // Slave wishbone interface. Reads wishbone bus and fills registers
-gfx256_wbs wb_databus(
+gfx_wbs wb_databus(
   .clk_i (wb_clk_i),
   .wbs_clk_i (wbs_clk_i),
   .rst_i (wb_rst_i),
@@ -460,7 +460,7 @@ wire                   cuvz_clip_write;
 
 wire            [31:0] cuvz_clip_color;
 
-gfx256_cuvz cuvz(
+gfx_cuvz cuvz(
 	.clk_i     (wb_clk_i),
 	.rst_i     (wb_rst_i),
 	.ack_i     (clip_ack),
@@ -529,7 +529,7 @@ wire [31:0] textblit_adr_o;
 wire [255:0] textblit_dat_i;
 wire textblit_ack_i;
 
-gfx256_textblit textblit
+gfx_textblit #(.MDW(MDW)) textblit
 (
 	.rst_i(wb_rst_i),
 	.clk_i(wb_clk_i),
@@ -560,7 +560,7 @@ wire clip_wbmreader_z_request;
 wire clip_fragment_strip;
 
 // Apply clipping
-gfx256_clip clip (
+gfx_clip #(.MDW(MDW)) clip (
 	.clk_i (wb_clk_i),
 	.rst_i (wb_rst_i),
 	.clipping_enable_i(clipping_enable_reg),
@@ -631,7 +631,7 @@ wire [31:0] fragment_blender_color;
 wire [7:0] fragment_blender_alpha;
 
 wire wbmreader_fragment_texture_ack;
-wire [255:0] wbmreader_fragment_texture_data;
+wire [MDW-1:0] wbmreader_fragment_texture_data;
 wire [31:0] fragment_wbmreader_texture_addr;
 wire [31:0] fragment_wbmreader_texture_sel;
 wire fragment_wbmreader_texture_request;
@@ -639,7 +639,7 @@ wire fragement_blender_strip;
 
 
 // Fragment processor generates color of pixel (requires RAM read for textures)
-gfx256_fragment_processor fp0 (
+gfx_fragment_processor #(.MDW(MDW)) fp0 (
   .clk_i (wb_clk_i),
   .rst_i (wb_rst_i),
   .pixel_alpha_i (clip_fragment_a),
@@ -694,15 +694,15 @@ wire            [31:0] blender_render_color;
 // Connected through arbiter
 wire wbmreader_blender_target_ack;
 wire [31:0] blender_wbmreader_target_addr;
-wire [255:0] wbmreader_blender_target_data;
+wire [MDW-1:0] wbmreader_blender_target_data;
 wire [31:0] blender_wbmreader_target_sel;
 wire blender_wbmreader_target_request;
 wire blender_render_strip;
-wire [255:0] blender_render_strip_color;
+wire [MDW-1:0] blender_render_strip_color;
 
 // Applies alpha blending if enabled (requires RAM read to get target pixel color)
 // Fragment processor generates color of pixel (requires RAM read for textures)
-gfx256_blender blender0 (
+gfx_blender #(.MDW(MDW)) blender0 (
   .clk_i (wb_clk_i),
   .rst_i (wb_rst_i),
   .blending_enable_i (blending_enable_reg),
@@ -744,7 +744,7 @@ gfx256_blender blender0 (
 defparam blender0.point_width = point_width;
 
 // Write pixel to target (check for out of bounds)
-gfx256_renderer renderer (
+gfx_renderer #(.MDW(MDW)) renderer (
   .clk_i (wb_clk_i),
   .rst_i (wb_rst_i),
   // Render target information
@@ -791,7 +791,7 @@ wire arbiter_wbmreader_request;
 wire arbiter_wbmwriter_request;
 
 // Instansiate wbm arbiter
-gfx256_wbm_readwrite_arbiter wbm_arbiter (
+gfx_wbm_readwrite_arbiter #(.MDW(MDW)) wbm_arbiter (
   .master_busy_o (wbmreader_busy),
   // Interface against the wbm module
   .read_request_o (arbiter_wbmreader_request),
@@ -838,7 +838,7 @@ gfx256_wbm_readwrite_arbiter wbm_arbiter (
 );
 
 // Instansiate wishbone master interface (read only for textures)
-gfx256_wbm_rw  #(.CID(CID)) wbm_rw
+gfx256_wbm_rw  #(.CID(CID), .MDW(MDW)) wbm_rw
 (
   .clk_i (wb_clk_i),
   .rst_i (wb_rst_i),

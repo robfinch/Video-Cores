@@ -42,7 +42,7 @@
 import wishbone_pkg::*;
 import gfx_pkg::*;
 
-module gfx256_wbm_rw (clk_i, rst_i, wbm_req, wbm_resp, sint_o,
+module gfx_wbm_rw (clk_i, rst_i, wbm_req, wbm_resp, sint_o,
   read_request_i, write_request_i,
   texture_addr_i, texture_sel_i, texture_dat_o, texture_dat_i, texture_data_ack);
 parameter CID = 4'd5;

@@ -33,9 +33,9 @@ alpha_i[7:0] is used, so the actual span is 0 (transparent) to 255 (opaque)
 
 If alpha blending is disabled (blending_enable_i == 1'b0) the module just passes on the input pixel.
 */
-import gfx256_pkg::*;
+import gfx_pkg::*;
 
-module gfx256_blender(clk_i, rst_i, color_comp_i,
+module gfx_blender(clk_i, rst_i, color_comp_i,
   blending_enable_i, target_base_i, target_size_x_i, target_size_y_i, bpp_i, cbpp_i, coeff1_i, coeff2_i, rmw_i,
   x_counter_i, y_counter_i, z_i, alpha_i, global_alpha_i, write_i, ack_o, strip_i,        // from fragment
   target_ack_i, target_addr_o, target_data_i, target_sel_o, target_request_o, wbm_busy_i, // from/to wbm reader
@@ -73,7 +73,7 @@ output reg ack_o;
 // Interface against wishbone master (reader)
 input target_ack_i;
 output [31:0] target_addr_o;
-input [255:0] target_data_i;
+input [MDW-1:0] target_data_i;
 output reg [31:0] target_sel_o;
 output reg target_request_o;
 input wbm_busy_i;
@@ -85,7 +85,7 @@ output reg signed [point_width-1:0] pixel_z_o;
 output reg [31:0] pixel_color_o;
 output write_o;
 output reg strip_o;
-output reg [255:0] strip_color_o;
+output reg [MDW-1:0] strip_color_o;
 input ack_i;
 
 reg write1;
