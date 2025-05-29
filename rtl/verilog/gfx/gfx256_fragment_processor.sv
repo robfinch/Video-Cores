@@ -135,7 +135,7 @@ wire [31:0] mem_conv_color_o;
 // Color converter
 memory_to_color256 color_proc(
 	.rmw_i(rmw_i),
-	.cbpp_i(cbpp_i),
+	.bpp_i(bpp_i),
 	.mem_i (texture_data_i),
 	.mb_i(mb),
 	.color_o (mem_conv_color_o),
@@ -146,12 +146,12 @@ integer n1;
 reg [31:0] mask;
 always_ff @(posedge clk_i)
 	for (n1 = 0; n1 < 32; n1 = n1 + 1)
-		mask[n1] = n1 < cbpp_i+1;
+		mask[n1] = n1 < bpp_i+1;
 
 // Does the fetched texel match the colorkey?
 reg transparent_pixel;
 always_comb
-	transparent_pixel <= (mem_conv_color_o == (colorkey_i & mask));
+	transparent_pixel <= ((mem_conv_color_o & mask) == (colorkey_i & mask));
 
 // These variables are used when rendering bezier shapes. If bezier_draw is true, pixel is drawn, if it is false, pixel is discarded.
 // These variables are only used if curve_write_i is high

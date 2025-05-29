@@ -134,7 +134,7 @@ gfx_calc_address #(.SW(MDW)) ugfxca2
 // Color to memory converter
 color_to_memory256 color_proc(
 	.rmw_i(rmw_i),
-	.cbpp_i(cbpp_i),
+	.bpp_i(bpp_i),
 	.color_i (color_i),
 	.mb_i(tmb),
 	.mem_i (target_dati),
@@ -145,7 +145,7 @@ color_to_memory256 color_proc(
 // Color to memory converter
 color_to_memory256 depth_proc(
 	.rmw_i(rmw_i),
-	.cbpp_i(6'd16),
+	.bpp_i(6'd16),
 	// Note: Padding because z_i is only [15:0]
 	.color_i ({ {point_width{1'b0}}, pixel_z_i[point_width-1:0] }),
 	.mb_i(zmb),

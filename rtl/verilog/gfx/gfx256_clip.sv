@@ -131,7 +131,7 @@ clip_state_e state;
 // Addr[31:2] = Base + (Y*width + X) * ppb
 //wire [31:0] pixel_offset;
 wire [7:0] mb;
-gfx_calc_address #(.SW(MDW), .BPP12(BPP12)) ugfxca1
+gfx_calc_address #(.SW(MDW)) ugfxca1
 (
 	.clk(clk_i),
 	.base_address_i(zbuffer_base_i),
@@ -157,7 +157,7 @@ wire signed [point_width-1:0] z_value_at_target = z_value_at_target32[point_widt
 // Memory to color converter
 memory_to_color256 memory_proc(
 	.rmw_i(rmw_i),
-	.cbpp_i(6'd16),
+	.bpp_i(6'd16),
 	.mem_i (z_data_i),
 	.mb_i(mb),
 	.color_o (z_value_at_target32),

@@ -128,6 +128,18 @@ gfx_calc_address #(.SW(MDW)) ugfxca1
 	.me_o(),
 	.ce_o()
 );
+
+wire [31:0] dest_color;
+// Memory to color converter
+memory_to_color256 memory_proc(
+	.rmw_i(rmw),
+	.bpp_i(bpp_i),
+	.mem_i (target_data_i),
+	.mb_i(mb),
+	.color_o (dest_color),
+	.sel_o ()
+);
+
 //always_comb
 //	pixel_offset = fnPixelOffset(color_depth_i,(target_size_x_i*y_counter_i + {16'h0, x_counter_i}));
 
@@ -164,26 +176,15 @@ wire [9:0] blend_color_g = C(green_mask,green_shift,pixel_color_i);
 wire [9:0] blend_color_b = C(blue_mask,5'd0,pixel_color_i);
 
 // Split colors for alpha blending (from target surface)
-wire [9:0] target_color_r = C(red_mask,red_shift,target_data_i);
-wire [9:0] target_color_g = C(green_mask,green_shift,target_data_i);
-wire [9:0] target_color_b = C(blue_mask,5'd0,target_data_i);
+wire [9:0] target_color_r = C(red_mask,red_shift,dest_color);
+wire [9:0] target_color_g = C(green_mask,green_shift,dest_color);
+wire [9:0] target_color_b = C(blue_mask,5'd0,dest_color);
 
 // Alpha blending (per color channel):
 // rgb = (alpha1)(rgb1) + (1-alpha1)(rgb2)
 wire [17:0] alpha_color_r = blend_color_r * alpha + target_color_r * ~alpha;
 wire [17:0] alpha_color_g = blend_color_g * alpha + target_color_g * ~alpha;
 wire [17:0] alpha_color_b = blend_color_b * alpha + target_color_b * ~alpha;
-
-wire [31:0] dest_color;
-// Memory to color converter
-memory_to_color256 memory_proc(
-	.rmw_i(rmw),
-	.cbpp_i(cbpp_i),
-	.mem_i (target_data_i),
-	.mb_i(mb),
-	.color_o (dest_color),
-	.sel_o ()
-);
 
 assign write_o = write1;
 

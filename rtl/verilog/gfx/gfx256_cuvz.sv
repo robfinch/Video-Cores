@@ -54,7 +54,6 @@ module gfx256_cuvz(
   );
 
 parameter point_width = 16;
-parameter BPP12 = 1'b0;
 
 input clk_i;
 input rst_i;
@@ -123,10 +122,12 @@ reg write1;
 assign write_o = write1;
 
 // State machine
-reg [1:0] state;
-parameter wait_state   = 2'b00,
-          prep_state   = 2'b01,
-          write_state  = 2'b10;
+typedef enum logic [1:0] {
+	wait_state = 2'b00,
+	prep_state,
+	write_state
+} cuvz_state_e;
+cuvz_state_e state;
 
 // Manage states
 always_ff @(posedge clk_i)
@@ -250,7 +251,7 @@ begin
         // Alpha
         a_o <= a[point_width+8-1:point_width];
         // Color
-        color_o <= {(((color_r >> point_width) & red_mask) << red_shift)|
+        color_o <= {(((color_r >> point_width) & red_mask) << red_shift) |
         					  (((color_g >> point_width) & green_mask) << green_shift) |
         					  ((color_b >> point_width) & blue_mask)
         					 };
