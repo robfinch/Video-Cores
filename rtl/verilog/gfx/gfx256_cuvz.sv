@@ -56,25 +56,25 @@ module gfx256_cuvz(
 parameter point_width = 16;
 parameter BPP12 = 1'b0;
 
-input                        clk_i;
-input                        rst_i;
+input clk_i;
+input rst_i;
 
-input                        ack_i;
-output reg                   ack_o;
+input ack_i;
+output reg ack_o;
 
-input                        write_i;
+input write_i;
 
 // Input barycentric coordinates used to interpolate values
-input      [point_width-1:0] factor0_i;
-input      [point_width-1:0] factor1_i;
+input [point_width-1:0] factor0_i;
+input [point_width-1:0] factor1_i;
 
 // Color for each point
-input                 [31:0] color0_i;
-input                 [31:0] color1_i;
-input                 [31:0] color2_i;
+input [31:0] color0_i;
+input [31:0] color1_i;
+input [31:0] color2_i;
 input [15:0] color_comp_i;
 // Interpolated color
-output reg            [31:0] color_o;
+output reg [31:0] color_o;
 
 // Depth for each point
 input signed [point_width-1:0] z0_i;
@@ -84,19 +84,19 @@ input signed [point_width-1:0] z2_i;
 output reg signed [point_width-1:0] z_o;
 
 // Alpha for each point
-input      [7:0] a0_i;
-input      [7:0] a1_i;
-input      [7:0] a2_i;
+input [7:0] a0_i;
+input [7:0] a1_i;
+input [7:0] a2_i;
 // Interpolated alpha
 output reg [7:0] a_o;
 
 // Texture coordinates for each point
-input      [point_width-1:0] u0_i;
-input      [point_width-1:0] u1_i;
-input      [point_width-1:0] u2_i;
-input      [point_width-1:0] v0_i;
-input      [point_width-1:0] v1_i;
-input      [point_width-1:0] v2_i;
+input [point_width-1:0] u0_i;
+input [point_width-1:0] u1_i;
+input [point_width-1:0] u2_i;
+input [point_width-1:0] v0_i;
+input [point_width-1:0] v1_i;
+input [point_width-1:0] v2_i;
 // Interpolated texture coordinates
 output reg [point_width-1:0] u_o;
 output reg [point_width-1:0] v_o;
@@ -106,8 +106,8 @@ output reg [point_width-1:0] bezier_factor0_o;
 output reg [point_width-1:0] bezier_factor1_o;
 
 // Input and output pixel coordinate (passed on)
-input      [point_width-1:0] x_i;
-input      [point_width-1:0] y_i;
+input [point_width-1:0] x_i;
+input [point_width-1:0] y_i;
 output reg [point_width-1:0] x_o;
 output reg [point_width-1:0] y_o;
 
@@ -115,9 +115,9 @@ output reg [point_width-1:0] y_o;
 output write_o;
 
 // Holds the barycentric coordinates for interpolation
-reg        [point_width:0] factor0;
-reg        [point_width:0] factor1;
-reg        [point_width:0] factor2;
+reg [point_width:0] factor0;
+reg [point_width:0] factor1;
+reg [point_width:0] factor2;
 
 reg write1;
 assign write_o = write1;
@@ -223,11 +223,11 @@ begin
 
     wait_state:
       begin
-        ack_o     <= 1'b0;
+        ack_o <= 1'b0;
         if(write_i)
         begin
-          x_o     <= x_i;
-          y_o     <= y_i;
+          x_o <= x_i;
+          y_o <= y_i;
           factor0 <= factor0_i;
           factor1 <= factor1_i;
           factor2 <= (factor0_i + factor1_i >= (1 << point_width)) ? 1'b0 : (1 << point_width) - factor0_i - factor1_i;
@@ -240,15 +240,15 @@ begin
         // --------------
         write1 <= 1'b1;
         // Texture coordinates
-        u_o     <= u[point_width*2-1:point_width];
-        v_o     <= v[point_width*2-1:point_width];
+        u_o <= u[point_width*2-1:point_width];
+        v_o <= v[point_width*2-1:point_width];
         // Bezier calculations
         bezier_factor0_o <= bezier_factor0;
         bezier_factor1_o <= bezier_factor1;
         // Depth
-        z_o     <= z[point_width*2-1:point_width];
+        z_o <= z[point_width*2-1:point_width];
         // Alpha
-        a_o     <= a[point_width+8-1:point_width];
+        a_o <= a[point_width+8-1:point_width];
         // Color
         color_o <= {(((color_r >> point_width) & red_mask) << red_shift)|
         					  (((color_g >> point_width) & green_mask) << green_shift) |

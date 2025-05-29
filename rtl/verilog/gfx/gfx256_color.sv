@@ -24,7 +24,7 @@ Components for aligning colored pixels to memory and the inverse
 module color_to_memory256(rmw_i, cbpp_i, color_i, mb_i, mem_i, mem_o, sel_o);
 input rmw_i;
 input [5:0] cbpp_i;
-input  [31:0] color_i;
+input [31:0] color_i;
 input [7:0] mb_i;
 input [255:0] mem_i;
 output [255:0] mem_o;
@@ -61,7 +61,7 @@ reg [255:0] maskshftd;
 always_comb
 	maskshftd = mask << mb_i;
 
-assign mem_o = ({32'd0,color_i & mask} << mb_i) | (mem_i & ~maskshftd);
+assign mem_o = ({224'd0,color_i & mask} << mb_i) | (mem_i & ~maskshftd);
 
 endmodule
 

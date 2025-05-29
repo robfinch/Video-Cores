@@ -63,12 +63,12 @@ input [9:0] coeff2_i;
 input [point_width-1:0] x_counter_i;
 input [point_width-1:0] y_counter_i;
 input signed [point_width-1:0] z_i;
-input             [7:0] alpha_i;
-input             [7:0] global_alpha_i;
-input            [31:0] pixel_color_i;
-input                   write_i;
+input [7:0] alpha_i;
+input [7:0] global_alpha_i;
+input [31:0] pixel_color_i;
+input write_i;
 input strip_i;
-output reg              ack_o;
+output reg ack_o;
 
 // Interface against wishbone master (reader)
 input target_ack_i;
@@ -195,12 +195,12 @@ begin
   begin
     ack_o <= 1'b0;
     write1 <= 1'b0;
-    pixel_x_o        <= 1'b0;
-    pixel_y_o        <= 1'b0;
-    pixel_z_o        <= 1'b0;
-    pixel_color_o    <= 32'b0;
+    pixel_x_o <= 16'b0;
+    pixel_y_o <= 16'b0;
+    pixel_z_o <= 16'b0;
+    pixel_color_o <= 32'b0;
     target_request_o <= 1'b0;
-    target_sel_o     <= 32'hFFFFFFFF;
+    target_sel_o <= 32'hFFFFFFFF;
     strip_o <= 1'b0;
   end
   // Else, set outputs for next cycle
@@ -217,12 +217,12 @@ begin
         begin
           if(!blending_enable_i)
           begin
-            pixel_x_o     <= x_counter_i;
-            pixel_y_o     <= y_counter_i;
-            pixel_z_o     <= z_i;
+            pixel_x_o <= x_counter_i;
+            pixel_y_o <= y_counter_i;
+            pixel_z_o <= z_i;
             pixel_color_o <= pixel_color_i;
             strip_o <= strip_i;
-            case(cbpp_i)
+            case(bpp_i)
             32:	strip_color_o <= {8{pixel_color_i[31:0]}};
             31:	strip_color_o <= {8{pixel_color_i[30:0]}};
             30:	strip_color_o <= {8{pixel_color_i[29:0]}};

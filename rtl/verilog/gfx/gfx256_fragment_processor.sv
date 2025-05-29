@@ -151,7 +151,7 @@ always_ff @(posedge clk_i)
 // Does the fetched texel match the colorkey?
 reg transparent_pixel;
 always_comb
-	transparent_pixel <= (mem_conv_color_o == colorkey_i & mask);
+	transparent_pixel <= (mem_conv_color_o == (colorkey_i & mask));
 
 // These variables are used when rendering bezier shapes. If bezier_draw is true, pixel is drawn, if it is false, pixel is discarded.
 // These variables are only used if curve_write_i is high

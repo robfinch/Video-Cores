@@ -29,7 +29,7 @@ This module also performs z-buffer culling (requires reading from memory)
 import gfx256_pkg::*;
 
 module gfx256_clip(clk_i, rst_i, rmw_i,
-  clipping_enable_i, zbuffer_enable_i, color_depth_i, bpp_i, cbpp_i, coeff1_i, coeff2_i, pps_i,
+  clipping_enable_i, zbuffer_enable_i, bpp_i, cbpp_i, coeff1_i, coeff2_i, pps_i,
   zbuffer_base_i, target_size_x_i, target_size_y_i, target_x0_i, target_y0_i, target_x1_i, target_y1_i,
   clip_pixel0_x_i, clip_pixel0_y_i, clip_pixel1_x_i, clip_pixel1_y_i,                              //clip pixel 0 and pixel 1
   raster_pixel_x_i, raster_pixel_y_i, raster_u_i, raster_v_i, flat_color_i, raster_write_i, ack_o, // from raster
@@ -43,7 +43,6 @@ module gfx256_clip(clk_i, rst_i, rmw_i,
   );
 
 parameter point_width = 16;
-parameter BPP12 = 1'b0;
 parameter MDW = 256;
 
 input clk_i;
@@ -51,7 +50,6 @@ input rst_i;
 
 input clipping_enable_i;
 input zbuffer_enable_i;
-input [1:0] color_depth_i;
 input [5:0] bpp_i;
 input [5:0] cbpp_i;
 input [15:0] coeff1_i;

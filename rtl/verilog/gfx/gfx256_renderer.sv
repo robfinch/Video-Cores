@@ -33,7 +33,6 @@ module gfx256_renderer(clk_i, rst_i,
 	);
 
 parameter point_width = 16;
-parameter BPP12 = 1'b0;
 parameter MDW = 256;
 
 input clk_i;
