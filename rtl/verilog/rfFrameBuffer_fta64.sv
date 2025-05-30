@@ -55,10 +55,28 @@ import const_pkg::*;
 `define ABITS	31:0
 
 import fta_bus_pkg::*;
-import gfx_pkg::*;
 
 //`define BUSWID64	1'b1
 `define BUSWID32	1'b1
+
+typedef enum logic [3:0] {
+	FB_IDLE = 4'd0,
+	FB_NEXT_BURST = 4'd1,
+	LOADCOLOR = 4'd2,
+	LOADSTRIP = 4'd3,
+	STORESTRIP = 4'd4,
+	ACKSTRIP = 4'd5,
+	WAITLOAD = 4'd6,
+	WAITRST = 4'd7,
+	ICOLOR1 = 4'd8,
+	ICOLOR2 = 4'd9,
+	ICOLOR3 = 4'd10,
+	ICOLOR4 = 4'd11,
+	LOAD_OOB = 4'd12,
+	PCMD1 = 4'd13,
+	PCMD2 = 4'd14,
+	PCMD3 = 4'd15
+} fb_state_t;
 
 module rfFrameBuffer_fta64 (
 	rst_i,
@@ -394,7 +412,7 @@ reg [7:0] sel;
 reg [31:0] adri;
 reg [63:0] dat;
 wire irq_en;
-reg [63:0] s_dat_o, s_dato;
+reg [63:0] s_dat_o;
 wire ack;
 `ifdef BUSWID64
 fta_cmd_request64_t reqd;
@@ -457,7 +475,6 @@ integer n, n1;
 reg [31:0] fbc_addr;
 reg [11:0] rastcmp;
 reg [`ABITS] bm_base_addr1,bm_base_addr2;
-color_depth_t color_depth, color_depth2;
 wire [7:0] fifo_cnt;
 reg onoff;
 reg [2:0] hres,vres;
@@ -878,8 +895,6 @@ if (rst_i) begin
 	bmpHeight <= 16'd1080;
 `endif
 	onoff <= 1'b1;
-	color_depth <= BPP16;
-	color_depth2 <= BPP16;
 	red_comp = 4'd5;
 	green_comp = 4'd5;
 	blue_comp = 4'd5;
@@ -912,7 +927,6 @@ if (rst_i) begin
 	burst_len <= 8'd119;		// 1 bursts of 120 = 120 access for 1920 pixels
 end
 else begin
-	color_depth2 <= color_depth;
 	rstcmd1 <= rstcmd;
 	rst_irq <= 1'b0;
   if (rstcmd & ~rstcmd1)
@@ -924,7 +938,6 @@ else begin
 				begin
 					if (sel[0]) onoff <= dat[0];
 					if (sel[1]) begin
-					color_depth <= color_depth_t'(dat[9:8]);
 					greyscale <= dat[12];
 					end
 					if (sel[2]) begin
@@ -937,26 +950,26 @@ else begin
 					end
 					if (sel[4]) burst_len <= dat[39:32];
 					if (sel[5]) max_nburst <= dat[45:40];
-					if (|sel[7:6]) burst_interval <= dat[59:48];
+					if (&sel[7:6]) burst_interval <= dat[59:48];
 				end
 			REG_REFDELAY:
 				begin
-					if (|sel[1:0])	hrefdelay <= dat[15:0];
-					if (|sel[3:2])  vrefdelay <= dat[31:16];
+					if (&sel[1:0])	hrefdelay <= dat[15:0];
+					if (&sel[3:2])  vrefdelay <= dat[31:16];
 				end
 			REG_PAGE1ADDR:	bm_base_addr1 <= dat;
 			REG_PAGE2ADDR:	bm_base_addr2 <= dat;
 			REG_PXYZ:
 				begin
-					if (|sel[1:0])	px <= dat[15:0];
-					if (|sel[3:2])	py <= dat[31:16];
-					if (|sel[  4])	pz <= dat[39:32];
+					if (&sel[1:0])	px <= dat[15:0];
+					if (&sel[3:2])	py <= dat[31:16];
+					if (&sel[  4])	pz <= dat[39:32];
 				end
 			REG_PCOLCMD:
 				begin
 					if (sel[0]) pcmd <= dat[1:0];
 			    if (sel[1]) raster_op <= dat[11:8];
-			    if (|sel[7:4]) color <= dat[63:32];
+			    if (&sel[7:4]) color <= dat[63:32];
 			  end
 			REG_RASTCMP:	
 				begin
@@ -966,20 +979,20 @@ else begin
 				end
 			REG_BMPSIZE:
 				begin
-					if (|sel[1:0]) bmpWidth <= dat[15:0];
-					if (|sel[5:4]) bmpHeight <= dat[47:32];
+					if (&sel[1:0]) bmpWidth <= dat[15:0];
+					if (&sel[5:4]) bmpHeight <= dat[47:32];
 				end
 			REG_OOB_COLOR:
 				begin
-					if (|sel[3:0]) oob_color[31:0] <= dat[31:0];
-					if (|sel[7:4]) trans_color[31:0] <= dat[63:32];
+					if (&sel[3:0]) oob_color[31:0] <= dat[31:0];
+					if (&sel[7:4]) trans_color[31:0] <= dat[63:32];
 				end
 			REG_WINDOW:
 				begin
-					if (|sel[1:0])	windowWidth <= dat[11:0];
-					if (|sel[3:2])  windowHeight <= dat[27:16];
-					if (|sel[5:4])	windowLeft <= dat[47:32];
-					if (|sel[7:6])  windowTop <= dat[63:48];
+					if (&sel[1:0])	windowWidth <= dat[11:0];
+					if (&sel[3:2])  windowHeight <= dat[27:16];
+					if (&sel[5:4])	windowLeft <= dat[47:32];
+					if (&sel[7:6])  windowTop <= dat[63:48];
 				end
 			REG_COLOR_COMPONENT:
 				begin
@@ -1011,10 +1024,10 @@ else begin
 			REG_TOTAL:
 				begin
 					if (!sgLock) begin
-						if (|sel[1:0]) hTotal <= dat[11:0];
-						if (|sel[3:2]) vTotal <= dat[27:16];
+						if (&sel[1:0]) hTotal <= dat[11:0];
+						if (&sel[3:2]) vTotal <= dat[27:16];
 					end
-					if (|sel[7:4]) begin
+					if (&sel[7:4]) begin
 						if (dat[63:32]==32'hA1234567)
 							sgLock <= 1'b0;
 						else if (dat[63:32]==32'h7654321A)
@@ -1023,24 +1036,24 @@ else begin
 				end
 			REG_SYNC_ONOFF:
 				if (!sgLock) begin
-					if (|sel[1:0]) hSyncOff <= dat[11:0];
-					if (|sel[3:2]) hSyncOn <= dat[27:16];
-					if (|sel[5:4]) vSyncOff <= dat[43:32];
-					if (|sel[7:6]) vSyncOn <= dat[59:48];
+					if (&sel[1:0]) hSyncOff <= dat[11:0];
+					if (&sel[3:2]) hSyncOn <= dat[27:16];
+					if (&sel[5:4]) vSyncOff <= dat[43:32];
+					if (&sel[7:6]) vSyncOn <= dat[59:48];
 				end
 			REG_BLANK_ONOFF:
 				if (!sgLock) begin
-					if (|sel[1:0]) hBlankOff <= dat[11:0];
-					if (|sel[3:2]) hBlankOn <= dat[27:16];
-					if (|sel[5:4]) vBlankOff <= dat[43:32];
-					if (|sel[7:6]) vBlankOn <= dat[59:48];
+					if (&sel[1:0]) hBlankOff <= dat[11:0];
+					if (&sel[3:2]) hBlankOn <= dat[27:16];
+					if (&sel[5:4]) vBlankOff <= dat[43:32];
+					if (&sel[7:6]) vBlankOn <= dat[59:48];
 				end
 			REG_BORDER_ONOFF:
 				begin
-					if (|sel[1:0]) hBorderOff <= dat[11:0];
-					if (|sel[3:2]) hBorderOn <= dat[27:16];
-					if (|sel[5:4]) vBorderOff <= dat[43:32];
-					if (|sel[7:6]) vBorderOn <= dat[59:48];
+					if (&sel[1:0]) hBorderOff <= dat[11:0];
+					if (&sel[3:2]) hBorderOn <= dat[27:16];
+					if (&sel[5:4]) vBorderOff <= dat[43:32];
+					if (&sel[7:6]) vBorderOn <= dat[59:48];
 				end
       default:  ;
 			endcase
@@ -1052,7 +1065,6 @@ else begin
 		  REG_CTRL:
 		      begin
 		          s_dat_o[0] <= onoff;
-		          s_dat_o[11:8] <= color_depth2;
 		          s_dat_o[12] <= greyscale;
 		          s_dat_o[18:16] <= hres;
 		          s_dat_o[22:20] <= vres;
@@ -1077,40 +1089,28 @@ else begin
 		  endcase
 		else
 		  casez(adri[13:2])
-		  {REG_CTRL,1'b0}:
-		      begin
-		          s_dat_o[0] <= onoff;
-		          s_dat_o[11:8] <= color_depth2;
-		          s_dat_o[12] <= greyscale;
-		          s_dat_o[18:16] <= hres;
-		          s_dat_o[22:20] <= vres;
-		          s_dat_o[24] <= page;
-		          s_dat_o[29:25] <= pals;
-		      end
-		  {REG_CTRL,1'b1}:
-		      begin
-		          s_dat_o[ 7: 0] <= burst_len;
-		          s_dat_o[27:16] <= burst_interval;
-		      end
-		  {REG_REFDELAY,1'b0}:	s_dat_o <= {vrefdelay,hrefdelay};
-		  {REG_PAGE1ADDR,1'b0}:	s_dat_o <= bm_base_addr1;
-		  {REG_PAGE2ADDR,1'b0}:	s_dat_o <= bm_base_addr2;
-		  {REG_PXYZ,1'b0}:		  s_dat_o <= {py,px};
-		  {REG_PXYZ,1'b1}:		  s_dat_o <= {16'h0,pz};
-		  {REG_PCOLCMD,1'b0}:   s_dat_o <= {12'd0,raster_op,14'd0,pcmd};
-		  {REG_PCOLCMD,1'b1}:   s_dat_o <= color_o;
-			{REG_BMPSIZE,1'b0}:		s_dat_o <= {16'd0,bmpWidth};
-			{REG_BMPSIZE,1'b1}:		s_dat_o <= {16'd0,bmpHeight};
-		  {REG_OOB_COLOR,1'b0}:	s_dat_o <= oob_color;
-		  {REG_OOB_COLOR,1'b1}:	s_dat_o <= trans_color;
-		  {REG_WINDOW,1'b0}:		s_dat_o <= {4'h0,windowHeight,4'h0,windowWidth};
-		  {REG_WINDOW,1'b1}:		s_dat_o <= {windowTop,windowLeft};
-			{REG_COLOR_COMPONENT,1'b0}:	s_dat_o <= color_comp;
-		  {REG_IRQ_MSGADR,1'b0}:	s_dat_o <= irq_msgadr[31:0];
-		  {REG_IRQ_MSGADR,1'b1}:	s_dat_o <= irq_msgadr[63:32];
-		  {REG_IRQ_MSGDAT,1'b0}:	s_dat_o <= irq_msgdat[31:0];
-		  {REG_IRQ_MSGDAT,1'b1}:	s_dat_o <= irq_msgdat[63:32];
-		  12'b1?_????_????_?0:	s_dat_o <= pal_wo;
+		  {REG_CTRL,1'b0}:      s_dat_o <= {2{2'd0,pals,page,1'd0,vres,1'd0,hres,3'd0,greyscale,11'd0,onoff}};
+		  {REG_CTRL,1'b1}:      s_dat_o <= {2{4'd0,burst_interval,8'd0,burst_len}};
+		  {REG_REFDELAY,1'b0}:	s_dat_o <= {2{vrefdelay,hrefdelay}};
+		  {REG_PAGE1ADDR,1'b0}:	s_dat_o <= {2{bm_base_addr1}};
+		  {REG_PAGE2ADDR,1'b0}:	s_dat_o <= {2{bm_base_addr2}};
+		  {REG_PXYZ,1'b0}:		  s_dat_o <= {2{py,px}};
+		  {REG_PXYZ,1'b1}:		  s_dat_o <= {2{16'h0,pz}};
+		  {REG_PCOLCMD,1'b0}:   s_dat_o <= {2{12'd0,raster_op,14'd0,pcmd}};
+		  {REG_PCOLCMD,1'b1}:   s_dat_o <= {2{color_o}};
+			{REG_BMPSIZE,1'b0}:		s_dat_o <= {2{16'd0,bmpWidth}};
+			{REG_BMPSIZE,1'b1}:		s_dat_o <= {2{16'd0,bmpHeight}};
+		  {REG_OOB_COLOR,1'b0}:	s_dat_o <= {2{oob_color}};
+		  {REG_OOB_COLOR,1'b1}:	s_dat_o <= {2{trans_color}};
+		  {REG_WINDOW,1'b0}:		s_dat_o <= {2{4'h0,windowHeight,4'h0,windowWidth}};
+		  {REG_WINDOW,1'b1}:		s_dat_o <= {2{windowTop,windowLeft}};
+			{REG_COLOR_COMPONENT,1'b0}:	s_dat_o <= {2{color_comp}};
+		  {REG_IRQ_MSGADR,1'b0}:	s_dat_o <= {2{irq_msgadr[31:0]}};
+		  {REG_IRQ_MSGADR,1'b1}:	s_dat_o <= {2{irq_msgadr[63:32]}};
+		  {REG_IRQ_MSGDAT,1'b0}:	s_dat_o <= {2{irq_msgdat[31:0]}};
+		  {REG_IRQ_MSGDAT,1'b1}:	s_dat_o <= {2{irq_msgdat[63:32]}};
+		  12'b1?_????_????_?0:	s_dat_o <= {2{pal_wo[31:0]}};
+		  12'b1?_????_????_?1:	s_dat_o <= {2{pal_wo[63:32]}};
 		  default:        s_dat_o <= 'd0;
 		  endcase
 	end
@@ -1458,7 +1458,7 @@ always_ff @(posedge m_bus_o.clk)
 	if (fifo_wrst)
 		fetchCol <= 12'd0;
   else begin
-    if ((state==WAITLOAD && ((m_bus_o.resp.ack && m_bus_o.resp.tid.tranid==4'h0)|tocnt[10])) || state==LOAD_OOB)
+    if ((((m_bus_o.resp.ack && m_bus_o.resp.tid.tranid==4'h0)|tocnt[10])) || state==LOAD_OOB)
       fetchCol <= fetchCol + shifts;
   end
 
@@ -1707,7 +1707,7 @@ modMuxRgbo3 #(.MDW(MDW)) umuxrgbo31
 modMuxRgbo4 umuxrgbo41
 (
 	.clk(vclk),
-	.color_comp(color_comp),
+	.color_comp(color_comp[15:0]),
 	.rgbo3(rgbo3),
 	.rgbo4(rgbo4)
 );
@@ -2188,7 +2188,7 @@ always_ff @(posedge clk)
 if (cnt == 4'd5)
 	adr <= grAddr;
 else begin
-  if ((ack|tocnt[10]) || state==gfx_pkg::LOAD_OOB)
+  if ((ack|tocnt[10]) || state==LOAD_OOB)
   	adr <= adr + MDW/8;
 end
 
