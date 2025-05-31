@@ -46,8 +46,8 @@
 
 //`define USE_CLOCK_GATE	1'b1
 //`define VGA640x480	1'b1
-//`define WXGA800x600		1'b1
-`define WXGA1920x1080		1'b1
+`define WXGA800x600		1'b1
+//`define WXGA1920x1080		1'b1
 //`define WXGA1280x720		1'b1
 //`define WXGA1366x768	1'b1
 
@@ -530,7 +530,6 @@ reg [31:0] vm_adr_o;
 reg vm_we_o;
 reg [MDW/8-1:0] vm_sel_o;
 fta_tranid_t vm_tid_o;
-wire row_change;
 
 // config
 reg [63:0] irq_msgadr = IRQ_MSGADR;
@@ -924,7 +923,7 @@ if (rst_i) begin
 	hBorderOn <= phBorderOn; hBorderOff <= phBorderOff;
 	vBorderOn <= pvBorderOn; vBorderOff <= pvBorderOff;
 	max_nburst <= 6'd0;		// 2 bursts of 25 = 50 accesses for 800 pixels
-	burst_len <= 8'd119;		// 1 bursts of 120 = 120 access for 1920 pixels
+	burst_len <= 8'd49;		// 1 bursts of 120 = 120 access for 1920 pixels
 end
 else begin
 	rstcmd1 <= rstcmd;
@@ -1129,7 +1128,7 @@ end
 reg [5:0] bpp;
 reg [5:0] cbpp;
 reg [2:0] bytpp;
-reg [15:0] coeff1;
+reg [19:0] coeff1;
 reg [9:0] coeff2;
 reg [9:0] pps;
 
@@ -1144,11 +1143,11 @@ always_ff @(posedge s_clk_i)
 
 // Bits per pixel minus one.
 always_ff @(posedge s_clk_i)
-	bpp <= pad_comp+red_comp+green_comp+blue_comp-1'd1;
+	bpp <= pad_comp+red_comp+green_comp+blue_comp;
 
 // Color bits per pixel minus one.
 always_ff @(posedge s_clk_i)
-	cbpp <= red_comp+green_comp+blue_comp-1'd1;
+	cbpp <= red_comp+green_comp+blue_comp;
 
 // Bytes per pixel.
 always_ff @(posedge s_clk_i)
@@ -1158,18 +1157,16 @@ always_ff @(posedge s_clk_i)
 // number of pixels per strip. The inverse (reciprocal) is used for a high
 // speed divide operation.
 always_ff @(posedge s_clk_i)
-	coeff1 <= bpp * (65536/MDW);	// 9x6 multiply - could use a lookup table
+	coeff1 <= {12'd0,bpp} * (65536/MDW);	// 9x6 multiply - could use a lookup table
 
 // This coefficient is the number of bits used by all pixels in the strip. 
 // Used to determine pixel placement in the strip.
-reg [9:0] coeff2a [0:63];
+wire [9:0] coeff2a [0:32];
 
 generate begin : gCoeff2
-always_ff @(posedge s_clk_i)
-	coeff2a[0] <= MDW;
-	for (g = 1; g < 64; g = g + 1)
-always_ff @(posedge s_clk_i)
-	coeff2a[g] <= (MDW/g) * g;
+	assign coeff2a[0] = MDW;
+	for (g = 1; g < 33; g = g + 1)
+		assign coeff2a[g] = MDW - (MDW % g);
 end
 endgenerate
 
@@ -1257,11 +1254,6 @@ pixelCounter upxr1
 	.mq(vc)
 );
 
-always_comb
-	lef = ~pixelRow[0];
-always_comb
-	lof =  pixelRow[0];
-
 always_ff @(posedge vclk)
 	xal_o <= vc != 4'd1;
 
@@ -1342,13 +1334,6 @@ u2
 	.ce_o(ce)
 );
 
-modRowChange urc1
-(
-	.clk(m_bus_o.clk),
-	.pixelRow(pixelRow),
-	.row_change(row_change)
-);
-
 wire memreq,first_memreq;
 modMemReqGen umrgen1
 (
@@ -1372,35 +1357,7 @@ modMemReqGen umrgen1
 // a cache.
 wire blankEdge;
 edge_det ed2(.rst(rst_i), .clk(m_bus_o.clk), .ce(1'b1), .i(blank_i), .pe(blankEdge), .ne(), .ee() );
-reg do_loads;
-reg load_fifo = 1'b0;
-//always_ff @(posedge m_bus_o.clk)
-	//load_fifo <= fifo_cnt < 10'd1000 && vFetch && onoff && xonoff && !m_cyc_o && do_loads;
-//	load_fifo <= /*fifo_cnt < 8'd224 &&*/ vFetch && onoff && xonoff_i && (fetchCol < windowWidth) && memreq;
 
-// The following table indicates the number of pixel that will fit into the
-// video fifo. The fifo contains 256 rows that are MDW bits wide.
-wire [15:0] hCmp;
-modPixelsInFifo 
-#(
-	.FIFO_DEPTH(256)
-)
-upif1
-(
-	.pps(pps),
-	.pif(hCmp)
-);
-/*
-always @(posedge m_bus_o.clk)
-	// if windowWidth > hCmp we always load because the fifo isn't large enough to act as a cache.
-	if (!(windowWidth < hCmp))
-		do_loads <= 1'b1;
-	// otherwise load the fifo only when the row changes to conserve memory bandwidth
-	else if (vc==4'd1)//pixelRow != opixelRow)
-		do_loads <= 1'b1;
-	else if (blankEdge)
-		do_loads <= 1'b0;
-*/
 always_comb m_bus_o.req.seg = 13'd0;
 always_comb m_bus_o.req.pv = 1'b0;
 always_comb m_bus_o.req.bte = fta_bus_pkg::LINEAR;
@@ -1469,16 +1426,6 @@ reg legal_x, legal_y;
 always_comb legal_x = ~xcol[15] && xcol < windowLeft + windowWidth && xcol >= windowLeft;//bmpWidth;
 always_comb legal_y = ~pixelRow[15] && pixelRow < windowTop + windowHeight && pixelRow >= windowTop;//bmpHeight;
 
-reg modd;
-always_comb
-	case(MDW)
-	32:	modd <= m_bus_o.req.adr[5:2]==4'hF;
-	64:	modd <= m_bus_o.req.adr[5:3]==3'h7;
-	128:	modd <= m_bus_o.req.adr[5:4]==2'h3;
-	256:	modd <= m_bus_o.req.adr[5]==1'h1;
-	default:	modd <= m_bus_o.req.adr[5]==1'h1;
-	endcase
-
 // Bus timeout counter
 modTocnt utocnt1
 (
@@ -1524,14 +1471,17 @@ else begin
     vm_cyc_o <= HIGH;
     vm_we_o <= LOW;//m_fst_o;
     vm_sel_o <= {MDW/8{1'b1}};
-    if (m_fst_o) begin
-	    vm_adr_o <= adr;
-    	next_adr <= adr;// + bmpWidth * bytpp;//MDW/8;
+//    if (m_fst_o) 
+    begin
+	    vm_adr_o <= grAddr;
+    	next_adr <= grAddr;// + bmpWidth * bytpp;//MDW/8;
     end
+/*    
     else begin
 	    vm_adr_o <= next_adr + ({10'd0,burst_len} + 2'd1) * (MDW/8);
 	    next_adr <= next_adr + ({10'd0,burst_len} + 2'd1) * (MDW/8);
 	  end
+*/
 	end
 
 	case(state)
@@ -1785,94 +1735,6 @@ rescan_fifo #(.WIDTH(MDW), .DEPTH(256)) uf1
 	.cnt()
 );
 */
-/*
-   // xpm_memory_sdpram: Simple Dual Port RAM
-   // Xilinx Parameterized Macro, version 2024.2
-
-   xpm_memory_sdpram #(
-      .ADDR_WIDTH_A(10),               // DECIMAL
-      .ADDR_WIDTH_B(10),               // DECIMAL
-      .AUTO_SLEEP_TIME(0),            // DECIMAL
-      .BYTE_WRITE_WIDTH_A(MDW),        // DECIMAL
-      .CASCADE_HEIGHT(0),             // DECIMAL
-      .CLOCKING_MODE("independent_clock"), // String
-      .ECC_BIT_RANGE("7:0"),          // String
-      .ECC_MODE("no_ecc"),            // String
-      .ECC_TYPE("none"),              // String
-      .IGNORE_INIT_SYNTH(0),          // DECIMAL
-      .MEMORY_INIT_FILE("none"),      // String
-      .MEMORY_INIT_PARAM("0"),        // String
-      .MEMORY_OPTIMIZATION("true"),   // String
-      .MEMORY_PRIMITIVE("auto"),      // String
-      .MEMORY_SIZE(1024*MDW),         // DECIMAL
-      .MESSAGE_CONTROL(0),            // DECIMAL
-      .RAM_DECOMP("auto"),            // String
-      .READ_DATA_WIDTH_B(MDW),         // DECIMAL
-      .READ_LATENCY_B(1),             // DECIMAL
-      .READ_RESET_VALUE_B("0"),       // String
-      .RST_MODE_A("SYNC"),            // String
-      .RST_MODE_B("SYNC"),            // String
-      .SIM_ASSERT_CHK(0),             // DECIMAL; 0=disable simulation messages, 1=enable simulation messages
-      .USE_EMBEDDED_CONSTRAINT(0),    // DECIMAL
-      .USE_MEM_INIT(1),               // DECIMAL
-      .USE_MEM_INIT_MMI(0),           // DECIMAL
-      .WAKEUP_TIME("disable_sleep"),  // String
-      .WRITE_DATA_WIDTH_A(MDW),        // DECIMAL
-      .WRITE_MODE_B("no_change"),     // String
-      .WRITE_PROTECT(1)               // DECIMAL
-   )
-   xpm_memory_sdpram_inst (
-      .dbiterrb(),             // 1-bit output: Status signal to indicate double bit error occurrence
-                                       // on the data output of port B.
-
-      .doutb(rgbo1e),                   // READ_DATA_WIDTH_B-bit output: Data output for port B read operations.
-      .sbiterrb(),             // 1-bit output: Status signal to indicate single bit error occurrence
-                                       // on the data output of port B.
-
-      .addra(m_bus_o.resp.adr[14:5]),  // ADDR_WIDTH_A-bit input: Address for port A write operations.
-      .addrb(addrb),                   // ADDR_WIDTH_B-bit input: Address for port B read operations.
-      .clka(m_bus_o.clk),              // 1-bit input: Clock signal for port A. Also clocks port B when
-                                       // parameter CLOCKING_MODE is "common_clock".
-
-      .clkb(vclk),                     // 1-bit input: Clock signal for port B when parameter CLOCKING_MODE is
-                                       // "independent_clock". Unused when parameter CLOCKING_MODE is
-                                       // "common_clock".
-
-      .dina(m_bus_o.resp.dat),         // WRITE_DATA_WIDTH_A-bit input: Data input for port A write operations.
-      .ena(1'b1),                       // 1-bit input: Memory enable signal for port A. Must be high on clock
-                                       // cycles when write operations are initiated. Pipelined internally.
-
-      .enb(1'b1),                       // 1-bit input: Memory enable signal for port B. Must be high on clock
-                                       // cycles when read operations are initiated. Pipelined internally.
-
-      .injectdbiterra(1'b0), 					// 1-bit input: Controls double bit error injection on input data when
-                                       // ECC enabled (Error injection capability is not available in
-                                       // "decode_only" mode).
-
-      .injectsbiterra(1'b0), 						// 1-bit input: Controls single bit error injection on input data when
-                                       // ECC enabled (Error injection capability is not available in
-                                       // "decode_only" mode).
-
-      .regceb(1'b1),                 // 1-bit input: Clock Enable for the last register stage on the output
-                                       // data path.
-
-      .rstb(m_bus_o.rst),              // 1-bit input: Reset signal for the final port B output register stage.
-                                       // Synchronously resets output port doutb to the value specified by
-                                       // parameter READ_RESET_VALUE_B.
-
-      .sleep(!on),	                  // 1-bit input: sleep signal to enable the dynamic power saving feature.
-      .wea(m_bus_o.resp.ack && m_bus_o.resp.tid.tranid==4'h0)   // WRITE_DATA_WIDTH_A/BYTE_WRITE_WIDTH_A-bit input: Write enable vector
-                                       // for port A input data port dina. 1 bit wide when word-wide writes are
-                                       // used. In byte-wide write configurations, each bit controls the
-                                       // writing one byte of dina to address addra. For example, to
-                                       // synchronously write only bits [15-8] of dina when WRITE_DATA_WIDTH_A
-                                       // is 32, wea would be 4'b0010.
-
-   );
-
-   // End of xpm_memory_sdpram_inst instantiation
-*/			
-
 
 wire wr_rst_busy, rd_rst_busy;
 reg rd_en;
@@ -1880,7 +1742,7 @@ always_comb
 	rd_en = rd_fifo && !rd_rst_busy;
 reg wr_en;
 always_comb	
-	wr_en = (m_bus_o.resp.ack && m_bus_o.resp.tid.tranid==4'h0) && !rst_i && !fifo_wrst && !wr_rst_busy;
+	wr_en = (m_bus_o.resp.ack && m_bus_o.resp.tid.tranid==4'h0) && !rst_i && !fifo_wrst && !wr_rst_busy && vc==3'd1;
 
    // xpm_fifo_async: Asynchronous FIFO
    // Xilinx Parameterized Macro, version 2024.2
@@ -2004,20 +1866,6 @@ always_comb
    // End of xpm_fifo_async_inst instantiation
 				
 				
-/*
-rescan_fifo #(.WIDTH(MDW), .DEPTH(256)) uf2
-(
-	.wrst(fifo_wrst),
-	.wclk(m_bus_o.clk),
-	.wr(((m_bus_o.resp.ack && m_bus_o.resp.tid.tranid==4'h0)|tocnt[10]) && lof),
-	.din(m_bus_o.resp.dat),
-	.rrst(fifo_rrst),
-	.rclk(vclk),
-	.rd(next_strip & lef),
-	.dout(rgbo1o),
-	.cnt()
-);
-*/
 endmodule
 
 // Horizontal or vertical pixel counter.
@@ -2126,41 +1974,6 @@ always_comb first_memreq = memreq & first;
 endmodule
 
 
-// The following table indicates the number of pixel that will fit into the
-// video fifo. The fifo contains 256 rows that are MDW bits wide.
-
-module modPixelsInFifo(pps, pif);
-parameter FIFO_DEPTH = 256;
-input [9:0] pps;
-output reg [15:0] pif;
-
-always_comb
-	pif = FIFO_DEPTH * pps;
-
-endmodule
-
-// To get the first address of a row, a latency of 3 clock cycles must pass
-// after the row changes before the address is valid.
-
-module modRowChange(clk, pixelRow, row_change);
-input clk;
-input [15:0] pixelRow;
-output reg row_change;
-
-reg [15:0] opixelRow;
-reg [2:0] tmr;
-always_ff @(posedge clk)
-	opixelRow <= pixelRow;
-always_ff @(posedge clk)
-	if (pixelRow != opixelRow)
-		tmr <= 3'b000;
-	else if (tmr != 3'd7)
-		tmr <= tmr + 3'd1;
-always_comb
-	row_change = tmr==3'd3;
-
-endmodule
-
 // hsync causes the video row to be incremented, it then takes about three
 // clocks for the start address of the row to be calculated. So, there is a
 // delay to account for after an hsync. The address must also be available
@@ -2185,13 +1998,14 @@ always_ff @(posedge clk)
 		cnt <= cnt + 4'd1;
 
 always_ff @(posedge clk)
-if (cnt == 4'd5)
+if (cnt == 4'd6)
 	adr <= grAddr;
+/*
 else begin
   if ((ack|tocnt[10]) || state==LOAD_OOB)
   	adr <= adr + MDW/8;
 end
-
+*/
 endmodule
 
 module modTocnt(rst, clk, cyc, ack, tocnt);
@@ -2268,10 +2082,6 @@ output reg [31:0] rgbo;
 integer n1;
 reg [31:0] mask;
 reg [MDW-1:0] rgbo3;
-reg [5:0] bpp2;
-
-always_ff @(posedge clk)
-	bpp2 <= bpp + 6'd1;
 
 always_ff @(posedge clk)
 	for (n1 = 0; n1 < 32; n1 = n1 + 1)
@@ -2282,7 +2092,7 @@ always_ff @(posedge clk)
 		if (rd_fifo)
 			rgbo3 <= rgbo1e;
 		else
-			rgbo3 <= rgbo3 >> bpp2;
+			rgbo3 <= rgbo3 >> bpp;
 	end
 
 always_comb rgbo = rgbo3[31:0] & mask;
@@ -2298,8 +2108,8 @@ input [31:0] rgbo3;
 output reg [31:0] rgbo4;
 
 integer nr,ng,nb;
-reg [29:0] red;
-reg [19:0] green;
+reg [9:0] red;
+reg [9:0] green;
 reg [9:0] blue;
 reg [4:0] red_shift, green_shift;
 reg [4:0] red_shift2, green_shift2, blue_shift2;
@@ -2315,9 +2125,9 @@ always_ff @(posedge clk)
 	for (nb = 0; nb < 10; nb = nb + 1)
 		blue_mask[nb] = nb < color_comp[3:0];
 always_ff @(posedge clk)
-	red_shift2 = 6'd30 - color_comp[11:8];
+	red_shift2 = 6'd10 - color_comp[11:8];
 always_ff @(posedge clk)
-	green_shift2 = 6'd20 - color_comp[7:4];
+	green_shift2 = 6'd10 - color_comp[7:4];
 always_ff @(posedge clk)
 	blue_shift2 = 6'd10 - color_comp[3:0];
 
@@ -2325,15 +2135,15 @@ always_ff @(posedge clk)
 	red_shift <= color_comp[7:4] + color_comp[3:0];
 always_ff @(posedge clk)
 	green_shift <= color_comp[3:0];
-always_comb
-	red = ((rgbo3 >> red_shift) & red_mask) << red_shift2;
-always_comb
-	green = ((rgbo3 >> green_shift) & green_mask) << green_shift2;
-always_comb
-	blue = (rgbo3 & blue_mask) << blue_shift2;
+always_ff @(posedge clk)
+	red <= ((rgbo3 >> red_shift) & red_mask) << red_shift2;
+always_ff @(posedge clk)
+	green <= ((rgbo3 >> green_shift) & green_mask) << green_shift2;
+always_ff @(posedge clk)
+	blue <= (rgbo3 & blue_mask) << blue_shift2;
 
 always_ff @(posedge clk)
-	rgbo4 <= red | green | blue;
+	rgbo4 <= {red,green,blue};
 
 endmodule
 
