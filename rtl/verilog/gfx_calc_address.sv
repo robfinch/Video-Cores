@@ -33,7 +33,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //
-// Latency of: 3 clocks
+// Latency of: 2 clocks
 // ============================================================================
 //
 // Compute the graphics address
@@ -44,10 +44,9 @@ module gfx_calc_address(clk, base_address_i, coeff1_i, coeff2_i, bpp_i, cbpp_i, 
 	address_o, mb_o, me_o, ce_o);
 parameter SW = 256;		// strip width in bits
 parameter BN = $clog2(SW)-1;
-parameter BPP12 = 1'b0;
 input clk;
 input [31:0] base_address_i;
-input [15:0] coeff1_i;
+input [19:0] coeff1_i;
 input [9:0] coeff2_i;
 input [5:0] bpp_i;
 input [5:0] cbpp_i;
@@ -110,6 +109,7 @@ begin
 	64:		offset <= {(({16'b0,num_strips} * y_coord_i) + strip_num),3'h0};
 	128:	offset <= {(({16'b0,num_strips} * y_coord_i) + strip_num),4'h0};
 	256:	offset <= {(({16'b0,num_strips} * y_coord_i) + strip_num),5'h0};
+	512:	offset <= {(({16'b0,num_strips} * y_coord_i) + strip_num),6'h0};
 	default:	offset <= {(({16'b0,num_strips} * y_coord_i) + strip_num),5'h0};
 	endcase
 end
