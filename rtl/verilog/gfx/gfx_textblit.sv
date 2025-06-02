@@ -27,7 +27,7 @@ output reg [31:0] textblit_sel_o;
 output reg [31:0] textblit_adr_o;
 input [MDW-1:0] textblit_dat_i;
 
-reg [3:0] state;
+reg [5:0] state;
 reg [5:0] pixhc, pixvc;
 reg [31:0] font_addr;
 reg font_fixed;
@@ -59,19 +59,23 @@ parameter ST_READ_CHAR_BITMAP2 = 4'd10;
 parameter ST_WRITE_CHAR = 4'd11;
 parameter ST_WAIT_ACK = 4'd12;
 parameter ST_WAIT = 4'd13;
-reg [3:0] ret_state;
+reg [5:0] ret_state;
 
-reg [3:0] ret_stat;
+reg [5:0] ret_stat;
 
-typedef enum logic [1:0] {
-	ST_READ_IDLE = 2'd0,
-	ST_READ1,
-	ST_READ1_ACK
+typedef enum logic [2:0] {
+	ST_READ_IDLE = 3'd1,
+	ST_READ1 = 3'd2,
+	ST_READ1_ACK = 3'd4
 } read_state_e;
 read_state_e read_state;
 
 always_ff @(posedge clk_i)
-begin
+if (rst_i) begin
+	state <= ST_IDLE;
+	read_state <= ST_READ_IDLE;
+end
+else begin
 case(state)
 ST_IDLE:
 	if (char_i) begin
@@ -112,7 +116,8 @@ ST_WRITE_CHAR:
 ST_WAIT_ACK:
 	if (clip_ack_i)
 		state <= ST_WRITE_CHAR;
-
+default:
+	state <= ST_IDLE;
 endcase
 
 case(read_state)
@@ -147,7 +152,12 @@ always @(posedge clk_i)
 // ...
 
 always_ff @(posedge clk_i)
-begin
+if (rst_i) begin
+	read_request_o <= 1'b0;
+	char_write_o <= 1'b0;
+	char_ack_o <= 1'b0;
+end
+else begin
 	char_write_o <= 1'b0;
 	char_ack_o <= 1'b0;
 case(state)
@@ -236,7 +246,8 @@ default:	;
 endcase
 
 case(read_state)
-ST_READ_IDLE:	;
+ST_READ_IDLE:
+	read_request_o <= 1'b0;
 
 ST_READ1:
 	begin

@@ -23,7 +23,7 @@ TOP MODULE
 import wishbone_pkg::*;
 import gfx_pkg::*;
 
-module gfx256_top (wb_clk_i, wb_rst_i, wb_inta_o, wbs_cs_i,
+module gfx_top (wb_clk_i, wb_rst_i, wb_inta_o, wbs_cs_i,
   // Wishbone master signals (interfaces with video memory, write)
   wbm_req, wbm_resp,
   // Wishbone slave signals (interfaces with main bus/CPU)

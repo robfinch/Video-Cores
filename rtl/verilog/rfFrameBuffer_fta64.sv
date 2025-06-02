@@ -894,10 +894,10 @@ if (rst_i) begin
 	bmpHeight <= 16'd1080;
 `endif
 	onoff <= 1'b1;
-	red_comp = 4'd5;
-	green_comp = 4'd5;
-	blue_comp = 4'd5;
-	pad_comp = 4'd1;
+	red_comp = 4'd8;
+	green_comp = 4'd8;
+	blue_comp = 4'd8;
+	pad_comp = 4'd8;
 	greyscale <= 1'b0;
 	bm_base_addr1 <= BM_BASE_ADDR1;
 	bm_base_addr2 <= BM_BASE_ADDR2;
@@ -923,7 +923,7 @@ if (rst_i) begin
 	hBorderOn <= phBorderOn; hBorderOff <= phBorderOff;
 	vBorderOn <= pvBorderOn; vBorderOff <= pvBorderOff;
 	max_nburst <= 6'd0;		// 2 bursts of 25 = 50 accesses for 800 pixels
-	burst_len <= 8'd49;		// 1 bursts of 120 = 120 access for 1920 pixels
+	burst_len <= 8'd99;		// 1 bursts of 120 = 120 access for 1920 pixels
 end
 else begin
 	rstcmd1 <= rstcmd;

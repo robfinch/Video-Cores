@@ -21,8 +21,9 @@ Components for aligning colored pixels to memory and the inverse
 
 */
 
-module color_to_memory(rmw_i, bpp_i, color_i, mb_i, mem_i, mem_o, sel_o);
+module color_to_memory(clk_i, rmw_i, bpp_i, color_i, mb_i, mem_i, mem_o, sel_o);
 parameter MDW=256;
+input clk_i;
 input rmw_i;
 input [5:0] bpp_i;
 input [31:0] color_i;
@@ -34,7 +35,7 @@ output reg [MDW/8-1:0] sel_o;
 integer n1;
 
 reg [3:0] sel1;
-always_comb
+always_ff @(posedge clk_i)
 	case (bpp_i[5:3]+|bpp_i[2:0])
 	3'd1:	sel1 = 4'h1;
 	3'd2:	sel1 = 4'h3;
@@ -50,7 +51,7 @@ else
 	sel_o = {{MDW/8{1'd0}},sel1} << mb_i[7:3];
 
 reg [31:0] mask;
-always_comb
+always_ff @(posedge clk_i)
 	for (n1 = 0; n1 < 32; n1 = n1 + 1)
 		if (n1 < bpp_i)
 			mask[n1] = 1'b1;
@@ -60,14 +61,15 @@ always_comb
 reg [MDW-1:0] maskshftd;
 
 always_comb
-	maskshftd = mask << mb_i;
+	maskshftd = {{MDW{1'b0}},mask} << mb_i;
 
 assign mem_o = ({{MDW{1'd0}},color_i & mask} << mb_i) | (mem_i & ~maskshftd);
 
 endmodule
 
-module memory_to_color(rmw_i, bpp_i, mem_i, mb_i, color_o, sel_o);
+module memory_to_color(clk_i, rmw_i, bpp_i, mem_i, mb_i, color_o, sel_o);
 parameter MDW=256;
+input clk_i;
 input rmw_i;
 input [5:0] bpp_i;
 input [MDW-1:0] mem_i;
@@ -77,7 +79,7 @@ output reg [MDW/8-1:0]  sel_o;
 
 integer n1;
 reg [3:0] sel1;
-always_comb
+always_ff @(posedge clk_i)
 	case (bpp_i[5:3]+|bpp_i[2:0])
 	3'd1:	sel1 = 4'h1;
 	3'd2:	sel1 = 4'h3;
@@ -93,7 +95,7 @@ else
 	sel_o = {{MDW/8{1'd0}},sel1} << mb_i[7:3];
 
 reg [31:0] mask;
-always_comb
+always_ff @(posedge clk_i)
 	for (n1 = 0; n1 < 32; n1 = n1 + 1)
 		if (n1 < bpp_i)
 			mask[n1] = 1'b1;

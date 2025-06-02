@@ -100,8 +100,8 @@ module gfx_wbs(
   parameter point_width = 16;
   parameter subpixel_width = 16;
   parameter fifo_depth = 11;
-  parameter GR_WIDTH = 32'd1920;
-  parameter GR_HEIGHT = 32'd1080;
+  parameter GR_WIDTH = 32'd800;
+  parameter GR_HEIGHT = 32'd600;
   parameter MDW = 256;
 
   //
@@ -212,7 +212,7 @@ module gfx_wbs(
 
 output reg [5:0] bpp_o;
 output reg [5:0] cbpp_o;
-output reg [15:0] coeff1_o;
+output reg [19:0] coeff1_o;
 output reg [9:0] coeff2_o;
 output reg [9:0] pps_o;
 output reg rmw_o;
@@ -234,7 +234,8 @@ output reg [15:0] color_comp_o;
   reg signed [31:0] aa_reg, ab_reg, ac_reg, tx_reg;
   reg signed [31:0] ba_reg, bb_reg, bc_reg, ty_reg;
   reg signed [31:0] ca_reg, cb_reg, cc_reg, tz_reg;
-  reg        [31:0] color0_reg, color1_reg, color2_reg;
+  reg [31:0] color0_reg, color1_reg, color2_reg;
+  reg [31:0] color0a_reg, color1a_reg, color2a_reg;
   reg        [31:0] u0_reg, v0_reg, u1_reg, v1_reg, u2_reg, v2_reg; 
   reg        [31:0] alpha_reg;
   reg        [31:0] colorkey_reg;
@@ -483,9 +484,13 @@ output reg [15:0] color_comp_o;
   assign tz_o = $signed(tz_reg);
 
   // Assign color signals
-  assign color0_o = color0_reg;
-  assign color1_o = color1_reg;
-  assign color2_o = color2_reg;
+  // Trying to improve timing with these regs (crossing clock domain)
+  always_ff @(posedge clk_i) color0a_reg <= color0_reg;
+  always_ff @(posedge clk_i) color1a_reg <= color1_reg;
+  always_ff @(posedge clk_i) color2a_reg <= color2_reg;
+  assign color0_o = color0a_reg;
+  assign color1_o = color1a_reg;
+  assign color2_o = color2a_reg;
 
   assign u0_o = u0_reg[point_width-1:0];
   assign v0_o = v0_reg[point_width-1:0];
@@ -532,11 +537,11 @@ output reg [15:0] color_comp_o;
 	
 // Bits per pixel minus one.
 always_ff @(posedge wbs_clk_i)
-	bpp_o <= pad_comp+red_comp+green_comp+blue_comp-1'd1;
+	bpp_o <= pad_comp+red_comp+green_comp+blue_comp;
 
 // Color bits per pixel minus one.
 always_ff @(posedge wbs_clk_i)
-	cbpp_o <= red_comp+green_comp+blue_comp-1'd1;
+	cbpp_o <= red_comp+green_comp+blue_comp;
 
 // Bytes per pixel.
 //always_ff @(posedge clk)
@@ -550,11 +555,13 @@ always_ff @(posedge wbs_clk_i)
 
 // This coefficient is the number of bits used by all pixels in the strip. 
 // Used to determine pixel placement in the strip.
-reg [9:0] coeff2a [0:63];
+reg [9:0] coeff2a [0:32];
 genvar g;
 
 generate begin : gCoeff2
-	for (g = 0; g < 64; g = g + 1)
+always_ff @(posedge wbs_clk_i)
+	coeff2a[0] <= MDW;
+	for (g = 1; g < 33; g = g + 1)
 always_ff @(posedge wbs_clk_i)
 	coeff2a[g] <= (MDW/g) * g;
 end

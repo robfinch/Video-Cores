@@ -52,7 +52,7 @@ input clipping_enable_i;
 input zbuffer_enable_i;
 input [5:0] bpp_i;
 input [5:0] cbpp_i;
-input [15:0] coeff1_i;
+input [19:0] coeff1_i;
 input [9:0] coeff2_i;
 input [9:0] pps_i;
 input rmw_i;
@@ -117,15 +117,15 @@ reg write1;
 assign write_o = write1;
 
 // State machine
-typedef enum logic [2:0] {
-	wait_state = 3'd0,
-	delay1_state,
-	delay2_state,
-	delay3_state,
-	z_read_state,
-	write_pixel_state
+typedef enum logic [3:0] {
+	wait_state = 4'd0,
+	delay1_state = 4'd1,
+	delay2_state = 4'd2,
+	delay3_state = 4'd3,
+	z_read_state = 4'd4,
+	write_pixel_state = 4'd5
 } clip_state_e;
-clip_state_e state;
+reg [5:0] clip_state;
 
 // Calculate address of target pixel
 // Addr[31:2] = Base + (Y*width + X) * ppb
@@ -156,6 +156,7 @@ wire signed [point_width-1:0] z_value_at_target = z_value_at_target32[point_widt
 
 // Memory to color converter
 memory_to_color #(.MDW(MDW)) memory_proc(
+	.clk_i(clk_i),
 	.rmw_i(rmw_i),
 	.bpp_i(6'd16),
 	.mem_i (z_data_i),
@@ -219,11 +220,13 @@ wire fail_z_check   = z_value_at_target > cuvz_pixel_z_i;
 wire outside_target = raster_write_i
 											 ? (raster_pixel_x_i < target_x0_i) | (raster_pixel_x_i >= target_x1_i)
 											 | (raster_pixel_y_i < target_y0_i) | (raster_pixel_y_i >= target_y1_i)
-											 : (cuvz_pixel_x_i < target_x0_i) | (cuvz_pixel_x_i >= target_x1_i)
-											 | (cuvz_pixel_y_i < target_y0_i) | (cuvz_pixel_y_i >= target_y1_i);
+											 : cuvz_write_i ? (cuvz_pixel_x_i < target_x0_i) | (cuvz_pixel_x_i >= target_x1_i)
+											 | (cuvz_pixel_y_i < target_y0_i) | (cuvz_pixel_y_i >= target_y1_i)
+											 : 1'b0;
 wire outside_clip = raster_write_i
 											 ? (raster_pixel_x_i < clip_pixel0_x_i) | (raster_pixel_y_i < clip_pixel0_y_i) | (raster_pixel_x_i >= clip_pixel1_x_i) | (raster_pixel_y_i >= clip_pixel1_y_i)
-											 : (cuvz_pixel_x_i < clip_pixel0_x_i) | (cuvz_pixel_y_i < clip_pixel0_y_i) | (cuvz_pixel_x_i >= clip_pixel1_x_i) | (cuvz_pixel_y_i >= clip_pixel1_y_i);
+											 : cuvz_write_i ? (cuvz_pixel_x_i < clip_pixel0_x_i) | (cuvz_pixel_y_i < clip_pixel0_y_i) | (cuvz_pixel_x_i >= clip_pixel1_x_i) | (cuvz_pixel_y_i >= clip_pixel1_y_i) 
+											 : 1'b0;
 wire discard_pixel = outside_target | (clipping_enable_i & outside_clip);
 
 wire outside_target2 = raster_write_i ? (x_end < target_x0_i) | (x_end >= target_x1_i) : 1'b1;
@@ -248,10 +251,9 @@ end
 // Else, set outputs for next cycle
 else
 begin
-	ack_o <= 1'b0;
-  case (state)
+  case (1'b1)
 
-  wait_state:
+  clip_state[wait_state]:
 	  begin
 			ack_o <= 1'b0;
 			strip_o <= raster_strip_i & ~discard_strip;
@@ -265,11 +267,11 @@ begin
         write1 <= ~discard_pixel;
 	  end
 
-  delay2_state:
+  clip_state[delay2_state]:
     z_request_o <= 1'b1;
 
-  // Do a depth check. If it fails, discard pixel, ack and go back to wait. If it succeeds, go to write state
-  z_read_state:
+  // Do a depth check. If it fails, discard pixel, ack and go back to wait. If it succeeds, go to write clip_state
+  clip_state[z_read_state]:
     if(z_ack_i) begin
       write1 <= ~fail_z_check;
       ack_o <= fail_z_check;
@@ -278,8 +280,8 @@ begin
     else
       z_request_o <= ~wbm_busy_i | z_request_o;
 
-  // ack, then go back to wait state when the next module is ready
-  write_pixel_state:
+  // ack, then go back to wait clip_state when the next module is ready
+  clip_state[write_pixel_state]:
     if(ack_i) begin
 	    write1 <= 1'b0;
       ack_o <= 1'b1;    
@@ -293,38 +295,52 @@ end
 // State machine
 always_ff @(posedge clk_i)
 // reset, init component
-if(rst_i)
-  state <= wait_state;
+if(rst_i) begin
+  clip_state <= 6'd0;
+  clip_state[wait_state] <= 1'b1;
 // Move in statemachine
-else
-  case (state)
+end
+else begin
+  clip_state <= 6'd0;
+  case (1'b1)
 
-  wait_state:
+  clip_state[wait_state]:
     if(write_i & ~discard_pixel) begin
     	if (zbuffer_enable_i)
-    		state <= delay1_state;
+    		clip_state[delay1_state] <= 1'b1;
     	else
-    		state <= write_pixel_state;
+    		clip_state[write_pixel_state] <= 1'b1;
     end
+    else
+			clip_state[wait_state] <= 1'b1;
 
 	// Two cycle delay is for address calc. 
-  delay1_state:
-  	state <= delay2_state;
+  clip_state[delay1_state]:
+  	clip_state[delay2_state] <= 1'b1;
 //  delay2_state:
-//  	state <= delay3_state;
-  delay2_state:
-    state <= z_read_state;
+//  	clip_state <= delay3_state;
+  clip_state[delay2_state]:
+    clip_state[z_read_state] <= 1'b1;
 
-  z_read_state:
-    if(z_ack_i)
-      state <= fail_z_check ? wait_state : write_pixel_state;
+  clip_state[z_read_state]:
+    if(z_ack_i) begin
+    	if (fail_z_check)
+    		clip_state[wait_state] <= 1'b1;
+    	else
+      	clip_state[write_pixel_state] <= 1'b1;
+    end
+    else
+			clip_state[z_read_state] <= 1'b1;
 
-  write_pixel_state:
+  clip_state[write_pixel_state]:
     if(ack_i)
-      state <= wait_state;
+      clip_state[wait_state] <= 1'b1;
+    else
+    	clip_state[write_pixel_state] <= 1'b1;
 
 	default:
-		state <= wait_state;
+		clip_state[wait_state] <= 1'b1;
   endcase
+end
 
 endmodule

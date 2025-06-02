@@ -85,7 +85,7 @@ input [point_width-1:0] tex0_size_y_i;
 input rmw_i;
 input [5:0] bpp_i;
 input [5:0] cbpp_i;
-input [15:0] coeff1_i;
+input [19:0] coeff1_i;
 input [9:0] coeff2_i;
 input colorkey_enable_i;
 input [31:0] colorkey_i;
@@ -119,21 +119,22 @@ gfx_calc_address #(.SW(MDW)) ugfxca1
 //assign texture_addr_o = tex0_base_i + pixel_offset[31:5];
 
 // State machine
-typedef enum logic [2:0] {
-	wait_state = 3'd0,
-	delay1_state,
-	delay2_state,
-	delay3_state,
-	texture_read_state,
-	texture_read_ack_state,
-	write_pixel_ack_state
+typedef enum logic [6:0] {
+	wait_state = 7'd1,
+	delay1_state = 7'd2,
+	delay2_state = 7'd4,
+	delay3_state = 7'd8,
+	texture_read_state = 7'd16,
+	texture_read_ack_state = 7'd32,
+	write_pixel_ack_state = 7'd64
 } frag_state_e;
-frag_state_e state;
+frag_state_e frag_state;
 
 wire [31:0] mem_conv_color_o;
 
 // Color converter
 memory_to_color #(.MDW(MDW)) color_proc(
+	.clk_i(clk_i),
 	.rmw_i(rmw_i),
 	.bpp_i(bpp_i),
 	.mem_i (texture_data_i),
@@ -182,7 +183,7 @@ begin
   else begin
   	ack_o <= 1'b0;
   	strip_o <= 1'b0;
-    case (state)
+    case (frag_state)
 
     wait_state:
       begin
@@ -225,6 +226,8 @@ begin
 	      write1 <= 1'b0;
 	      ack_o <= 1'b1;
 	    end
+	    else
+	      write1 <= 1'b1;
 
 		default:	;
     endcase
@@ -236,40 +239,46 @@ always_ff @(posedge clk_i)
 begin
   // reset, init component
   if(rst_i)
-    state <= wait_state;
+    frag_state <= wait_state;
   // Move in statemachine
   else
-    case (state)
+    case (frag_state)
 
     wait_state:
       if(write_i & texture_enable_i & (~curve_write_i | bezier_draw))
-        state <= delay1_state;
+        frag_state <= delay1_state;
       else if(write_i & (~curve_write_i | bezier_draw))
-        state <= write_pixel_ack_state;
+        frag_state <= write_pixel_ack_state;
+      else
+      	frag_state <= wait_state;
 
     delay1_state:
-    	state <= delay2_state;
+    	frag_state <= delay2_state;
+//    delay2_state:
+//    	frag_state <= delay3_state;
     delay2_state:
-    	state <= delay3_state;
-    delay3_state:
-      state <= texture_read_state;
+      frag_state <= texture_read_state;
 
 		texture_read_state:
-			state <= texture_read_ack_state;
+			frag_state <= texture_read_ack_state;
 
     texture_read_ack_state:
-      // Check for texture ack. If we have colorkeying enabled, only goto the write state if the texture doesn't match the colorkey
+      // Check for texture ack. If we have colorkeying enabled, only goto the write frag_state if the texture doesn't match the colorkey
       if(texture_ack_i & colorkey_enable_i)
-        state <= transparent_pixel ? wait_state : write_pixel_ack_state;
+        frag_state <= transparent_pixel ? wait_state : write_pixel_ack_state;
       else if(texture_ack_i)
-        state <= write_pixel_ack_state;
+        frag_state <= write_pixel_ack_state;
+      else
+      	frag_state <= texture_read_ack_state;
 
     write_pixel_ack_state:
       if(ack_i)
-        state <= wait_state;
+        frag_state <= wait_state;
+      else
+				frag_state <= write_pixel_ack_state;
 
 		default:
-			state <= wait_state;
+			frag_state <= wait_state;
     endcase
 end
 

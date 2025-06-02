@@ -179,10 +179,10 @@ endfunction
 
 typedef enum logic [1:0] {
 	wait_state = 2'd0,
-	wait_ack,
-	delay1_state
+	wait_ack = 2'd1,
+	delay1_state = 2'd2
 } wbm_state_e;
-wbm_state_e state;
+reg [2:0] wbm_state;
 
 assign sint_o = wbm_resp.err;
 
@@ -198,8 +198,8 @@ if (rst_i) begin
 end
 else begin
 	texture_data_ack <= 1'b0;
-	case (state)
-	wait_state:
+	case (1'b1)
+	wbm_state[wait_state]:
 	  if (read_request_i|write_request_i) begin
 	  	wbm_req.cid <= CID;
 	  	wbm_req.tid <= {CID,1'b0,3'b001};
@@ -213,33 +213,55 @@ else begin
 	  	wbm_req.padr <= texture_addr_i;
 	  	wbm_req.dat <= texture_dat_i;
 	  end
-	wait_ack:
-  	if (wbm_resp.ack|wbm_resp.err) begin
-   		texture_data_ack <= 1'b1;
-  		texture_dat_o <= wbm_resp.dat;
-  		wbm_req <= {$bits(wb_cmd_request256_t){1'b0}};
-  	end
-  delay1_state:
-  	;
+	  else
+	  	wbm_req <= {$bits(wb_cmd_request256_t){1'b0}};
+	wbm_state[wait_ack]:
+		begin
+	  	wbm_req.cid <= CID;
+	  	wbm_req.tid <= {CID,1'b0,3'b001};
+	  	wbm_req.bte <= wishbone_pkg::LINEAR;
+	  	wbm_req.cti <= wishbone_pkg::CLASSIC;
+	  	wbm_req.cyc <= 1'b1;
+	  	wbm_req.stb <= 1'b1;
+	  	wbm_req.we <= write_request_i;
+	  	wbm_req.sel <= texture_sel_i;
+	  	wbm_req.vadr <= texture_addr_i;
+	  	wbm_req.padr <= texture_addr_i;
+	  	wbm_req.dat <= texture_dat_i;
+	  	if (wbm_resp.ack|wbm_resp.err) begin
+	   		texture_data_ack <= 1'b1;
+	  		texture_dat_o <= wbm_resp.dat;
+	  		wbm_req <= {$bits(wb_cmd_request256_t){1'b0}};
+	  	end
+ 		end
+  wbm_state[delay1_state]:
+  	wbm_req <= {$bits(wb_cmd_request256_t){1'b0}};
   default:	;
 	endcase
 end
 
 always_ff @(posedge clk_i)
-if (rst_i)
-	state <= wait_state;
+if (rst_i) begin
+	wbm_state <= 3'd0;
+	wbm_state[wait_state] <= 1'b1;
+end
 else begin
-	case (state)
-	wait_state:
+	wbm_state <= 3'd0;
+	case (1'b1)
+	wbm_state[wait_state]:
 		if (read_request_i|write_request_i)
-			state <= wait_ack;
-	wait_ack:
+			wbm_state[wait_ack] <= 1'b1;
+		else
+			wbm_state[wait_state] <= 1'b1;
+	wbm_state[wait_ack]:
 		if (wbm_resp.ack|wbm_resp.err)
-			state <= delay1_state;
-	delay1_state:
-		state <= wait_state;
+			wbm_state[delay1_state] <= 1'b1;
+		else
+			wbm_state[wait_ack] <= 1'b1;
+	wbm_state[delay1_state]:
+		wbm_state[wait_state] <= 1'b1;
 	default:
-		state <= wait_state;
+		wbm_state[wait_state] <= 1'b1;
 	endcase
 end
 

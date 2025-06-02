@@ -56,7 +56,7 @@ input [point_width-1:0] target_size_y_i;
 input rmw_i;
 input [5:0] bpp_i;
 input [5:0] cbpp_i;
-input [15:0] coeff1_i;
+input [19:0] coeff1_i;
 input [9:0] coeff2_i;
 
 // from fragment
@@ -91,18 +91,18 @@ input ack_i;
 reg write1;
 
 // State machine
-typedef enum logic [2:0] {
-	wait_state = 3'd0,
-	delay1_state,
-	delay2_state,
-	delay3_state,
-	target_read_state,
-	target_read_ack_state,
-	write_pixel_state,
-	write_pixel_ack_state
+typedef enum logic [3:0] {
+	wait_state = 4'd1,
+	delay1_state = 4'd2,
+	delay2_state = 4'd3,
+	delay3_state = 4'd4,
+	target_read_state = 4'd5,
+	target_read_ack_state = 4'd6,
+	write_pixel_state = 4'd7,
+	write_pixel_ack_state = 4'd8
 } blender_state_e;
 
-blender_state_e state;
+reg [8:0] blender_state;
 
 // Calculate alpha
 reg [15:0] combined_alpha_reg;
@@ -132,6 +132,7 @@ gfx_calc_address #(.SW(MDW)) ugfxca1
 wire [31:0] dest_color;
 // Memory to color converter
 memory_to_color #(.MDW(MDW)) memory_proc(
+	.clk_i(clk_i),
 	.rmw_i(rmw),
 	.bpp_i(bpp_i),
 	.mem_i (target_data_i),
@@ -208,9 +209,9 @@ begin
   else
   begin
     strip_o <= 1'b0;
-    case (state)
+    case (1'b1)
 
-    wait_state:
+    blender_state[wait_state]:
       begin
         ack_o <= 1'b0;
 
@@ -269,10 +270,10 @@ begin
       end
 
       // Read pixel color at target (request is sent through the wbm reader arbiter).
-      target_read_state:
+      blender_state[target_read_state]:
         if(target_ack_i)
         begin
-          // When we receive an ack from memory, calculate the combined color and send the pixel forward in the pipeline (go to write state)
+          // When we receive an ack from memory, calculate the combined color and send the pixel forward in the pipeline (go to write blender_state)
           write1 <= 1'b1;
           pixel_x_o <= x_counter_i;
           pixel_y_o <= y_counter_i;
@@ -288,8 +289,8 @@ begin
         else
           target_request_o <= !wbm_busy_i | target_request_o;
 
-      // Ack and return to wait state
-    write_pixel_ack_state:
+      // Ack and return to wait blender_state
+    blender_state[write_pixel_ack_state]:
   	  begin
         if(ack_i) begin
 	        write1 <= 1'b0;
@@ -297,7 +298,8 @@ begin
         end    
       end
 
-		default:	;
+		default:
+			;
     endcase
   end
 end
@@ -305,41 +307,48 @@ end
 // State machine
 always_ff @(posedge clk_i)
 begin
+ 	blender_state <= 9'd0;
   // reset, init component
   if(rst_i)
-    state <= wait_state;
+    blender_state[wait_state] <= 1'b1;
   // Move in statemachine
   else
-    case (state)
+    case (1'b1)
 
-    wait_state:
+    blender_state[wait_state]:
       if(write_i & blending_enable_i)
-        state <= delay1_state;
+        blender_state[delay1_state] <= 1'b1;
       else if(write_i)
-        state <= write_pixel_ack_state;
-        
-    delay1_state:
-    	state <= delay2_state;
-//    delay2_state:
-//    	state <= delay3_state;
-    delay2_state:
-      state <= target_read_state;
+        blender_state[write_pixel_ack_state] <= 1'b1;
+      else
+        blender_state[wait_state] <= 1'b1;
 
-		target_read_state:
+    blender_state[delay1_state]:
+    	blender_state[delay2_state] <= 1'b1;
+//    delay2_state:
+//    	blender_state <= delay3_state;
+    blender_state[delay2_state]:
+      blender_state[target_read_state] <= 1'b1;
+
+		blender_state[target_read_state]:
       if(target_ack_i)
-        state <= write_pixel_ack_state;
-//			state <= target_read_ack_state;
+        blender_state[write_pixel_ack_state] <= 1'b1;
+      else
+      	blender_state[target_read_state] <= 1'b1;
+//			blender_state <= target_read_ack_state;
 
 //    target_read_ack_state:
 //      if(target_ack_i)
-//        state <= write_pixel_ack_state;
+//        blender_state <= write_pixel_ack_state;
 
-    write_pixel_ack_state:
+    blender_state[write_pixel_ack_state]:
       if(ack_i)
-        state <= wait_state;
+        blender_state[wait_state] <= 1'b1;
+      else
+      	blender_state[write_pixel_ack_state] <= 1'b1;
 
 		default:
-			state <= wait_state;
+			blender_state[wait_state] <= 1'b1;
     endcase
 end
 

@@ -29,7 +29,7 @@ The operation is clipped to the span given by clip_pixel0-1. Pixels outside the 
 
 If texturing is enabled, texture coordinates u (horizontal) and v (vertical) are emitted, offset and clipped by the span given by src_pixel0-1.
 
-When all pixels have been generated and acked, the rasterizer acks the operation and returns to wait state.
+When all pixels have been generated and acked, the rasterizer acks the operation and returns to wait raster_state.
 */
 module gfx_rasterizer (clk_i, rst_i, pps_i,
   clip_ack_i, interp_ack_i, ack_o, point_write_i,
@@ -151,17 +151,17 @@ wire [point_width-1:0] triangle_y_o;
 wire triangle_write_o;
 
 // State machine
-typedef enum logic [2:0] 
+typedef enum logic [7:0] 
 {
-	wait_state = 3'd0,
-	point_state,
-	rect_state,
-	line_state,
-	triangle_state,
-	triangle_final_state,
-	char_state
+	wait_state = 8'd1,
+	point_state = 8'd2,
+	rect_state = 8'd4,
+	line_state = 8'd8,
+	triangle_state = 8'd16,
+	triangle_final_state = 8'd32,
+	char_state = 8'd64
 } rasterizer_state_e;
-rasterizer_state_e state;
+rasterizer_state_e raster_state;
 
 // Write/ack counter
 reg [delay_width-1:0] ack_counter;
@@ -246,53 +246,66 @@ wire triangle_finished = ~interpolate_i | (ack_counter == 1'b0);
 // Manage states
 always_ff @(posedge clk_i)
 if(rst_i)
-  state <= wait_state;
+  raster_state <= wait_state;
 else
-  case (state)
+  case (raster_state)
 
   wait_state:
   	case(1'b1)
   	point_write_i:
-  		state <= point_state;
+  		raster_state <= point_state;
     triangle_write_i:
-    	state <= triangle_state;
-    rect_write_i & !empty_raster: // if request for drawing a rect, go to rect drawing state
-      state <= rect_state;
+    	raster_state <= triangle_state;
+    rect_write_i & !empty_raster: // if request for drawing a rect, go to rect drawing raster_state
+      raster_state <= rect_state;
     line_write_i:
-      state <= line_state; // if request for drawing a line, go to line drawing state
+      raster_state <= line_state; // if request for drawing a line, go to line drawing raster_state
     char_write_i:
-    	state <= char_state;
-    default: ;
+    	raster_state <= char_state;
+    default: 
+    	raster_state <= wait_state;
   	endcase
 
 	point_state:
 		if (clip_ack_i)
-			state <= wait_state;
+			raster_state <= wait_state;
+		else
+			raster_state <= point_state;
 
   rect_state:
-    if(raster_rect_done) // if we are done drawing a rect, go to wait state
-      state <= wait_state;
+    if(raster_rect_done) // if we are done drawing a rect, go to wait raster_state
+      raster_state <= wait_state;
+    else
+    	raster_state <= rect_state;
 
   line_state:
-    if(!raster_line_busy & !draw_line)  // if we are done drawing a line, go to wait state
-      state <= wait_state;
+    if(!raster_line_busy & !draw_line)  // if we are done drawing a line, go to wait raster_state
+      raster_state <= wait_state;
+    else
+    	raster_state <= line_state;
 
   triangle_state:
     if(triangle_ack & triangle_finished)
-      state <= wait_state;
+      raster_state <= wait_state;
     else if(triangle_ack)
-      state <= triangle_final_state;
+      raster_state <= triangle_final_state;
+    else
+    	raster_state <= triangle_state;
 
   triangle_final_state:
     if(triangle_finished)
-      state <= wait_state;
-      
+      raster_state <= wait_state;
+    else
+      raster_state <= triangle_final_state;
+
   char_state:
   	if (char_ack_i)
-  		state <= wait_state;
+  		raster_state <= wait_state;
+  	else
+			raster_state <= char_state;
 
 	default:
-		state <= wait_state;
+		raster_state <= wait_state;
   endcase
 
 // If interpolation is active, only write to interp module if queue is not full. 
@@ -304,7 +317,7 @@ always_comb
 begin
 	strip_o = 1'b0;
 	/*
-	if (x_counter_o != rect_p1_x && state==rect_state)
+	if (x_counter_o != rect_p1_x && raster_state==rect_state)
 		case(color_depth_i)
 		2'b00:	if (x_counter_o[4:0]==5'd0 && x_counter_o+6'd32 <= rect_p1_x) strip_o = 1'b1;
 		2'b01:	
@@ -340,7 +353,7 @@ begin
   else
   begin
   	ack_o <= 1'b0;
-    case (state)
+    case (raster_state)
 
     // Wait for incoming instructions
     wait_state:
@@ -379,7 +392,7 @@ begin
 		point_state:
 			if (clip_ack_i) begin
 				clip_write_o <= 1'b0;
-				ack_o <= 1'b1;
+				//ack_o <= 1'b1; No ack sent back for point, the transform module already sent one.
 			end
 
     // Rasterize a rectangle between p0 and p1 (rasterize = generate the pixels)
@@ -408,7 +421,7 @@ begin
         end
 
         if (raster_rect_done) begin // iterate through height of rect (are we done?)
-          clip_write_o <= 1'b0; // Only send ack when we get ack_i (see wait state)
+          clip_write_o <= 1'b0; // Only send ack when we get ack_i (see wait raster_state)
           ack_o <= 1'b1;
         end
       end
