@@ -63,6 +63,7 @@ parameter GFX_FONT_TABLE_BASE= 8'hc0;
 parameter GFX_FONT_ID				 = 8'hc8;
 parameter GFX_CHAR_CODE			 = 8'hcc;
 parameter GFX_COLOR_COMP		 = 8'hd0;
+parameter GFX_PPS						 = 8'hd4;
 
 // Declare control register bits
 parameter GFX_CTRL_COLOR_DEPTH = 0;
@@ -79,6 +80,7 @@ parameter GFX_CTRL_CURVE    = 11;
 parameter GFX_CTRL_INTERP   = 12;
 parameter GFX_CTRL_INSIDE   = 13;
 parameter GFX_CTRL_CHAR		  = 20;
+parameter GFX_CTRL_FLOODFILL = 21;
 
 parameter GFX_CTRL_ACTIVE_POINT    = 16;
 parameter GFX_CTRL_FORWARD_POINT   = 18;

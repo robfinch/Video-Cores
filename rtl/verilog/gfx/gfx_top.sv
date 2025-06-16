@@ -35,7 +35,7 @@ parameter point_width    = 16;
 parameter subpixel_width = 16;
 parameter fifo_depth     = 11;
 
-parameter REG_ADR_HIBIT = 7;
+parameter REG_ADR_HIBIT = 8;
 parameter MDW = 256;
 
 // Common wishbone signals
@@ -88,6 +88,7 @@ wire wbs_raster_line_write;
 wire wbs_raster_triangle_write;
 wire wbs_raster_interpolate;
 wire wbs_char_write;
+wire wbs_raster_floodfill_write;
 
 wire wbs_fragment_curve_write;
 
@@ -169,7 +170,7 @@ wire rmw;
 wire [15:0] color_comp;
 
 // Slave wishbone interface. Reads wishbone bus and fills registers
-gfx_wbs wb_databus(
+gfx_wbs wb_databus (
   .clk_i (wb_clk_i),
   .wbs_clk_i (wbs_clk_i),
   .rst_i (wb_rst_i),
@@ -244,6 +245,7 @@ gfx_wbs wb_databus(
   .triangle_write_o (wbs_raster_triangle_write),
   .curve_write_o (wbs_fragment_curve_write),
   .char_write_o	(wbs_char_write),
+  .floodfill_write_o (wbs_raster_floodfill_write),
   .interpolate_o (wbs_raster_interpolate),
 
   .writer_sint_i (wbmwriter_sint),
@@ -277,6 +279,7 @@ defparam wb_databus.point_width    = point_width;
 defparam wb_databus.subpixel_width = subpixel_width;
 defparam wb_databus.fifo_depth     = fifo_depth;
 defparam wb_databus.REG_ADR_HIBIT  = REG_ADR_HIBIT;
+defparam wb_databus.MDW = MDW;
 
 wire signed [point_width-1:-subpixel_width] transform_raster_dest_pixel0_x;
 wire signed [point_width-1:-subpixel_width] transform_raster_dest_pixel0_y;
@@ -347,8 +350,13 @@ wire char_write_o;
 wire char_ack_o;
 wire raster_strip;
 
+wire floodfill_read_request;
+wire [31:0] floodfill_adr;
+wire [MDW/8-1:0] floodfill_sel;
+wire [MDW-1:0] floodfill_data;
+
 // Rasterizer generates pixels to calculate
-gfx_rasterizer rasterizer0 (
+gfx_rasterizer #(.MDW(MDW)) rasterizer0 (
   .clk_i            (wb_clk_i),
   .rst_i            (wb_rst_i),
 
@@ -361,6 +369,7 @@ gfx_rasterizer rasterizer0 (
   .rect_write_i	    (wbs_raster_rect_write),
   .line_write_i     (wbs_raster_line_write),
   .triangle_write_i (wbs_raster_triangle_write),
+  .floodfill_write_i(wbs_raster_floodfill_write),
   .interpolate_i    (wbs_raster_interpolate),
 
   .texture_enable_i (texture_enable_reg),
@@ -386,6 +395,7 @@ gfx_rasterizer rasterizer0 (
   .clip_pixel1_y_i (clip_pixel1_y_reg),	
 
   // Screen size
+  .target_base_i(target_base_reg),
   .target_size_x_i (target_size_x_reg),
   .target_size_y_i (target_size_y_reg),
   .target_x0_i (target_x0_reg),
@@ -409,7 +419,19 @@ gfx_rasterizer rasterizer0 (
   .char_x_i(char_x_o),
   .char_y_i(char_y_o),
   .char_write_i(char_write_o),
-  .char_ack_i(char_ack_o)
+  .char_ack_i(char_ack_o),
+  // flood filling
+  .color0_i(color0_reg),
+  .color1_i(color1_reg),
+  .bpp_i(bpp),
+  .cbpp_i(cbpp),
+  .coeff1_i(coeff1),
+  .coeff2_i(coeff2),
+  .rmw_i(rmw),
+  .floodfill_read_request_o(floodfill_read_request),
+  .floodfill_sel_o(floodfill_sel),
+  .floodfill_adr_o(floodfill_adr),
+  .floodfill_data_i(floodfill_data)
 );
 
 defparam rasterizer0.point_width = point_width;
@@ -834,7 +856,13 @@ gfx_wbm_readwrite_arbiter #(.MDW(MDW)) wbm_arbiter (
   .m3_addr_i (textblit_adr_o[31:0]),
   .m3_sel_i	(textblit_sel_o),
   .m3_dat_o	(textblit_dat_i),
-  .m3_ack_o	(textblit_ack_i)
+  .m3_ack_o	(textblit_ack_i),
+  // Floodfill
+  .m4_read_request_i(floodfill_read_request),
+  .m4_addr_i (floodfill_adr),
+  .m4_sel_i	(floodfill_sel),
+  .m4_dat_o	(floodfill_data),
+  .m4_ack_o	(floodfill_ack)
 );
 
 // Instansiate wishbone master interface (read only for textures)

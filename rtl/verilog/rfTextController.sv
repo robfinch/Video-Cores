@@ -126,17 +126,18 @@ module rfTextController(
 );
 parameter num = 4'd1;
 parameter COLS = 8'd64;
-parameter ROWS = 8'd32;
+parameter ROWS = 8'd36;
 parameter BUSWID = 32;
 parameter TEXT_CELL_COUNT = 32768;
 parameter SCREEN_FORMAT = 1;		// 32-bit character cells
+parameter XGA1024x768 = 1;
 
 parameter RAM_ADDR = 32'hFD000001;
 parameter CBM_ADDR = 32'hFD040001;
 parameter REG_ADDR = 32'hFD080001;
 parameter RAM_ADDR_MASK = 32'hFFFC0000;
 parameter CBM_ADDR_MASK = 32'hFFFF0000;
-parameter REG_ADDR_MASK = 32'hFFFF0000;
+parameter REG_ADDR_MASK = 32'hFFFFC000;
 
 parameter CFG_BUS = 8'd0;
 parameter CFG_DEVICE = 5'd1;
@@ -316,20 +317,40 @@ if (BUSWID==64)
 	casez({cs_config,cs_rom,cs_reg,cs_text})
 	4'b1???:	dat_o <= cfg_out;
 	4'b01??:	dat_o <= chdat_o;
-	4'b001?:	dat_o <= rego;
+	4'b001?:
+		casez(radr_i[13:0])
+		14'b00000000??????:	dat_o <= rego;
+		14'b11111000000???:	dat_o <= "DCB TEXT";
+		14'b11111000001???:	dat_o <= {32'h0,"VID "};
+		14'b11111100000???:	dat_o <= "TXET BCD";
+		14'b11111100001???:	dat_o <= {32'h0," DIV"};
+		default:	dat_o <= 32'd0;
+		endcase
 	4'b0001:	dat_o <= SCREEN_FORMAT==1 ? {2{tdat_o[31:0]}} : tdat_o;
-	default:	dat_o <= 'h0;
+	default:	dat_o <= 64'h0;
 	endcase
 else if (BUSWID==32)
 	casez({cs_config,cs_rom,cs_reg,cs_text})
 	4'b1???:	dat_o <= radr_i[2] ? cfg_out[63:32] : cfg_out[31:0];
 	4'b01??:	dat_o <= radr_i[2] ? chdat_o[63:32] : chdat_o[31:0];
-	4'b001?:	dat_o <= radr_i[2] ? rego[63:32] : rego[31:0];
+	4'b001?:	
+		casez(radr_i[13:0])
+		14'b00000000??????:	dat_o <= radr_i[2] ? rego[63:32] : rego[31:0];
+		14'b111110000000??:	dat_o <= "DCB ";
+		14'b111110000001??:	dat_o <= "TEXT";
+		14'b111110000010??:	dat_o <= "VID ";
+		14'b111110000011??:	dat_o <= {8'h00,"   "};
+		14'b111111000000??:	dat_o <= " BCD";
+		14'b111111000001??:	dat_o <= "TXET";
+		14'b111111000010??:	dat_o <= " DIV";
+		14'b111111000011??:	dat_o <= {8'h00,"   "};
+		default:	dat_o <= 32'd0;
+		endcase
 	4'b0001:	dat_o <= radr_i[2] ? (SCREEN_FORMAT==1 ? tdat_o[31:0] : tdat_o[63:32]) : tdat_o[31:0];
-	default:	dat_o <= 'd0;
+	default:	dat_o <= 32'd0;
 	endcase
 else
-	dat_o <= 'd0;
+	dat_o <= 32'd0;
 
 //always @(posedge clk_i)
 //	if (cs_text) begin
@@ -795,16 +816,32 @@ always_ff @(posedge clk_i)
 */
 		// 64x32
 		if (num==4'd1) begin
-      windowTop    <= 12'd4058;//12'd16;
-      windowLeft   <= 12'd3918;//12'd3956;//12'd86;
-      pixelWidth   <= 4'd0;		// 800 pixels
-      pixelHeight  <= 4'd0;		// 600 pixels
-      numCols      <= COLS;
-      numRows      <= ROWS;
-      maxRowScan   <= 6'd17;
-      maxScanpix   <= 6'd11;
-      rBlink       <= 3'b111;		// 01 = non display
-      charOutDelay <= 8'd5;
+			if (XGA1024x768) begin
+	      windowTop    <= 12'd4058;//12'd16;
+	      windowLeft   <= 12'd3838;//12'd3956;//12'd86;
+	      pixelWidth   <= 4'd0;		// 800 pixels
+	      pixelHeight  <= 4'd0;		// 600 pixels
+	      numCols      <= COLS;
+	      numRows      <= ROWS;
+	      maxRowScan   <= 6'd7;
+	      maxScanpix   <= 6'd7;
+	      rBlink       <= 3'b111;		// 01 = non display
+	      charOutDelay <= 8'd5;
+			end
+			else begin
+	      windowTop    <= 12'd4058;//12'd16;
+	      windowLeft   <= 12'd3918;//12'd3956;//12'd86;
+	      pixelWidth   <= 4'd0;		// 800 pixels
+	      pixelHeight  <= 4'd0;		// 600 pixels
+	      numCols      <= COLS;
+	      numRows      <= ROWS;
+	//      maxRowScan   <= 6'd17;
+	//      maxScanpix   <= 6'd11;
+	      maxRowScan   <= 6'd7;
+	      maxScanpix   <= 6'd7;
+	      rBlink       <= 3'b111;		// 01 = non display
+	      charOutDelay <= 8'd5;
+    	end
 		end
 		else if (num==4'd2) begin
       windowTop    <= 12'd4032;//12'd16;

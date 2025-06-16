@@ -64,6 +64,7 @@ module gfx_wbs(
   tex0_base_o, tex0_size_x_o, tex0_size_y_o,
   color_depth_o,
   rect_write_o, line_write_o, triangle_write_o, curve_write_o, interpolate_o,
+  floodfill_write_o,
   writer_sint_i, reader_sint_i,
 
   pipeline_ack_i,
@@ -96,12 +97,12 @@ module gfx_wbs(
 );
 
   // Adjust these parameters in gfx_top!
-  parameter REG_ADR_HIBIT = 7;
+  parameter REG_ADR_HIBIT = 8;
   parameter point_width = 16;
   parameter subpixel_width = 16;
   parameter fifo_depth = 11;
-  parameter GR_WIDTH = 32'd800;
-  parameter GR_HEIGHT = 32'd600;
+  parameter GR_WIDTH = 32'd1024;
+  parameter GR_HEIGHT = 32'd768;
   parameter MDW = 256;
 
   //
@@ -209,6 +210,7 @@ module gfx_wbs(
   output [15:0] font_id_o;
   output [15:0] char_code_o;
   output char_write_o;
+  output floodfill_write_o;
 
 output reg [5:0] bpp_o;
 output reg [5:0] cbpp_o;
@@ -222,7 +224,7 @@ output reg [15:0] color_comp_o;
   //
 
 	reg [31:0] dato;
-  wire [REG_ADR_HIBIT:0] REG_ADR  = {wbs_req.padr[REG_ADR_HIBIT : 2], 2'b00};
+  wire [REG_ADR_HIBIT-1:0] REG_ADR  = {wbs_req.padr[REG_ADR_HIBIT-1 : 2], 2'b00};
 
   // Declaration of local registers
   reg        [31:0] control_reg, status_reg, target_base_reg, tex0_base_reg;
@@ -260,7 +262,7 @@ output reg [15:0] color_comp_o;
   wire instruction_fifo_valid_out;
   reg fifo_read_ack;
   reg was_fifo_rd;
-  wire [REG_ADR_HIBIT:0] instruction_fifo_q_adr;
+  wire [REG_ADR_HIBIT-1:0] instruction_fifo_q_adr;
   wire [fifo_depth-1:0] instruction_fifo_count;
 
   // Wishbone access wires
@@ -281,6 +283,7 @@ output reg [15:0] color_comp_o;
   //
 
 	wire full, empty;
+	wire prog_full;
 	wire wr_ack;
 
   // wishbone access signals
@@ -300,7 +303,8 @@ output reg [15:0] color_comp_o;
   	wbs_resp.ack = (acc & wbs_req.we) ? wr_ack : acc & rdy3pe;
   	wbs_resp.rty = 1'b0;
   	wbs_resp.err = acc & ~acc32 ? wishbone_pkg::ERR : wishbone_pkg::OKAY;
-  	wbs_resp.dat = acc ? dato : 32'd0;
+  	wbs_resp.dat = acc ? (wbs_req.padr[REG_ADR_HIBIT] ? {dato[7:0],dato[15:8],dato[23:16],dato[31:24]}: dato) : 32'd0;
+  	wbs_resp.stall = prog_full;
 	end
 
   // generate interrupt request signal
@@ -319,11 +323,12 @@ output reg [15:0] color_comp_o;
     control_reg[GFX_CTRL_TRI]   <= 1'b0; // Reset triangle write
     control_reg[GFX_CTRL_CHAR]  <= 1'b0; // Reset char blit write
     control_reg[GFX_CTRL_POINT] <= 1'b0; // Reset point write
+    control_reg[GFX_CTRL_FLOODFILL] <= 1'b0;
     // Reset matrix transformation bits
     control_reg[GFX_CTRL_FORWARD_POINT]   <= 1'b0;
     control_reg[GFX_CTRL_TRANSFORM_POINT] <= 1'b0;
     if (rst_i) begin
-      control_reg             <= 32'h00000001;
+      control_reg             <= 32'h00000000;
       target_base_reg         <= 32'h00000000;
       target_size_x_reg       <= GR_WIDTH;
       target_size_y_reg       <= GR_HEIGHT;
@@ -372,7 +377,7 @@ output reg [15:0] color_comp_o;
       font_table_base_reg			<= 32'h0;
       font_id_reg             <= 32'h0;
       char_code_reg					  <= 32'h0;
-      color_comp_reg 					<= 32'h00001555;
+      color_comp_reg 					<= 32'h00008888;
     end
     // Read fifo to write to registers
     else if (was_fifo_rd & instruction_fifo_valid_out) begin
@@ -532,16 +537,17 @@ output reg [15:0] color_comp_o;
 	assign triangle_write_o = control_reg[GFX_CTRL_TRI];
 	assign curve_write_o = control_reg[GFX_CTRL_CURVE];
 	assign char_write_o = control_reg[GFX_CTRL_CHAR];
+	assign floodfill_write_o = control_reg[GFX_CTRL_FLOODFILL];
 	assign forward_point_o = control_reg[GFX_CTRL_FORWARD_POINT];
 	assign transform_point_o = control_reg[GFX_CTRL_TRANSFORM_POINT];
 	
-// Bits per pixel minus one.
+// Bits per pixel.
 always_ff @(posedge wbs_clk_i)
-	bpp_o <= pad_comp+red_comp+green_comp+blue_comp;
+	bpp_o <= {2'b0,pad_comp}+{2'b0,red_comp}+{2'b0,green_comp}+{2'b0,blue_comp};
 
-// Color bits per pixel minus one.
+// Color bits per pixel.
 always_ff @(posedge wbs_clk_i)
-	cbpp_o <= red_comp+green_comp+blue_comp;
+	cbpp_o <= {2'b0,red_comp}+{2'b0,green_comp}+{2'b0,blue_comp};
 
 // Bytes per pixel.
 //always_ff @(posedge clk)
@@ -556,6 +562,7 @@ always_ff @(posedge wbs_clk_i)
 // This coefficient is the number of bits used by all pixels in the strip. 
 // Used to determine pixel placement in the strip.
 reg [9:0] coeff2a [0:32];
+reg [9:0] pps [0:32];
 genvar g;
 
 generate begin : gCoeff2
@@ -564,6 +571,12 @@ always_ff @(posedge wbs_clk_i)
 	for (g = 1; g < 33; g = g + 1)
 always_ff @(posedge wbs_clk_i)
 	coeff2a[g] <= (MDW/g) * g;
+// Pixels per strip
+always_ff @(posedge wbs_clk_i)
+	pps[0] <= MDW;
+	for (g = 1; g < 33; g = g + 1)
+always_ff @(posedge wbs_clk_i)
+	pps[g] = MDW/g;
 end
 endgenerate
 
@@ -574,9 +587,8 @@ always_ff @(posedge wbs_clk_i)
 always_ff @(posedge wbs_clk_i)
 	rmw_o <= |bpp_o[2:0];
 
-// Pixels per strip
 always_ff @(posedge wbs_clk_i)
-	pps_o <= (coeff1_o * MDW) >> 5'd16;
+	pps_o <= pps[bpp_o];
 
 	// The following signals should just pulse for one controller clock cycle.
 	// This works assuming the controller clock is at least as fast as the slave bus clock.
@@ -652,6 +664,7 @@ always_ff @(posedge wbs_clk_i)
       GFX_FONT_ID				: dato <= {{font_id_reg}};
       GFX_CHAR_CODE			: dato <= {{char_code_reg}};
       GFX_COLOR_COMP		: dato <= color_comp_reg;
+      GFX_PPS						: dato <= {10'd0,bpp_o,6'd0,pps_o};
       default           : dato <= 32'd0;
       endcase
 
@@ -664,7 +677,8 @@ always_ff @(posedge wbs_clk_i)
       wait_state:
         // Signals that trigger pipeline operations 
         if(rect_write_o | line_write_o | triangle_write_o | char_write_o | point_write_o |
-           forward_point_o | transform_point_o)
+        	floodfill_write_o |
+					forward_point_o | transform_point_o)
           state <= busy_state;
 
       busy_state:
@@ -681,6 +695,7 @@ always_ff @(posedge wbs_clk_i)
   	~triangle_write_o &
   	~char_write_o &
   	~point_write_o &
+  	~floodfill_write_o &
   	~forward_point_o &
   	~transform_point_o
   	;
@@ -694,7 +709,7 @@ always_ff @(posedge wbs_clk_i)
 //	edge_det ued9 (.rst(rst_i), .clk(wbs_clk_i), .ce(1'b1), .i(reg_wacc && !full), .pe(fifo_wr_req), .ne(), .ee());
 	assign instruction_fifo_wreq = reg_wacc && !full && !rst_i && !wr_rst_busy && !rd_rst_busy && !wr_ack;
 
-	localparam FIFO_WID = 32 + REG_ADR_HIBIT + 1;
+	localparam FIFO_WID = 32 + REG_ADR_HIBIT;
 
 // +---------------------------------------------------------------------------------------------------------------------+
 // | USE_ADV_FEATURES     | String             | Default value = 0707.                                                   |
@@ -734,7 +749,7 @@ always_ff @(posedge wbs_clk_i)
       .READ_MODE("std"),             // String
       .RELATED_CLOCKS(0),            // DECIMAL
       .SIM_ASSERT_CHK(0),            // DECIMAL; 0=disable simulation messages, 1=enable simulation messages
-      .USE_ADV_FEATURES("1014"),     // String
+      .USE_ADV_FEATURES("1016"),     // String
       .WAKEUP_TIME(0),               // DECIMAL
       .WRITE_DATA_WIDTH(FIFO_WID),   // DECIMAL
       .WR_DATA_COUNT_WIDTH(11)       // DECIMAL
@@ -749,7 +764,7 @@ always_ff @(posedge wbs_clk_i)
       .full(full),
       .overflow(),
       .prog_empty(),
-      .prog_full(),
+      .prog_full(prog_full),
       .rd_data_count(),
       .rd_rst_busy(rd_rst_busy),
       .sbiterr(),
@@ -757,7 +772,9 @@ always_ff @(posedge wbs_clk_i)
       .wr_ack(wr_ack),
       .wr_data_count(instruction_fifo_count),
       .wr_rst_busy(wr_rst_busy),
-      .din({REG_ADR, wbs_req.dat}),
+      .din({REG_ADR,
+      	wbs_req.padr[REG_ADR_HIBIT] ? {wbs_req.dat[7:0],wbs_req.dat[15:8],wbs_req.dat[23:16],wbs_req.dat[31:24]} :
+      	wbs_req.dat}),
       .injectdbiterr(1'b0),
       .injectsbiterr(1'b0),
       .rd_clk(clk_i),

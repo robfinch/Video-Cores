@@ -34,6 +34,7 @@ When all pixels have been generated and acked, the rasterizer acks the operation
 module gfx_rasterizer (clk_i, rst_i, pps_i,
   clip_ack_i, interp_ack_i, ack_o, point_write_i,
   rect_write_i, line_write_i, triangle_write_i, interpolate_i, texture_enable_i,
+  floodfill_i,
   //source pixel 0 and pixel 1
   src_pixel0_x_i, src_pixel0_y_i, src_pixel1_x_i, src_pixel1_y_i,
   //destination point 0, 1, 2
@@ -43,6 +44,7 @@ module gfx_rasterizer (clk_i, rst_i, pps_i,
   clipping_enable_i,
   //clip pixel 0 and pixel 1
   clip_pixel0_x_i, clip_pixel0_y_i, clip_pixel1_x_i, clip_pixel1_y_i,
+  target_base_i,
   target_size_x_i, target_size_y_i, 
   target_x0_i, target_y0_i, target_x1_i, target_y1_i,
   x_counter_o, y_counter_o, u_o,v_o,
@@ -50,12 +52,19 @@ module gfx_rasterizer (clk_i, rst_i, pps_i,
   triangle_edge0_o, triangle_edge1_o, triangle_area_o,
   strip_o,
   // character
-  char_x_i, char_y_i, char_write_i, char_ack_i
+  char_x_i, char_y_i, char_write_i, char_ack_i,
+  // flood fill
+  color0_i, color1_i,
+  bpp_i, cbpp_i, coeff1_i, coeff2_i, rmw_i,
+  floodfill_write_i,
+  floodfill_read_request_o, floodfill_adr_o, floodfill_sel_o, floodfill_data_i,
+  floodfill_ack_i
 );
 
 parameter point_width    = 16;
 parameter subpixel_width = 16;
 parameter delay_width    = 7;
+parameter MDW = 256;
 
 input clk_i;
 input rst_i;
@@ -70,6 +79,7 @@ input point_write_i;
 input rect_write_i;
 input line_write_i;
 input triangle_write_i;
+input floodfill_i;
 input interpolate_i;
 input texture_enable_i;
 
@@ -99,6 +109,7 @@ input [point_width-1:0] clip_pixel0_y_i;
 input [point_width-1:0] clip_pixel1_x_i;
 input [point_width-1:0] clip_pixel1_y_i;
 
+input [31:0] target_base_i;
 input [point_width-1:0] target_size_x_i;
 input [point_width-1:0] target_size_y_i;
 input [point_width-1:0] target_x0_i;
@@ -126,6 +137,20 @@ input [point_width-1:0] char_y_i;
 input char_write_i;
 input char_ack_i;
 
+input [31:0] color0_i;
+input [31:0] color1_i;
+input [5:0] bpp_i;
+input [5:0] cbpp_i;
+input [19:0] coeff1_i;
+input [9:0] coeff2_i;
+input rmw_i;
+input floodfill_write_i;
+output floodfill_read_request_o;
+output [MDW/8-1:0] floodfill_sel_o;
+output [31:0] floodfill_adr_o;
+input [MDW-1:0] floodfill_data_i;
+input floodfill_ack_i;
+
 wire ack_i = interpolate_i ? interp_ack_i : clip_ack_i;
 
 // Variables used in rect drawing
@@ -138,7 +163,7 @@ reg [point_width-1:0] rect_p1_y;
 wire raster_line_busy; // busy, drawing a line.
 wire x_major; // is true if x is the major axis
 wire valid_out;
-reg  draw_line; // trigger the line drawing.
+reg draw_line;	// trigger the line drawing.
 
 wire [point_width-1:0] major_out; // the major axis
 wire [point_width-1:0] minor_out; // the minor axis
@@ -150,6 +175,13 @@ wire [point_width-1:0] triangle_x_o;
 wire [point_width-1:0] triangle_y_o;
 wire triangle_write_o;
 
+// Flood fill
+reg floodfill;
+wire floodfill_ack;
+wire floodfill_write_o;
+wire [point_width-1:0] floodfill_x_o;
+wire [point_width-1:0] floodfill_y_o;
+
 // State machine
 typedef enum logic [7:0] 
 {
@@ -159,7 +191,8 @@ typedef enum logic [7:0]
 	line_state = 8'd8,
 	triangle_state = 8'd16,
 	triangle_final_state = 8'd32,
-	char_state = 8'd64
+	char_state = 8'd64,
+	floodfill_state = 8'd128
 } rasterizer_state_e;
 rasterizer_state_e raster_state;
 
@@ -262,6 +295,8 @@ else
       raster_state <= line_state; // if request for drawing a line, go to line drawing raster_state
     char_write_i:
     	raster_state <= char_state;
+    floodfill_write_i:
+    	raster_state <= floodfill_state;
     default: 
     	raster_state <= wait_state;
   	endcase
@@ -304,6 +339,12 @@ else
   	else
 			raster_state <= char_state;
 
+	floodfill_state:
+		if (floodfill_ack)
+			raster_state <= wait_state;
+		else
+			raster_state <= floodfill_state;
+		
 	default:
 		raster_state <= wait_state;
   endcase
@@ -386,6 +427,10 @@ begin
         draw_line <= 1'b1;
         ack_o <= 1'b0;
       end
+      else if (floodfill_write_i) begin
+      	floodfill <= 1'b1;
+      	ack_o <= 1'b0;
+      end
       else
         ack_o <= 1'b0;
 
@@ -459,9 +504,9 @@ begin
         clip_write_o <= 1'b0;
       end
 
-      triangle_final_state:
-        if(triangle_finished)
-          ack_o <= 1'b1;
+    triangle_final_state:
+      if(triangle_finished)
+        ack_o <= 1'b1;
 
 		char_state:
 			if (char_ack_i)
@@ -470,6 +515,23 @@ begin
 				x_counter_o <= char_x_i;
 				y_counter_o <= char_y_i;
 				clip_write_o <= char_write_i;
+			end
+	
+		floodfill_state:
+			if (floodfill_ack) begin
+        interp_write_o <= 1'b0;
+        clip_write_o <= 1'b0;
+        ack_o <= 1'b1;
+			end
+			else if (~interpolate_i) begin
+				x_counter_o <= floodfill_x_o;
+				y_counter_o <= floodfill_y_o;
+				clip_write_o <= floodfill_write_o;
+			end
+			else if (interpolate_i & interp_ready) begin
+				x_counter_o <= floodfill_x_o;
+				y_counter_o <= floodfill_y_o;
+				interp_write_o <= floodfill_write_o;
 			end
 
 		default:	;
@@ -525,5 +587,38 @@ gfx_triangle triangle(
 defparam triangle.point_width    = point_width;
 defparam triangle.subpixel_width = subpixel_width;
 
-endmodule
+gfx_floodfill #(.MDW(MDW)) ufloodfill1 (
+	.rst_i(rst_i),
+	.clk_i(clk_i),
+	.floodfill_i(floodfill),
+	.floodfill_ack_o(floodfill_ack),
+	.fill_color(color0_i),
+	.border_color(color1_i),
+	.floodfill_write_o(floodfill_write_o),
+	.target_base_i(target_base_i),
+	.target_size_x_i(target_size_x_i),
+	.target_x0_i(target_x0_i),
+	.target_y0_i(target_y0_i),
+	.target_x1_i(target_x1_i),
+	.target_y1_i(target_y1_i),
+	.clip_enable_i(clipping_enable_i),
+	.clip_x0_i(clip_pixel0_x_i),
+	.clip_y0_i(clip_pixel0_y_i),
+	.clip_x1_i(clip_pixel1_x_i),
+	.clip_y1_i(clip_pixel1_y_i),
+	.dest_pixel0_x_i(dest_pixel0_x_i),
+	.dest_pixel0_y_i(dest_pixel0_y_i),
+	.floodfill_x_o(floodfill_x_o),
+	.floodfill_y_o(floodfill_y_o),
+	.bpp_i(bpp_i),
+	.cbpp_i(cbpp_i),
+	.coeff1_i(coeff1_i),
+	.coeff2_i(coeff2_i),
+	.rmw_i(rmw_i),
+	.floodfill_adr_o(floodfill_adr_o),
+	.floodfill_sel_o(floodfill_sel_o),
+	.floodfill_data_i(floodfill_data_i),
+	.floodfill_ack_i(floodfill_ack_i)
+);
 
+endmodule

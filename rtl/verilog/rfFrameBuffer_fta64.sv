@@ -39,17 +39,19 @@
 //
 //  The default base screen address is:
 //		$0200000 - the third meg of RAM
+//	Address bit 15 selects little-endian (0) or big-endian(1) access
 //
-// 800x600 40.000MHz clock
+// 800x600 40.000 MHz clock
 // 1366x768 85.86 MHz clock
 // ============================================================================
 
 //`define USE_CLOCK_GATE	1'b1
 //`define VGA640x480	1'b1
-`define WXGA800x600		1'b1
+//`define SVGA800x600		1'b1
+`define XGA1024x768		1'b1
 //`define WXGA1920x1080		1'b1
 //`define WXGA1280x720		1'b1
-//`define WXGA1366x768	1'b1
+//`define WXGA1368x768	1'b1
 
 import const_pkg::*;
 `define ABITS	31:0
@@ -151,6 +153,9 @@ parameter REG_IRQ_MSGADR = 11'd16;
 parameter REG_IRQ_MSGDAT = 11'd17;
 parameter REG_TRANS_COLOR = 11'd18;
 parameter REG_COLOR_COMPONENT = 11'd19;
+parameter REG_PRGB = 11'd20;
+parameter REG_COLOR = 11'd21;
+parameter REG_PPS = 11'd22;
 
 parameter OPBLACK = 4'd0;
 parameter OPCOPY = 4'd1;
@@ -213,7 +218,7 @@ parameter pvTotal = 525;		//  628 total scan lines
 // Sync Generator defaults: 800x600 60Hz
 // Driven by a 40MHz clock
 
-`ifdef WXGA800x600
+`ifdef SVGA800x600
 parameter phSyncOn  = 40;		//   40 front porch
 parameter phSyncOff = 168;		//  128 sync
 parameter phBlankOff = 252;	//256	//   88 back porch
@@ -232,6 +237,49 @@ parameter pvBorderOn = 628;		//  600 display
 //parameter pvBorderOn = 584;		//  512 display
 parameter pvBlankOn = 628;  	//   44 border	0
 parameter pvTotal = 628;		//  628 total scan lines
+`endif
+
+// 50 MHz clock
+`ifdef FT1000x600
+parameter phSyncOn  = 50;		//   40 front porch
+parameter phSyncOff = 210;		//  160 sync
+parameter phBlankOff = 315;		//   105 back porch
+parameter phBorderOff = 318;	//   3 border
+parameter phBorderOn = 1318;		//  1000 display
+parameter phBlankOn = 1320;		//   2 border
+parameter phTotal = 1320;		// 1056 total clocks
+parameter pvSyncOn  = 1;		//    1 front porch
+parameter pvSyncOff = 5;		//    4 vertical sync
+parameter pvBlankOff = 28;		//   23 back porch (28)
+parameter pvBorderOff = 28;		//   44 border	0
+//parameter pvBorderOff = 72;		//   44 border	0
+parameter pvBorderOn = 628;		//  600 display
+//parameter pvBorderOn = 584;		//  512 display
+parameter pvBlankOn = 628;  	//   44 border	0
+parameter pvTotal = 628;		//  628 total scan lines
+`endif
+
+// 65 MHZ clock
+// +,- h,v sync
+`ifdef XGA1024x768
+parameter phSyncOn  = 24;		//   24 front porch
+parameter phSyncOff = 160;		//  136 sync
+parameter phBlankOff = 320;	//160	back porch
+//parameter phBorderOff = 336;	//   80 border
+parameter phBorderOff = 320;	//   80 border
+//parameter phBorderOn = 976;		//  640 display
+parameter phBorderOn = 1344;		//  800 display
+parameter phBlankOn = 1344;		//   4 border
+parameter phTotal = 1344;		// 1056 total clocks
+parameter pvSyncOn  = 3;		//    3 front porch
+parameter pvSyncOff = 9;		//    6 vertical sync
+parameter pvBlankOff = 38;		//   29 back porch (28)
+parameter pvBorderOff = 38;		//   0 border	0
+//parameter pvBorderOff = 72;		//   0 border	0
+parameter pvBorderOn = 806;		//  768 display
+//parameter pvBorderOn = 584;		//  512 display
+parameter pvBlankOn = 806;  	//   44 border	0
+parameter pvTotal = 806;		//  768 total scan lines
 `endif
 
 // 148.5 MHz clock
@@ -294,26 +342,26 @@ parameter pvBlankOn = 750;  	//   44 border	0
 parameter pvTotal = 750;			//  628 total scan lines
 `endif
 
-/*
+// -hsync, + vsync
 `ifdef WXGA1366x768
 // Driven by an 85.86MHz clock
 parameter phSyncOn  = 72;		//   72 front porch
 parameter phSyncOff = 216;		//  144 sync
-parameter phBlankOff = 434;		//  212 back porch
-parameter phBorderOff = 434;	//    0 border
-parameter phBorderOn = 1800;	// 1366 display
+parameter phBlankOff = 432;		//  216 back porch
+parameter phBorderOff = 432;	//    0 border
+parameter phBorderOn = 1800;	// 1368 display
 parameter phBlankOn = 1800;		//    0 border
 parameter phTotal = 1800;		// 1800 total clocks
 // 47.7 = 60 * 795 kHz
-parameter pvSyncOn  = 2;		//    1 front porch
-parameter pvSyncOff = 5;		//    3 vertical sync
+parameter pvSyncOn  = 1;		//    1 front porch
+parameter pvSyncOff = 4;		//    3 vertical sync
 parameter pvBlankOff = 27;		//   23 back porch
 parameter pvBorderOff = 27;		//    2 border	0
 parameter pvBorderOn = 795;		//  768 display
 parameter pvBlankOn = 795;  	//    1 border	0
 parameter pvTotal = 795;		//  795 total scan lines
 `endif
-*/
+
 // SYSCON
 input rst_i;				// system reset
 output reg [31:0] irq_o;
@@ -426,6 +474,8 @@ fta_cmd_response32_t cfg_resp;
 `endif
 reg [5:0] max_nburst;
 reg [7:0] burst_len;
+reg big_endian;
+wire be1;
 
 always_ff @(posedge s_clk_i)
 	reqd <= s_req_i;
@@ -436,14 +486,21 @@ always_ff @(posedge s_clk_i)
 always_ff @(posedge s_clk_i)
 	adri <= s_req_i.adr;
 always_ff @(posedge s_clk_i)
-	dat <= (BUSWID==32) ? {2{s_req_i.dat}} : s_req_i.dat;
+	if (s_req_i.adr[15])
+		dat <= (BUSWID==32) ? {2{s_req_i.dat[7:0],s_req_i.dat[15:8],s_req_i.dat[23:16],s_req_i.dat[31:24]}} :
+			{s_req_i.dat[ 7: 0],s_req_i.dat[15: 8],s_req_i.dat[23:16],s_req_i.dat[31:24],
+			 s_req_i.dat[39:32],s_req_i.dat[47:40],s_req_i.dat[55:48],s_req_i.dat[63:56]};
+	else
+		dat <= (BUSWID==32) ? {2{s_req_i.dat}} : s_req_i.dat;
 
 always_ff @(posedge s_clk_i)
 	cs_config <= cs_config_i;
 always_comb
-	cs_map = cs_fbc && adri[15:14]==3'd1;
+	cs_map = cs_fbc && adri[14]==1'd1;
 always_comb
-	cs_reg = cs_fbc && adri[15:14]==3'd0;
+	cs_reg = cs_fbc && adri[14]==1'd0;
+always_comb
+	big_endian = adri[15];
 
 always_ff @(posedge s_clk_i)
 if (rst_i)
@@ -460,7 +517,14 @@ else begin
 		s_resp_o.rty <= 1'b0;
 		s_resp_o.pri <= 4'd7;
 		s_resp_o.adr <= s_resp1.adr;
-		s_resp_o.dat <= (BUSWID==32) ? (s_resp1.adr[2] ? s_dat_o[63:32] : s_dat_o[31:0]) : s_dat_o;
+		if (be1)
+			s_resp_o.dat <= (BUSWID==32) ? (s_resp1.adr[2] ? 
+				 {s_dat_o[39:32],s_dat_o[47:40],s_dat_o[55:48],s_dat_o[63:56]} :
+				 {s_dat_o[ 7: 0],s_dat_o[15: 8],s_dat_o[23:16],s_dat_o[31:24]}) :
+				 {s_dat_o[ 7: 0],s_dat_o[15: 8],s_dat_o[23:16],s_dat_o[31:24],
+				  s_dat_o[39:32],s_dat_o[47:40],s_dat_o[55:48],s_dat_o[63:56]};
+		else
+			s_resp_o.dat <= (BUSWID==32) ? (s_resp1.adr[2] ? s_dat_o[63:32] : s_dat_o[31:0]) : s_dat_o;
 	end
 end
 
@@ -468,10 +532,11 @@ vtdl #(.WID(1), .DEP(16)) urdyd1 (.clk(s_clk_i), .ce(1'b1), .a(4'd1), .d(cs_map)
 vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(s_clk_i), .ce(1'b1), .a(4'd0), .d((cs_map|cs_edge|cs_config) & ~we), .q(s_resp1.ack));
 vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(s_clk_i), .ce(1'b1), .a(4'd1), .d(s_req_i.tid), .q(s_resp1.tid));
 vtdl #(.WID(32), .DEP(16)) urdyd5 (.clk(s_clk_i), .ce(1'b1), .a(4'd1), .d(s_req_i.adr), .q(s_resp1.adr));
+vtdl #(.WID(1), .DEP(16)) urdyd6 (.clk(s_clk_i), .ce(1'b1), .a(4'd0), .d(big_endian), .q(be1));
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-integer n, n1;
+integer n, n1, nr, ng, nb, np;
 reg [31:0] fbc_addr;
 reg [11:0] rastcmp;
 reg [`ABITS] bm_base_addr1,bm_base_addr2;
@@ -518,7 +583,15 @@ reg [11:0] hBorderOn = phBorderOn, hBorderOff = phBorderOff;
 reg [11:0] vBorderOn = pvBorderOn, vBorderOff = pvBorderOff;
 reg [31:0] color_comp;
 reg [3:0] red_comp,green_comp,blue_comp,pad_comp;
+reg [31:0] colorc;
+reg [31:0] bluegreen;
+reg [31:0] redpad;
+reg [9:0] red,green,blue,pad;
+reg [9:0] red_mask,green_mask,blue_mask,pad_mask;
 reg [5:0] comp_total;
+reg [9:0] pps;
+reg [5:0] bpp;
+reg [5:0] cbpp;
 reg sgLock;
 wire pe_hsync, pe_hsync2;
 wire pe_vsync;
@@ -875,30 +948,37 @@ if (rst_i) begin
 	pals <= 5'h0;
 	hres <= 3'd1;
 	vres <= 3'd1;
-`ifdef WXGA800x600	
+`ifdef SVGA800x600	
 	windowWidth <= 12'd800;
 	windowHeight <= 12'd600;
 	bmpWidth <= 16'd800;
 	bmpHeight <= 16'd600;
+	burst_len <= 8'd99;		// 1 bursts of 100 = 800 pixels
+`endif
+`ifdef XGA1024x768	
+	windowWidth <= 12'd1024;
+	windowHeight <= 12'd768;
+	bmpWidth <= 16'd1024;
+	bmpHeight <= 16'd768;
+	burst_len <= 8'd127;		// 1 bursts of 128 = 1024 pixels
 `endif
 `ifdef WXGA1366x768
 	windowWidth <= 12'd1366;
 	windowHeight <= 12'd768;
 	bmpWidth <= 16'd1360;
 	bmpHeight <= 16'd768;
+	burst_len <= 8'd171;		// 1 bursts of 171 1368 pixels
 `endif
 `ifdef WXGA1920x1080
 	windowWidth <= 12'd1920;
 	windowHeight <= 12'd1080;
 	bmpWidth <= 16'd1920;
 	bmpHeight <= 16'd1080;
+	burst_len <= 8'd239;		// 1 bursts of 239 1920 pixels
 `endif
 	onoff <= 1'b1;
-	red_comp = 4'd8;
-	green_comp = 4'd8;
-	blue_comp = 4'd8;
-	pad_comp = 4'd8;
 	greyscale <= 1'b0;
+	color_comp <= 32'h08888;
 	bm_base_addr1 <= BM_BASE_ADDR1;
 	bm_base_addr2 <= BM_BASE_ADDR2;
 	hrefdelay <= 16'hFF39;//16'd3964;//16'hFF99;//12'd103;
@@ -923,7 +1003,6 @@ if (rst_i) begin
 	hBorderOn <= phBorderOn; hBorderOff <= phBorderOff;
 	vBorderOn <= pvBorderOn; vBorderOff <= pvBorderOff;
 	max_nburst <= 6'd0;		// 2 bursts of 25 = 50 accesses for 800 pixels
-	burst_len <= 8'd99;		// 1 bursts of 120 = 120 access for 1920 pixels
 end
 else begin
 	rstcmd1 <= rstcmd;
@@ -1083,6 +1162,9 @@ else begin
 			REG_COLOR_COMPONENT:	s_dat_o <= {32'd0,color_comp};
 		  REG_IRQ_MSGADR:	s_dat_o <= irq_msgadr;
 		  REG_IRQ_MSGDAT:	s_dat_o <= irq_msgdat;
+		  REG_COLOR:	s_dat_o <= {32'd0,colorc};
+		  REG_PRGB:		s_dat_o <= {6'd0,pad,6'd0,red,6'd0,green,6'd0,blue};
+		  REG_PPS:		s_dat_o <= {10'd0,bpp,6'd0,pps};
 		  11'b1?_????_????_?:	s_dat_o <= pal_wo;
 		  default:        s_dat_o <= 'd0;
 		  endcase
@@ -1104,12 +1186,25 @@ else begin
 		  {REG_WINDOW,1'b0}:		s_dat_o <= {2{4'h0,windowHeight,4'h0,windowWidth}};
 		  {REG_WINDOW,1'b1}:		s_dat_o <= {2{windowTop,windowLeft}};
 			{REG_COLOR_COMPONENT,1'b0}:	s_dat_o <= {2{color_comp}};
+			{REG_COLOR,1'b0}:			s_dat_o <= {2{colorc}};
+			{REG_PRGB,1'b0}:			s_dat_o <= {2{6'd0,green,6'd0,blue}};
+			{REG_PRGB,1'b1}:			s_dat_o <= {2{6'd0,pad,6'd0,red}};
+		  {REG_PPS,1'b0}:				s_dat_o <= {2{10'd0,bpp,6'd0,pps}};
 		  {REG_IRQ_MSGADR,1'b0}:	s_dat_o <= {2{irq_msgadr[31:0]}};
 		  {REG_IRQ_MSGADR,1'b1}:	s_dat_o <= {2{irq_msgadr[63:32]}};
 		  {REG_IRQ_MSGDAT,1'b0}:	s_dat_o <= {2{irq_msgdat[31:0]}};
 		  {REG_IRQ_MSGDAT,1'b1}:	s_dat_o <= {2{irq_msgdat[63:32]}};
-		  12'b1?_????_????_?0:	s_dat_o <= {2{pal_wo[31:0]}};
-		  12'b1?_????_????_?1:	s_dat_o <= {2{pal_wo[63:32]}};
+		  12'b10_????_????_?0:	s_dat_o <= {2{pal_wo[31:0]}};
+		  12'b10_????_????_?1:	s_dat_o <= {2{pal_wo[63:32]}};
+			12'b111110000000:	s_dat_o <= "DCB ";
+			12'b111110000001:	s_dat_o <= "FRAM";
+			12'b111110000010:	s_dat_o <= "EBUF";
+			12'b111110000011:	s_dat_o <= {8'h00,"   "};
+			12'b111111000000:	s_dat_o <= " BCD";
+			12'b111111000001:	s_dat_o <= "MARF";
+			12'b111111000010:	s_dat_o <= "FUBE";
+			12'b111111000011:	s_dat_o <= {"   ",8'h00};
+			12'b11111???????:	s_dat_o <= 32'd0;	// dcb RAM
 		  default:        s_dat_o <= 'd0;
 		  endcase
 	end
@@ -1125,12 +1220,13 @@ else begin
 		map_out_latch <= map_out;
 end
 
-reg [5:0] bpp;
-reg [5:0] cbpp;
 reg [2:0] bytpp;
 reg [19:0] coeff1;
 reg [9:0] coeff2;
-reg [9:0] pps;
+reg [3:0] blue_shift;
+reg [3:0] green_shift;
+reg [4:0] red_shift;
+reg [4:0] pad_shift;
 
 always_ff @(posedge s_clk_i)
 	pad_comp <= color_comp[15:12];
@@ -1143,11 +1239,11 @@ always_ff @(posedge s_clk_i)
 
 // Bits per pixel minus one.
 always_ff @(posedge s_clk_i)
-	bpp <= pad_comp+red_comp+green_comp+blue_comp;
+	bpp <= {2'b0,pad_comp}+{2'b0,red_comp}+{2'b0,green_comp}+{2'b0,blue_comp};
 
 // Color bits per pixel minus one.
 always_ff @(posedge s_clk_i)
-	cbpp <= red_comp+green_comp+blue_comp;
+	cbpp <= {2'b0,red_comp}+{2'b0,green_comp}+{2'b0,blue_comp};
 
 // Bytes per pixel.
 always_ff @(posedge s_clk_i)
@@ -1162,11 +1258,15 @@ always_ff @(posedge s_clk_i)
 // This coefficient is the number of bits used by all pixels in the strip. 
 // Used to determine pixel placement in the strip.
 wire [9:0] coeff2a [0:32];
+wire [9:0] pps1 [0:32];
 
 generate begin : gCoeff2
 	assign coeff2a[0] = MDW;
-	for (g = 1; g < 33; g = g + 1)
+	assign pps1[0] = MDW;
+	for (g = 1; g < 33; g = g + 1) begin
 		assign coeff2a[g] = MDW - (MDW % g);
+		assign pps1[g] = MDW/g;
+	end
 end
 endgenerate
 
@@ -1175,7 +1275,7 @@ always_ff @(posedge s_clk_i)
 
 // Pixels per strip
 always_ff @(posedge s_clk_i)
-	pps <= ({16'd0,coeff1} * MDW) >> 5'd16;
+	pps <= pps1[bpp];
 
 //`ifdef USE_CLOCK_GATE
 //BUFHCE ucb1
@@ -1188,6 +1288,52 @@ always_ff @(posedge s_clk_i)
 assign vclk = dot_clk_i;
 //`endif
 
+always_ff @(posedge s_clk_i)
+	for (nb = 0; nb < 10; nb = nb + 1)
+		blue_mask[nb] <= nb < blue_comp;
+always_ff @(posedge s_clk_i)
+	for (ng = 0; ng < 10; ng = ng + 1)
+		green_mask[nb] <= ng < green_comp;
+always_ff @(posedge s_clk_i)
+	for (nr = 0; nr < 10; nr = nr + 1)
+		red_mask[nr] <= nr < red_comp;
+always_ff @(posedge s_clk_i)
+	for (np = 0; np < 10; np = np + 1)
+		pad_mask[np] <= np < pad_comp;
+always_ff @(posedge s_clk_i)
+if (cs_edge && we && adri[13:3]==REG_COLOR)
+	blue <= dat & blue_mask;
+else if (cs_edge && we && adri[13:3]==REG_PRGB)
+	if (&sel[1:0])
+		blue <= dat;
+always_ff @(posedge s_clk_i)
+if (cs_edge && we && adri[13:3]==REG_COLOR)
+	green <= (dat >> blue_comp) & green_mask;
+else if (cs_edge && we && adri[13:3]==REG_PRGB)
+	if (&sel[3:2])
+		green <= dat[31:16];
+always_ff @(posedge s_clk_i)
+if (cs_edge && we && adri[13:3]==REG_COLOR)
+	red <= (dat >> (blue_comp + green_comp)) & red_mask;
+else if (cs_edge && we && adri[13:3]==REG_PRGB)
+	if (&sel[5:4])
+		red <= dat[47:32];
+always_ff @(posedge s_clk_i)
+if (cs_edge && we && adri[13:3]==REG_COLOR)
+	pad <= (dat >> (blue_comp + green_comp + red_comp)) & pad_mask;
+else if (cs_edge && we && adri[13:3]==REG_PRGB)
+	if (&sel[7:6])
+		pad <= dat[63:47];
+always_ff @(posedge s_clk_i)
+if (cs_edge && ~we && adri[13:3]==REG_COLOR) begin
+	colorc <= (pad << (blue_comp + green_comp + red_comp)) |
+		(red << (blue_comp + green_comp)) |
+		(green << blue_comp) |
+		blue
+		;
+end
+else if (cs_edge && we && adri[13:3]==REG_COLOR)
+	colorc <= dat;
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // Horizontal and Vertical timing reference counters
