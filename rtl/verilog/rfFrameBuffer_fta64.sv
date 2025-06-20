@@ -47,8 +47,8 @@
 
 //`define USE_CLOCK_GATE	1'b1
 //`define VGA640x480	1'b1
-//`define SVGA800x600		1'b1
-`define XGA1024x768		1'b1
+`define SVGA800x600		1'b1
+//`define XGA1024x768		1'b1
 //`define WXGA1920x1080		1'b1
 //`define WXGA1280x720		1'b1
 //`define WXGA1368x768	1'b1
@@ -954,6 +954,8 @@ if (rst_i) begin
 	bmpWidth <= 16'd800;
 	bmpHeight <= 16'd600;
 	burst_len <= 8'd99;		// 1 bursts of 100 = 800 pixels
+	hrefdelay <= 16'hFF39;//16'd3964;//16'hFF99;//12'd103;
+	vrefdelay <= 16'hFFEA;//16'hFFF3;12'd13;
 `endif
 `ifdef XGA1024x768	
 	windowWidth <= 12'd1024;
@@ -961,6 +963,8 @@ if (rst_i) begin
 	bmpWidth <= 16'd1024;
 	bmpHeight <= 16'd768;
 	burst_len <= 8'd127;		// 1 bursts of 128 = 1024 pixels
+	hrefdelay <= 16'hFEF9;//16'd3964;//16'hFF99;//12'd103;
+	vrefdelay <= 16'hFFE6;//16'hFFF3;12'd13;
 `endif
 `ifdef WXGA1366x768
 	windowWidth <= 12'd1366;
@@ -968,6 +972,8 @@ if (rst_i) begin
 	bmpWidth <= 16'd1360;
 	bmpHeight <= 16'd768;
 	burst_len <= 8'd171;		// 1 bursts of 171 1368 pixels
+	hrefdelay <= 16'hFF39;//16'd3964;//16'hFF99;//12'd103;
+	vrefdelay <= 16'hFFEA;//16'hFFF3;12'd13;
 `endif
 `ifdef WXGA1920x1080
 	windowWidth <= 12'd1920;
@@ -975,14 +981,14 @@ if (rst_i) begin
 	bmpWidth <= 16'd1920;
 	bmpHeight <= 16'd1080;
 	burst_len <= 8'd239;		// 1 bursts of 239 1920 pixels
+	hrefdelay <= 16'hFF39;//16'd3964;//16'hFF99;//12'd103;
+	vrefdelay <= 16'hFFEA;//16'hFFF3;12'd13;
 `endif
 	onoff <= 1'b1;
 	greyscale <= 1'b0;
 	color_comp <= 32'h08888;
 	bm_base_addr1 <= BM_BASE_ADDR1;
 	bm_base_addr2 <= BM_BASE_ADDR2;
-	hrefdelay <= 16'hFF39;//16'd3964;//16'hFF99;//12'd103;
-	vrefdelay <= 16'hFFEA;//16'hFFF3;12'd13;
 	windowLeft <= 16'h0;
 	windowTop <= 16'h0;
 	burst_interval <= BURST_INTERVAL;
@@ -1196,11 +1202,11 @@ else begin
 		  {REG_IRQ_MSGDAT,1'b1}:	s_dat_o <= {2{irq_msgdat[63:32]}};
 		  12'b10_????_????_?0:	s_dat_o <= {2{pal_wo[31:0]}};
 		  12'b10_????_????_?1:	s_dat_o <= {2{pal_wo[63:32]}};
-			12'b111110000000:	s_dat_o <= "DCB ";
+			12'b111110000000:	s_dat_o <= "DEV ";
 			12'b111110000001:	s_dat_o <= "FRAM";
 			12'b111110000010:	s_dat_o <= "EBUF";
 			12'b111110000011:	s_dat_o <= {8'h00,"   "};
-			12'b111111000000:	s_dat_o <= " BCD";
+			12'b111111000000:	s_dat_o <= " VED";
 			12'b111111000001:	s_dat_o <= "MARF";
 			12'b111111000010:	s_dat_o <= "FUBE";
 			12'b111111000011:	s_dat_o <= {"   ",8'h00};

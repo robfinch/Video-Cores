@@ -125,12 +125,13 @@ module rfTextController(
 	dot_clk_i, hsync_i, vsync_i, blank_i, border_i, zrgb_i, zrgb_o, xonoff_i
 );
 parameter num = 4'd1;
-parameter COLS = 8'd64;
-parameter ROWS = 8'd36;
+parameter COLS = 8'd60;
+parameter ROWS = 8'd32;
 parameter BUSWID = 32;
 parameter TEXT_CELL_COUNT = 32768;
 parameter SCREEN_FORMAT = 1;		// 32-bit character cells
-parameter XGA1024x768 = 1;
+parameter SVGA800x600 = 1;
+parameter XGA1024x768 = 0;
 
 parameter RAM_ADDR = 32'hFD000001;
 parameter CBM_ADDR = 32'hFD040001;
@@ -336,11 +337,11 @@ else if (BUSWID==32)
 	4'b001?:	
 		casez(radr_i[13:0])
 		14'b00000000??????:	dat_o <= radr_i[2] ? rego[63:32] : rego[31:0];
-		14'b111110000000??:	dat_o <= "DCB ";
+		14'b111110000000??:	dat_o <= "DEV ";
 		14'b111110000001??:	dat_o <= "TEXT";
 		14'b111110000010??:	dat_o <= "VID ";
 		14'b111110000011??:	dat_o <= {8'h00,"   "};
-		14'b111111000000??:	dat_o <= " BCD";
+		14'b111111000000??:	dat_o <= " VED";
 		14'b111111000001??:	dat_o <= "TXET";
 		14'b111111000010??:	dat_o <= " DIV";
 		14'b111111000011??:	dat_o <= {8'h00,"   "};

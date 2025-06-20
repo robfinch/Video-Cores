@@ -170,6 +170,7 @@ video_bus.out video_o,
 input test,
 input xonoff_i
 );
+parameter MDW = 256;
 
 reg m_soc_o;
 reg [31:0] zrgb_o;
@@ -417,10 +418,10 @@ reg rst_irq;
 
 assign m_bus_o.req.bte = LINEAR;
 assign m_bus_o.req.cti = CLASSIC;
-assign m_bus_o.req.blen = 6'd63;
+assign m_bus_o.req.blen = 8'd127;
 assign m_bus_o.req.stb = wbm_req.cyc;
 assign m_bus_o.req.sel = 32'hFFFFFFFF;
-assign m_bus_o.req.cid = 4'd5;
+assign m_bus_o.req.tid.coreno = 6'd5;
 assign m_spriteno_o = dmaOwner;
 
 reg [2:0] mstate;
@@ -467,8 +468,8 @@ else begin
 			mstate <= IRQ;
 		else if (|sprDt & ce)
 			mstate <= ACTIVE;
-	IRQ:
-		mstate <= ACK;
+//	IRQ:
+//		mstate <= ACK;
 	ACTIVE:
 		mstate <= ACK;
 	ACK:
@@ -543,6 +544,8 @@ else begin
 		end
 	ACTIVE:
 		begin
+			m_bus_o.req.tid.channel = dmaOwner[4:3];
+			m_bus_o.req.tid.trandid = dmaOwner[2:0]+3'd1;
 			m_bus_o.req.cyc <= 1'b1;
 			m_bus_o.req.sel <= 32'hFFFFFFFF;
 			m_bus_o.req.adr <= {sprSysAddr[dmaOwner],cob[7:1],5'h0};
