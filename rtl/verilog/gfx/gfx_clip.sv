@@ -123,9 +123,10 @@ typedef enum logic [3:0] {
 	delay2_state = 4'd2,
 	delay3_state = 4'd3,
 	z_read_state = 4'd4,
-	write_pixel_state = 4'd5
+	write_pixel_state = 4'd5,
+	z_value_state
 } clip_state_e;
-reg [5:0] clip_state;
+reg [6:0] clip_state;
 
 // Calculate address of target pixel
 // Addr[31:2] = Base + (Y*width + X) * ppb
@@ -218,10 +219,10 @@ wire fail_z_check   = z_value_at_target > cuvz_pixel_z_i;
 
 // Check if we should discard this pixel due to falling outside render target/clip rect
 wire outside_target = raster_write_i
-											 ? (raster_pixel_x_i < target_x0_i) | (raster_pixel_x_i >= target_x1_i)
-											 | (raster_pixel_y_i < target_y0_i) | (raster_pixel_y_i >= target_y1_i)
-											 : cuvz_write_i ? (cuvz_pixel_x_i < target_x0_i) | (cuvz_pixel_x_i >= target_x1_i)
-											 | (cuvz_pixel_y_i < target_y0_i) | (cuvz_pixel_y_i >= target_y1_i)
+											 ? (raster_pixel_x_i >= target_size_x_i)
+											 | (raster_pixel_y_i >= target_size_y_i)
+											 : cuvz_write_i ? (cuvz_pixel_x_i >= target_size_x_i)
+											 | (cuvz_pixel_y_i >= target_size_y_i)
 											 : 1'b0;
 wire outside_clip = raster_write_i
 											 ? (raster_pixel_x_i < clip_pixel0_x_i) | (raster_pixel_y_i < clip_pixel0_y_i) | (raster_pixel_x_i >= clip_pixel1_x_i) | (raster_pixel_y_i >= clip_pixel1_y_i)
@@ -229,8 +230,8 @@ wire outside_clip = raster_write_i
 											 : 1'b0;
 wire discard_pixel = outside_target | (clipping_enable_i & outside_clip);
 
-wire outside_target2 = raster_write_i ? (x_end < target_x0_i) | (x_end >= target_x1_i) : 1'b1;
-wire outside_clip2 = raster_write_i ? (x_end < clip_pixel0_x_i) | (x_end >= clip_pixel1_x_i) : 1'b1;
+wire outside_target2 = raster_write_i ? (x_end >= target_size_x_i) : 1'b1;
+wire outside_clip2 = raster_write_i ? (x_end >= clip_pixel1_x_i) : 1'b1;
 
 // Check if there is a write signal
 wire write_i = raster_write_i | cuvz_write_i;
@@ -272,14 +273,18 @@ begin
 
   // Do a depth check. If it fails, discard pixel, ack and go back to wait. If it succeeds, go to write clip_state
   clip_state[z_read_state]:
-    if(z_ack_i) begin
+    if(z_ack_i)
+      z_request_o <= 1'b0;
+    else
+      z_request_o <= ~wbm_busy_i | z_request_o;
+
+	clip_state[z_value_state]:
+		begin
       write1 <= ~fail_z_check;
       ack_o <= fail_z_check;
       z_request_o <= 1'b0;
     end
-    else
-      z_request_o <= ~wbm_busy_i | z_request_o;
-
+		
   // ack, then go back to wait clip_state when the next module is ready
   clip_state[write_pixel_state]:
     if(ack_i) begin
@@ -296,12 +301,12 @@ end
 always_ff @(posedge clk_i)
 // reset, init component
 if(rst_i) begin
-  clip_state <= 6'd0;
+  clip_state <= 7'd0;
   clip_state[wait_state] <= 1'b1;
 // Move in statemachine
 end
 else begin
-  clip_state <= 6'd0;
+  clip_state <= 7'd0;
   case (1'b1)
 
   clip_state[wait_state]:
@@ -323,15 +328,17 @@ else begin
     clip_state[z_read_state] <= 1'b1;
 
   clip_state[z_read_state]:
-    if(z_ack_i) begin
-    	if (fail_z_check)
-    		clip_state[wait_state] <= 1'b1;
-    	else
-      	clip_state[write_pixel_state] <= 1'b1;
-    end
+    if(z_ack_i)
+    	clip_state[z_value_state] <= 1'b1;
     else
 			clip_state[z_read_state] <= 1'b1;
 
+	clip_state[z_value_state]:
+  	if (fail_z_check)
+  		clip_state[wait_state] <= 1'b1;
+  	else
+    	clip_state[write_pixel_state] <= 1'b1;
+		
   clip_state[write_pixel_state]:
     if(ack_i)
       clip_state[wait_state] <= 1'b1;

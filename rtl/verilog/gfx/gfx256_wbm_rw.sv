@@ -209,8 +209,8 @@ else begin
 	  	wbm_req.stb <= 1'b1;
 	  	wbm_req.we <= write_request_i;
 	  	wbm_req.sel <= texture_sel_i;
-	  	wbm_req.vadr <= texture_addr_i;
-	  	wbm_req.padr <= texture_addr_i;
+	  	wbm_req.pv <= 1'b0;
+	  	wbm_req.adr <= texture_addr_i;
 	  	wbm_req.dat <= texture_dat_i;
 	  end
 	  else
@@ -225,8 +225,8 @@ else begin
 	  	wbm_req.stb <= 1'b1;
 	  	wbm_req.we <= write_request_i;
 	  	wbm_req.sel <= texture_sel_i;
-	  	wbm_req.vadr <= texture_addr_i;
-	  	wbm_req.padr <= texture_addr_i;
+	  	wbm_req.pv <= 1'b0;
+	  	wbm_req.adr <= texture_addr_i;
 	  	wbm_req.dat <= texture_dat_i;
 	  	if (wbm_resp.ack|wbm_resp.err) begin
 	   		texture_data_ack <= 1'b1;

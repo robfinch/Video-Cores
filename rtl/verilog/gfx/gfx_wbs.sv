@@ -1,3 +1,41 @@
+// ============================================================================
+//        __
+//   \\__/ o\    (C) 2025  Robert Finch, Waterloo
+//    \  __ /    All rights reserved.
+//     \/_//     robfinch<remove>@finitron.ca
+//       ||
+//
+//	gfx_wbs.sv
+//
+// BSD 3-Clause License
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
+//
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+//                                                                          
+// ============================================================================
+
+// Original Code (modified significantly)
 /*
 ORSoC GFX accelerator core
 Copyright 2012, ORSoC, Per Lenander, Anton Fosselius.
@@ -40,9 +78,9 @@ In the busy state all incoming wishbone writes are queued up in a 64 item fifo. 
 The module leaves the busy state and enters wait state when it receives an ack from the pipeline.
 */
 module gfx_wbs(
-  clk_i, rst_i, 
+  clk_i, rst_i, irq_chain_i, irq_chain_o,
   wbs_clk_i, wbs_req, wbs_resp,
-  cs_i, inta_o,
+  cs_i,
   //src pixels
   src_pixel0_x_o, src_pixel0_y_o, src_pixel1_x_o, src_pixel1_y_o,
   // dest pixels
@@ -96,14 +134,47 @@ module gfx_wbs(
   color_comp_o
 );
 
-  // Adjust these parameters in gfx_top!
-  parameter REG_ADR_HIBIT = 8;
-  parameter point_width = 16;
-  parameter subpixel_width = 16;
-  parameter fifo_depth = 11;
-  parameter GR_WIDTH = 32'd1024;
-  parameter GR_HEIGHT = 32'd768;
-  parameter MDW = 256;
+// Adjust these parameters in gfx_top!
+parameter REG_ADR_HIBIT = 8;
+parameter point_width = 16;
+parameter subpixel_width = 16;
+parameter fifo_depth = 11;
+parameter GR_WIDTH = 32'd800;
+parameter GR_HEIGHT = 32'd600;
+parameter MDW = 256;
+
+parameter pDevName = "UNKNOWN     ";
+
+parameter CFG_BUS = 6'd0;
+parameter CFG_DEVICE = 5'd3;
+parameter CFG_FUNC = 3'd0;
+parameter CFG_VENDOR_ID	=	16'h0;
+parameter CFG_DEVICE_ID	=	16'h0;
+parameter CFG_SUBSYSTEM_VENDOR_ID	= 16'h0;
+parameter CFG_SUBSYSTEM_ID = 16'h0;
+parameter CFG_BAR0 = 32'hFD210000;
+parameter CFG_BAR1 = 32'h1;
+parameter CFG_BAR2 = 32'h1;
+parameter CFG_BAR0_MASK = 32'hFFFFC000;
+parameter CFG_BAR1_MASK = 32'h0;
+parameter CFG_BAR2_MASK = 32'h0;
+parameter CFG_ROM_ADDR = 32'hFFFFFFF0;
+
+parameter CFG_REVISION_ID = 8'd0;
+parameter CFG_PROGIF = 8'd1;
+parameter CFG_SUBCLASS = 8'h80;					// 80 = Other
+parameter CFG_CLASS = 8'h03;						// 03 = display controller
+parameter CFG_CACHE_LINE_SIZE = 8'd8;		// 32-bit units
+parameter CFG_MIN_GRANT = 8'h00;
+parameter CFG_MAX_LATENCY = 8'h00;
+parameter CFG_IRQ_LINE = 8'd16;
+parameter CFG_IRQ_DEVICE = 8'd0;
+parameter CFG_IRQ_CORE = 6'd0;
+parameter CFG_IRQ_CHANNEL = 3'd0;
+parameter CFG_IRQ_PRIORITY = 4'd10;
+parameter CFG_IRQ_CAUSE = 8'd0;
+
+parameter CFG_ROM_FILENAME = "ddbb32_config.mem";
 
   //
   // inputs & outputs
@@ -115,8 +186,9 @@ module gfx_wbs(
   input wbs_clk_i;
   input wb_cmd_request32_t wbs_req;
   output wb_cmd_response32_t wbs_resp;
+  input [15:0] irq_chain_i;
+  output [15:0] irq_chain_o;
   input cs_i;
-  output reg inta_o;
   // source pixel
   output [point_width-1:0] src_pixel0_x_o;
   output [point_width-1:0] src_pixel0_y_o;
@@ -212,21 +284,26 @@ module gfx_wbs(
   output char_write_o;
   output floodfill_write_o;
 
-output reg [5:0] bpp_o;
-output reg [5:0] cbpp_o;
-output reg [19:0] coeff1_o;
-output reg [9:0] coeff2_o;
-output reg [9:0] pps_o;
-output reg rmw_o;
-output reg [15:0] color_comp_o;
+	output reg [5:0] bpp_o;
+	output reg [5:0] cbpp_o;
+	output reg [19:0] coeff1_o;
+	output reg [9:0] coeff2_o;
+	output reg [9:0] pps_o;
+	output reg rmw_o;
+	output reg [15:0] color_comp_o;
   //
   // variable declarations
   //
 
+	wb_cmd_response32_t ddbb_resp;
+	wire cs;
 	reg [31:0] dato;
-  wire [REG_ADR_HIBIT-1:0] REG_ADR  = {wbs_req.padr[REG_ADR_HIBIT-1 : 2], 2'b00};
+  wire [REG_ADR_HIBIT-1:0] REG_ADR  = {wbs_req.adr[REG_ADR_HIBIT-1 : 2], 2'b00};
+  wire [13:0] REG_ADR2  = {wbs_req.adr[13:REG_ADR_HIBIT+1],1'b0,wbs_req.adr[REG_ADR_HIBIT-1:2], 2'b00};
+  wire cfg_acc;
 
   // Declaration of local registers
+  reg inta_o;
   reg        [31:0] control_reg, status_reg, target_base_reg, tex0_base_reg;
   reg        [31:0] target_size_x_reg, target_size_y_reg, tex0_size_x_reg, tex0_size_y_reg;
   reg        [31:0] target_x0_reg, target_y0_reg, target_x1_reg, target_y1_reg;
@@ -264,6 +341,12 @@ output reg [15:0] color_comp_o;
   reg was_fifo_rd;
   wire [REG_ADR_HIBIT-1:0] instruction_fifo_q_adr;
   wire [fifo_depth-1:0] instruction_fifo_count;
+  wire prog_empty;
+  wire pe_empty, ne_empty;
+  reg empty_irq;
+	wire full, empty;
+	wire prog_full;
+	wire wr_ack;
 
   // Wishbone access wires
   wb_cmd_request32_t [15:0] tran_in;
@@ -282,12 +365,46 @@ output reg [15:0] color_comp_o;
   // Module body
   //
 
-	wire full, empty;
-	wire prog_full;
-	wire wr_ack;
+ddbb32_config #(
+	.pDevName(pDevName),
+	.CFG_BUS(CFG_BUS),
+	.CFG_DEVICE(CFG_DEVICE),
+	.CFG_FUNC(CFG_FUNC),
+	.CFG_VENDOR_ID(CFG_VENDOR_ID),
+	.CFG_DEVICE_ID(CFG_DEVICE_ID),
+	.CFG_BAR0(CFG_BAR0),
+	.CFG_BAR0_MASK(CFG_BAR0_MASK),
+	.CFG_SUBSYSTEM_VENDOR_ID(CFG_SUBSYSTEM_VENDOR_ID),
+	.CFG_SUBSYSTEM_ID(CFG_SUBSYSTEM_ID),
+	.CFG_ROM_ADDR(CFG_ROM_ADDR),
+	.CFG_REVISION_ID(CFG_REVISION_ID),
+	.CFG_PROGIF(CFG_PROGIF),
+	.CFG_SUBCLASS(CFG_SUBCLASS),
+	.CFG_CLASS(CFG_CLASS),
+	.CFG_CACHE_LINE_SIZE(CFG_CACHE_LINE_SIZE),
+	.CFG_MIN_GRANT(CFG_MIN_GRANT),
+	.CFG_MAX_LATENCY(CFG_MAX_LATENCY),
+	.CFG_IRQ_LINE(CFG_IRQ_LINE)
+)
+uddbb1
+(
+	.rst_i(rst_i),
+	.clk_i(clk_i),
+	.irq_i({2'b00,inta_o,empty_irq}),
+	.cs_i(cs_i),
+	.resp_busy_i(),
+	.req_i(wbs_req),
+	.resp_o(ddbb_resp),
+	.cs_bar0_o(cs),
+	.cs_bar1_o(),
+	.cs_bar2_o(),
+	.irq_chain_i(irq_chain_i),
+	.irq_chain_o(irq_chain_o)
+);
 
   // wishbone access signals
-  assign acc = cs_i & wbs_req.cyc & wbs_req.stb;
+  assign cfg_acc = cs_i & wbs_req.cyc & wbs_req.stb;
+  assign acc = cs & wbs_req.cyc & wbs_req.stb;
   assign acc32 = (wbs_req.sel[3:0] == 4'b1111);
   assign reg_acc = acc & acc32;
   assign reg_wacc = reg_acc & wbs_req.we;
@@ -298,13 +415,30 @@ output reg [15:0] color_comp_o;
 	edge_det ued10 (.rst(rst_i), .clk(wbs_clk_i), .ce(1'b1), .i(rdy3), .pe(rdy3pe), .ne(), .ee());
   always_comb
   begin
-  	wbs_resp = {$bits(wb_cmd_response32_t){1'b0}};
-  	wbs_resp.tid = wbs_req.tid;
-  	wbs_resp.ack = (acc & wbs_req.we) ? wr_ack : acc & rdy3pe;
-  	wbs_resp.rty = 1'b0;
-  	wbs_resp.err = acc & ~acc32 ? wishbone_pkg::ERR : wishbone_pkg::OKAY;
-  	wbs_resp.dat = acc ? (wbs_req.padr[REG_ADR_HIBIT] ? {dato[7:0],dato[15:8],dato[23:16],dato[31:24]}: dato) : 32'd0;
-  	wbs_resp.stall = prog_full;
+  	if (cfg_acc)
+  		wbs_resp = ddbb_resp;
+  	else if (acc) begin
+	  	wbs_resp = {$bits(wb_cmd_response32_t){1'b0}};
+	  	wbs_resp.tid = wbs_req.tid;
+	  	wbs_resp.ack = wbs_req.we ? wr_ack : rdy3pe;
+	  	wbs_resp.rty = 1'b0;
+	  	wbs_resp.err = ~acc32 ? wishbone_pkg::ERR : wishbone_pkg::OKAY;
+	  	wbs_resp.dat = (wbs_req.adr[REG_ADR_HIBIT] ? {dato[7:0],dato[15:8],dato[23:16],dato[31:24]}: dato);
+	  	wbs_resp.stall = 1'b0;//prog_full;
+  	end
+  	else
+  		wbs_resp = {$bits(wb_cmd_response32_t){1'b0}};
+	end
+
+	// ToDo: fix this IRQ
+  always_ff @(posedge wbs_clk_i)
+  if(rst_i)
+		empty_irq <= 1'b0;
+	else begin
+		if (pe_empty)
+			empty_irq <= 1'b1;
+		else if (ne_empty)
+			empty_irq <= 1'b0;
 	end
 
   // generate interrupt request signal
@@ -313,6 +447,8 @@ output reg [15:0] color_comp_o;
     inta_o <= 1'b0;
   else
     inta_o <= writer_sint_i | reader_sint_i; // | other_int | (int_enable & int) | ...
+
+	edge_det ued1 (.rst(rst_i), .clk(clk_i), .ce(1'b1), .i(prog_empty), .pe(pe_empty), .ne(ne_empty), .ee());
 
   // generate registers
   always_ff @(posedge clk_i)
@@ -612,59 +748,59 @@ always_ff @(posedge wbs_clk_i)
     if(rst_i)
       dato <= 32'd0;
     else
-      case (REG_ADR) // synopsis full_case parallel_case
-      GFX_CONTROL       : dato <= {{control_reg}};
-      GFX_STATUS        : dato <= {{status_reg}};
-      GFX_TARGET_BASE   : dato <= {{target_base_reg}};
-      GFX_TARGET_SIZE_X : dato <= {{target_size_x_reg}};
-      GFX_TARGET_SIZE_Y : dato <= {{target_size_y_reg}};
-      GFX_TARGET_X0     : dato <= {{target_x0_reg}};
-      GFX_TARGET_Y0     : dato <= {{target_y0_reg}};
-      GFX_TARGET_X1     : dato <= {{target_x1_reg}};
-      GFX_TARGET_Y1     : dato <= {{target_y1_reg}};
-      GFX_TEX0_BASE     : dato <= {{tex0_base_reg}};
-      GFX_TEX0_SIZE_X   : dato <= {{tex0_size_x_reg}};
-      GFX_TEX0_SIZE_Y   : dato <= {{tex0_size_y_reg}};
-      GFX_SRC_PIXEL0_X  : dato <= {{src_pixel_pos_0_x_reg}};
-      GFX_SRC_PIXEL0_Y  : dato <= {{src_pixel_pos_0_y_reg}};
-      GFX_SRC_PIXEL1_X  : dato <= {{src_pixel_pos_1_x_reg}};
-      GFX_SRC_PIXEL1_Y  : dato <= {{src_pixel_pos_1_y_reg}};
-      GFX_DEST_PIXEL_X  : dato <= {{dest_pixel_pos_x_reg}};
-      GFX_DEST_PIXEL_Y  : dato <= {{dest_pixel_pos_y_reg}};
-      GFX_DEST_PIXEL_Z  : dato <= {{dest_pixel_pos_z_reg}};
-      GFX_AA            : dato <= {{aa_reg}};
-      GFX_AB            : dato <= {{ab_reg}};
-      GFX_AC            : dato <= {{ac_reg}};
-      GFX_TX            : dato <= {{tx_reg}};
-      GFX_BA            : dato <= {{ba_reg}};
-      GFX_BB            : dato <= {{bb_reg}};
-      GFX_BC            : dato <= {{bc_reg}};
-      GFX_TY            : dato <= {{ty_reg}};
-      GFX_CA            : dato <= {{ca_reg}};
-      GFX_CB            : dato <= {{cb_reg}};
-      GFX_CC            : dato <= {{cc_reg}};
-      GFX_TZ            : dato <= {{tz_reg}};
-      GFX_CLIP_PIXEL0_X : dato <= {{clip_pixel_pos_0_x_reg}};
-      GFX_CLIP_PIXEL0_Y : dato <= {{clip_pixel_pos_0_y_reg}};
-      GFX_CLIP_PIXEL1_X : dato <= {{clip_pixel_pos_1_x_reg}};
-      GFX_CLIP_PIXEL1_Y : dato <= {{clip_pixel_pos_1_y_reg}};
-      GFX_COLOR0        : dato <= {{color0_reg}};
-      GFX_COLOR1        : dato <= {{color1_reg}};
-      GFX_COLOR2        : dato <= {{color2_reg}};
-      GFX_U0            : dato <= {{u0_reg}};
-      GFX_V0            : dato <= {{v0_reg}};
-      GFX_U1            : dato <= {{u1_reg}};
-      GFX_V1            : dato <= {{v1_reg}};
-      GFX_U2            : dato <= {{u2_reg}};
-      GFX_V2            : dato <= {{v2_reg}};
-      GFX_ALPHA         : dato <= {{alpha_reg}};
-      GFX_COLORKEY      : dato <= {{colorkey_reg}};
-      GFX_ZBUFFER_BASE  : dato <= {{zbuffer_base_reg}};
-      GFX_FONT_TABLE_BASE: dato <= {{font_table_base_reg}};
-      GFX_FONT_ID				: dato <= {{font_id_reg}};
-      GFX_CHAR_CODE			: dato <= {{char_code_reg}};
-      GFX_COLOR_COMP		: dato <= color_comp_reg;
-      GFX_PPS						: dato <= {10'd0,bpp_o,6'd0,pps_o};
+      case (REG_ADR2) // synopsis full_case parallel_case
+      {6'h0,GFX_CONTROL}			: dato <= {{control_reg}};
+      {6'h0,GFX_STATUS        }: dato <= {{status_reg}};
+      {6'h0,GFX_TARGET_BASE   }: dato <= {{target_base_reg}};
+      {6'h0,GFX_TARGET_SIZE_X }: dato <= {{target_size_x_reg}};
+      {6'h0,GFX_TARGET_SIZE_Y }: dato <= {{target_size_y_reg}};
+      {6'h0,GFX_TARGET_X0     }: dato <= {{target_x0_reg}};
+      {6'h0,GFX_TARGET_Y0     }: dato <= {{target_y0_reg}};
+      {6'h0,GFX_TARGET_X1     }: dato <= {{target_x1_reg}};
+      {6'h0,GFX_TARGET_Y1     }: dato <= {{target_y1_reg}};
+      {6'h0,GFX_TEX0_BASE     }: dato <= {{tex0_base_reg}};
+      {6'h0,GFX_TEX0_SIZE_X   }: dato <= {{tex0_size_x_reg}};
+      {6'h0,GFX_TEX0_SIZE_Y   }: dato <= {{tex0_size_y_reg}};
+      {6'h0,GFX_SRC_PIXEL0_X  }: dato <= {{src_pixel_pos_0_x_reg}};
+      {6'h0,GFX_SRC_PIXEL0_Y  }: dato <= {{src_pixel_pos_0_y_reg}};
+      {6'h0,GFX_SRC_PIXEL1_X  }: dato <= {{src_pixel_pos_1_x_reg}};
+      {6'h0,GFX_SRC_PIXEL1_Y  }: dato <= {{src_pixel_pos_1_y_reg}};
+      {6'h0,GFX_DEST_PIXEL_X  }: dato <= {{dest_pixel_pos_x_reg}};
+      {6'h0,GFX_DEST_PIXEL_Y  }: dato <= {{dest_pixel_pos_y_reg}};
+      {6'h0,GFX_DEST_PIXEL_Z  }: dato <= {{dest_pixel_pos_z_reg}};
+      {6'h0,GFX_AA            }: dato <= {{aa_reg}};
+      {6'h0,GFX_AB            }: dato <= {{ab_reg}};
+      {6'h0,GFX_AC            }: dato <= {{ac_reg}};
+      {6'h0,GFX_TX            }: dato <= {{tx_reg}};
+      {6'h0,GFX_BA            }: dato <= {{ba_reg}};
+      {6'h0,GFX_BB            }: dato <= {{bb_reg}};
+      {6'h0,GFX_BC            }: dato <= {{bc_reg}};
+      {6'h0,GFX_TY            }: dato <= {{ty_reg}};
+      {6'h0,GFX_CA            }: dato <= {{ca_reg}};
+      {6'h0,GFX_CB            }: dato <= {{cb_reg}};
+      {6'h0,GFX_CC            }: dato <= {{cc_reg}};
+      {6'h0,GFX_TZ            }: dato <= {{tz_reg}};
+      {6'h0,GFX_CLIP_PIXEL0_X }: dato <= {{clip_pixel_pos_0_x_reg}};
+      {6'h0,GFX_CLIP_PIXEL0_Y }: dato <= {{clip_pixel_pos_0_y_reg}};
+      {6'h0,GFX_CLIP_PIXEL1_X }: dato <= {{clip_pixel_pos_1_x_reg}};
+      {6'h0,GFX_CLIP_PIXEL1_Y }: dato <= {{clip_pixel_pos_1_y_reg}};
+      {6'h0,GFX_COLOR0        }: dato <= {{color0_reg}};
+      {6'h0,GFX_COLOR1        }: dato <= {{color1_reg}};
+      {6'h0,GFX_COLOR2        }: dato <= {{color2_reg}};
+      {6'h0,GFX_U0            }: dato <= {{u0_reg}};
+      {6'h0,GFX_V0            }: dato <= {{v0_reg}};
+      {6'h0,GFX_U1            }: dato <= {{u1_reg}};
+      {6'h0,GFX_V1            }: dato <= {{v1_reg}};
+      {6'h0,GFX_U2            }: dato <= {{u2_reg}};
+      {6'h0,GFX_V2            }: dato <= {{v2_reg}};
+      {6'h0,GFX_ALPHA         }: dato <= {{alpha_reg}};
+      {6'h0,GFX_COLORKEY      }: dato <= {{colorkey_reg}};
+      {6'h0,GFX_ZBUFFER_BASE  }: dato <= {{zbuffer_base_reg}};
+      {6'h0,GFX_FONT_TABLE_BASE}: dato <= {{font_table_base_reg}};
+      {6'h0,GFX_FONT_ID				}: dato <= {{font_id_reg}};
+      {6'h0,GFX_CHAR_CODE			}: dato <= {{char_code_reg}};
+      {6'h0,GFX_COLOR_COMP		}: dato <= color_comp_reg;
+      {6'h0,GFX_PPS						}: dato <= {10'd0,bpp_o,6'd0,pps_o};
       default           : dato <= 32'd0;
       endcase
 
@@ -743,13 +879,13 @@ always_ff @(posedge wbs_clk_i)
       .FIFO_WRITE_DEPTH(2048),       // DECIMAL
       .FULL_RESET_VALUE(0),          // DECIMAL
       .PROG_EMPTY_THRESH(10),        // DECIMAL
-      .PROG_FULL_THRESH(2040),        // DECIMAL
+      .PROG_FULL_THRESH(2030),        // DECIMAL
       .RD_DATA_COUNT_WIDTH(11),      // DECIMAL
       .READ_DATA_WIDTH(FIFO_WID),    // DECIMAL
       .READ_MODE("std"),             // String
       .RELATED_CLOCKS(0),            // DECIMAL
       .SIM_ASSERT_CHK(0),            // DECIMAL; 0=disable simulation messages, 1=enable simulation messages
-      .USE_ADV_FEATURES("1016"),     // String
+      .USE_ADV_FEATURES("1216"),     // String
       .WAKEUP_TIME(0),               // DECIMAL
       .WRITE_DATA_WIDTH(FIFO_WID),   // DECIMAL
       .WR_DATA_COUNT_WIDTH(11)       // DECIMAL
@@ -763,7 +899,7 @@ always_ff @(posedge wbs_clk_i)
       .empty(empty),
       .full(full),
       .overflow(),
-      .prog_empty(),
+      .prog_empty(prog_empty),
       .prog_full(prog_full),
       .rd_data_count(),
       .rd_rst_busy(rd_rst_busy),
@@ -773,7 +909,7 @@ always_ff @(posedge wbs_clk_i)
       .wr_data_count(instruction_fifo_count),
       .wr_rst_busy(wr_rst_busy),
       .din({REG_ADR,
-      	wbs_req.padr[REG_ADR_HIBIT] ? {wbs_req.dat[7:0],wbs_req.dat[15:8],wbs_req.dat[23:16],wbs_req.dat[31:24]} :
+      	wbs_req.adr[REG_ADR_HIBIT] ? {wbs_req.dat[7:0],wbs_req.dat[15:8],wbs_req.dat[23:16],wbs_req.dat[31:24]} :
       	wbs_req.dat}),
       .injectdbiterr(1'b0),
       .injectsbiterr(1'b0),

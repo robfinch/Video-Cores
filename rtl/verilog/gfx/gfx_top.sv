@@ -23,7 +23,7 @@ TOP MODULE
 import wishbone_pkg::*;
 import gfx_pkg::*;
 
-module gfx_top (wb_clk_i, wb_rst_i, wb_inta_o, wbs_cs_i,
+module gfx_top (wb_clk_i, wb_rst_i, wb_inta_o, wbs_cs_i, irq_chain_i, irq_chain_o,
   // Wishbone master signals (interfaces with video memory, write)
   wbm_req, wbm_resp,
   // Wishbone slave signals (interfaces with main bus/CPU)
@@ -38,10 +38,47 @@ parameter fifo_depth     = 11;
 parameter REG_ADR_HIBIT = 8;
 parameter MDW = 256;
 
+parameter pDevName = "GFXACCEL    ";
+
+parameter CFG_BUS = 6'd0;
+parameter CFG_DEVICE = 5'd3;
+parameter CFG_FUNC = 3'd0;
+parameter CFG_VENDOR_ID	=	16'h0;
+parameter CFG_DEVICE_ID	=	16'h0;
+parameter CFG_SUBSYSTEM_VENDOR_ID	= 16'h0;
+parameter CFG_SUBSYSTEM_ID = 16'h0;
+parameter CFG_BAR0 = 32'hFD210000;
+parameter CFG_BAR1 = 32'h1;
+parameter CFG_BAR2 = 32'h1;
+parameter CFG_BAR0_MASK = 32'hFFFFC000;
+parameter CFG_BAR1_MASK = 32'h0;
+parameter CFG_BAR2_MASK = 32'h0;
+parameter CFG_ROM_ADDR = 32'hFFFFFFF0;
+
+parameter CFG_REVISION_ID = 8'd0;
+parameter CFG_PROGIF = 8'd1;
+parameter CFG_SUBCLASS = 8'h80;					// 80 = Other
+parameter CFG_CLASS = 8'h03;						// 03 = display controller
+parameter CFG_CACHE_LINE_SIZE = 8'd8;		// 32-bit units
+parameter CFG_MIN_GRANT = 8'h00;
+parameter CFG_MAX_LATENCY = 8'h00;
+parameter CFG_IRQ_LINE = 8'd16;
+parameter CFG_IRQ_DEVICE = 8'd0;
+parameter CFG_IRQ_CORE = 6'd0;
+parameter CFG_IRQ_CHANNEL = 3'd0;
+parameter CFG_IRQ_PRIORITY = 4'd10;
+parameter CFG_IRQ_CAUSE = 8'd0;
+
+parameter CFG_ROM_FILENAME = "ddbb32_config.mem";
+
+
 // Common wishbone signals
 input wb_clk_i;    // master clock input
 input wb_rst_i;    // Asynchronous active high reset
 output wb_inta_o;   // interrupt
+
+input [15:0] irq_chain_i;
+output [15:0] irq_chain_o;
 
 // Wishbone slave signals
 input wbs_clk_i;
@@ -170,14 +207,49 @@ wire rmw;
 wire [15:0] color_comp;
 
 // Slave wishbone interface. Reads wishbone bus and fills registers
-gfx_wbs wb_databus (
+gfx_wbs #(
+	.pDevName(pDevName),
+	
+	.CFG_BUS(CFG_BUS),
+	.CFG_DEVICE(CFG_DEVICE),
+	.CFG_FUNC(CFG_FUNC),
+	.CFG_VENDOR_ID(CFG_VENDOR_ID),
+	.CFG_DEVICE_ID(CFG_DEVICE_ID),
+	.CFG_SUBSYSTEM_VENDOR_ID(CFG_SUBSYSTEM_VENDOR_ID),
+	.CFG_SUBSYSTEM_ID(CFG_SUBSYSTEM_ID),
+	.CFG_BAR0(CFG_BAR0),
+	.CFG_BAR1(CFG_BAR1),
+	.CFG_BAR2(CFG_BAR2),
+	.CFG_BAR0_MASK(CFG_BAR0_MASK),
+	.CFG_BAR1_MASK(CFG_BAR1_MASK),
+	.CFG_BAR2_MASK(CFG_BAR2_MASK),
+	.CFG_ROM_ADDR(CFG_ROM_ADDR),
+	
+	.CFG_REVISION_ID(CFG_REVISION_ID),
+	.CFG_PROGIF(CFG_PROGIF),
+	.CFG_SUBCLASS(CFG_SUBCLASS),
+	.CFG_CLASS(CFG_CLASS),
+	.CFG_CACHE_LINE_SIZE(CFG_CACHE_LINE_SIZE),
+	.CFG_MIN_GRANT(CFG_MIN_GRANT),
+	.CFG_MAX_LATENCY(CFG_MAX_LATENCY),
+	.CFG_IRQ_LINE(CFG_IRQ_LINE),
+	.CFG_IRQ_DEVICE(CFG_IRQ_DEVICE),
+	.CFG_IRQ_CORE(CFG_IRQ_CORE),
+	.CFG_IRQ_CHANNEL(CFG_IRQ_CHANNEL),
+	.CFG_IRQ_PRIORITY(CFG_IRQ_PRIORITY),
+	.CFG_IRQ_CAUSE(CFG_IRQ_CAUSE),
+	
+	.CFG_ROM_FILENAME(CFG_ROM_FILENAME)
+)
+wb_databus (
   .clk_i (wb_clk_i),
   .wbs_clk_i (wbs_clk_i),
   .rst_i (wb_rst_i),
   .cs_i(wbs_cs_i),
   .wbs_req(wbs_req),
   .wbs_resp(wbs_resp),
-  .inta_o (wb_inta_o),
+  .irq_chain_i(irq_chain_i),
+  .irq_chain_o(irq_chain_o),
 
   //source pixel
   .src_pixel0_x_o (wbs_raster_src_pixel0_x),
