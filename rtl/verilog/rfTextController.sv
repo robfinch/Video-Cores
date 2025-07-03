@@ -120,12 +120,12 @@
 //`define SUPPORT_AAM	1
 
 module rfTextController(
-	rst_i, clk_i, cs_config_i, cs_io_i,
+	rst_i, clk_i, cs_config_i, irq_chain_i, irq_chain_o,
 	cti_i, cyc_i, stb_i, ack_o, wr_i, sel_i, adr_i, dat_i, dat_o,
 	dot_clk_i, hsync_i, vsync_i, blank_i, border_i, zrgb_i, zrgb_o, xonoff_i
 );
 parameter num = 4'd1;
-parameter COLS = 8'd60;
+parameter COLS = 8'd64;
 parameter ROWS = 8'd32;
 parameter BUSWID = 32;
 parameter TEXT_CELL_COUNT = 32768;
@@ -133,6 +133,7 @@ parameter SCREEN_FORMAT = 1;		// 32-bit character cells
 parameter SVGA800x600 = 1;
 parameter XGA1024x768 = 0;
 
+parameter pDevName = "TEXTVIDEO       ";
 parameter RAM_ADDR = 32'hFD000001;
 parameter CBM_ADDR = 32'hFD040001;
 parameter REG_ADDR = 32'hFD080001;
@@ -165,7 +166,8 @@ input  rst_i;			// reset
 input  clk_i;			// clock
 
 input cs_config_i;
-input cs_io_i;
+input [15:0] irq_chain_i;
+output [15:0] irq_chain_o;
 
 // Slave signals
 input  [2:0] cti_i;
@@ -275,6 +277,7 @@ reg cs_rom, cs_reg, cs_text, cs_any;
 reg cs_rom1, cs_reg1, cs_text1;
 wire cs_rom2, cs_reg2, cs_text2;
 reg cs_tc;
+reg rcyc_i, rstb_i;
 reg [31:0] radr_i;
 reg [63:0] rdat_i;
 reg rwr_i;
@@ -283,11 +286,10 @@ reg [7:0] wrs_i;
 reg [31:0] tc_ram_addr;
 reg [31:0] tc_cbm_addr;
 reg [31:0] tc_reg_addr;
+reg [63:0] dato;
 
 always_ff @(posedge clk_i)
-	cs_any <= cyc_i & stb_i & cs_io_i;
-always_ff @(posedge clk_i)
-	cs_config <= cyc_i & stb_i & cs_config_i && adr_i[27:20]==CFG_BUS && adr_i[19:15]==CFG_DEVICE && adr_i[14:12]==CFG_FUNC;
+	cs_config <= cyc_i & stb_i & cs_config_i && adr_i[27:22]==CFG_BUS && adr_i[21:17]==CFG_DEVICE && adr_i[16:14]==CFG_FUNC;
 always_ff @(posedge clk_i)
 	cs_rom1 <= cs_rom2;
 always_ff @(posedge clk_i)
@@ -295,11 +297,18 @@ always_ff @(posedge clk_i)
 always_ff @(posedge clk_i)
 	cs_text1 <= cs_text2;
 always_comb
-	cs_rom <= cs_rom1 && cs_any;
+	cs_rom = cs_rom1;
 always_comb
-	cs_reg <= cs_reg1 && cs_any;
+	cs_reg = cs_reg1;
 always_comb
-	cs_text <= cs_text1 && cs_any;
+	cs_text = cs_text1;
+always_comb
+	cs_any = cs_rom|cs_reg|cs_text;
+
+always_ff @(posedge clk_i)
+	rcyc_i <= cyc_i;
+always_ff @(posedge clk_i)
+	rstb_i <= stb_i;
 always_ff @(posedge clk_i)
 	wrs_i <= (BUSWID==64) ? {8{wr_i}} & sel_i :
 		adr_i[2] ? {{4{wr_i}} & sel_i,4'h0} : {4'h0,{4{wr_i}} & sel_i};
@@ -310,48 +319,49 @@ always_ff @(posedge clk_i)
 always_ff @(posedge clk_i)
 	radr_i <= adr_i;
 always_ff @(posedge clk_i)
-	rdat_i <= (BUSWID==64) ? dat_i : (BUSWID==32) ? {2{dat_i}} : {4{dat_i}};
+	if (BUSWID==64) begin
+		rdat_i <= dat_i;
+	end
+	else begin
+		rdat_i <= (BUSWID==32) ? {2{dat_i}} : {4{dat_i}};
+	end
 
 // Register outputs
 always_ff @(posedge clk_i)
 if (BUSWID==64)
 	casez({cs_config,cs_rom,cs_reg,cs_text})
-	4'b1???:	dat_o <= cfg_out;
-	4'b01??:	dat_o <= chdat_o;
+	4'b1???:	dato <= wbs_resp.dat;
+	4'b01??:	dato <= chdat_o;
 	4'b001?:
 		casez(radr_i[13:0])
-		14'b00000000??????:	dat_o <= rego;
-		14'b11111000000???:	dat_o <= "DCB TEXT";
-		14'b11111000001???:	dat_o <= {32'h0,"VID "};
-		14'b11111100000???:	dat_o <= "TXET BCD";
-		14'b11111100001???:	dat_o <= {32'h0," DIV"};
-		default:	dat_o <= 32'd0;
+		14'b00000000??????:	dato <= rego;
+		default:	dato <= 32'd0;
 		endcase
-	4'b0001:	dat_o <= SCREEN_FORMAT==1 ? {2{tdat_o[31:0]}} : tdat_o;
-	default:	dat_o <= 64'h0;
+	4'b0001:	dato <= SCREEN_FORMAT==1 ? {2{tdat_o[31:0]}} : tdat_o;
+	default:	dato <= 64'h0;
 	endcase
 else if (BUSWID==32)
 	casez({cs_config,cs_rom,cs_reg,cs_text})
-	4'b1???:	dat_o <= radr_i[2] ? cfg_out[63:32] : cfg_out[31:0];
-	4'b01??:	dat_o <= radr_i[2] ? chdat_o[63:32] : chdat_o[31:0];
+	4'b1???:	dato <= radr_i[2] ? wbs_resp.dat[63:32] : wbs_resp.dat[31:0];
+	4'b01??:	dato <= radr_i[2] ? chdat_o[63:32] : chdat_o[31:0];
 	4'b001?:	
 		casez(radr_i[13:0])
-		14'b00000000??????:	dat_o <= radr_i[2] ? rego[63:32] : rego[31:0];
-		14'b111110000000??:	dat_o <= "DEV ";
-		14'b111110000001??:	dat_o <= "TEXT";
-		14'b111110000010??:	dat_o <= "VID ";
-		14'b111110000011??:	dat_o <= {8'h00,"   "};
-		14'b111111000000??:	dat_o <= " VED";
-		14'b111111000001??:	dat_o <= "TXET";
-		14'b111111000010??:	dat_o <= " DIV";
-		14'b111111000011??:	dat_o <= {8'h00,"   "};
-		default:	dat_o <= 32'd0;
+		14'b00000000??????:	dato <= radr_i[2] ? rego[63:32] : rego[31:0];
+		default:	dato <= 32'd0;
 		endcase
-	4'b0001:	dat_o <= radr_i[2] ? (SCREEN_FORMAT==1 ? tdat_o[31:0] : tdat_o[63:32]) : tdat_o[31:0];
-	default:	dat_o <= 32'd0;
+	4'b0001:	dato <= radr_i[2] ? (SCREEN_FORMAT==1 ? tdat_o[31:0] : tdat_o[63:32]) : tdat_o[31:0];
+	default:	dato <= 32'd0;
 	endcase
 else
-	dat_o <= 32'd0;
+	dato <= 32'd0;
+
+always_comb
+if (BUSWID==64) begin
+	dat_o = dato;
+end
+else begin
+	dat_o = dato;
+end
 
 //always @(posedge clk_i)
 //	if (cs_text) begin
@@ -385,7 +395,22 @@ uag1 (
 // config
 //--------------------------------------------------------------------
 
-pci64_config #(
+wb_cmd_request64_t wbs_req;
+wb_cmd_response64_t wbs_resp;
+
+always_comb
+begin
+	wbs_req = {$bits(wb_cmd_request64_t){1'b0}};
+	wbs_req.cyc = cyc_i;
+	wbs_req.stb = rstb_i & stb_i;
+	wbs_req.we = rwr_i;
+	wbs_req.sel = rsel_i;
+	wbs_req.adr = adr_i;
+	wbs_req.dat = rdat_i;
+end
+
+ddbb64_config #(
+	.pDevName(pDevName),
 	.CFG_BUS(CFG_BUS),
 	.CFG_DEVICE(CFG_DEVICE),
 	.CFG_FUNC(CFG_FUNC),
@@ -413,18 +438,15 @@ ucfg1
 (
 	.rst_i(rst_i),
 	.clk_i(clk_i),
-	.irq_i(1'b0),
-	.irq_o(),
-	.cs_config_i(cs_config), 
-	.we_i(rwr_i),
-	.sel_i(rsel_i),
-	.adr_i(radr_i),
-	.dat_i(rdat_i),
-	.dat_o(cfg_out),
+	.irq_i(4'b0),
+	.irq_chain_i(irq_chain_i),
+	.irq_chain_o(irq_chain_o),
+	.cs_i(cs_config), 
+	.req_i(wbs_req),
+	.resp_o(wbs_resp),
 	.cs_bar0_o(cs_text2),
 	.cs_bar1_o(cs_rom2),
-	.cs_bar2_o(cs_reg2),
-	.irq_en_o()
+	.cs_bar2_o(cs_reg2)
 );
 
 //--------------------------------------------------------------------

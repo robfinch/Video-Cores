@@ -47,7 +47,8 @@
 
 //`define USE_CLOCK_GATE	1'b1
 //`define VGA640x480	1'b1
-`define SVGA800x600		1'b1
+//`define SVGA800x600		1'b1
+`define SVGA800x600_72	1'b1
 //`define XGA1024x768		1'b1
 //`define WXGA1920x1080		1'b1
 //`define WXGA1280x720		1'b1
@@ -237,6 +238,29 @@ parameter pvBorderOn = 628;		//  600 display
 //parameter pvBorderOn = 584;		//  512 display
 parameter pvBlankOn = 628;  	//   44 border	0
 parameter pvTotal = 628;		//  628 total scan lines
+`endif
+
+// Sync Generator defaults: 800x600 72Hz
+// Driven by a 50MHz clock
+
+`ifdef SVGA800x600_72
+parameter phSyncOn  = 56;		//  56 front porch
+parameter phSyncOff = 176;		//  120 sync
+parameter phBlankOff = 240;	//256	//   64 back porch
+//parameter phBorderOff = 336;	//   80 border
+parameter phBorderOff = 240;	//   80 border
+//parameter phBorderOn = 976;		//  640 display
+parameter phBorderOn = 1040;		//  800 display
+parameter phBlankOn = 1040;		//   4 border
+parameter phTotal = 1040;		// 1056 total clocks
+parameter pvSyncOn  = 37;		//    37 front porch
+parameter pvSyncOff = 43;		//    6 vertical sync
+parameter pvBlankOff = 66;		//   23 back porch (28)
+parameter pvBorderOff = 66;		//   44 border	0
+//parameter pvBorderOff = 72;		//   44 border	0
+parameter pvBorderOn = 666;		//  600 display
+parameter pvBlankOn = 666;  	//   44 border	0
+parameter pvTotal = 666;		//  666 total scan lines
 `endif
 
 // 50 MHz clock
@@ -957,6 +981,15 @@ if (rst_i) begin
 	hrefdelay <= 16'hFF39;//16'd3964;//16'hFF99;//12'd103;
 	vrefdelay <= 16'hFFEA;//16'hFFF3;12'd13;
 `endif
+`ifdef SVGA800x600_72
+	windowWidth <= 12'd800;
+	windowHeight <= 12'd600;
+	bmpWidth <= 16'd800;
+	bmpHeight <= 16'd600;
+	burst_len <= 8'd99;		// 1 bursts of 100 = 800 pixels
+	hrefdelay <= 16'hFF49;//16'd3964;//16'hFF99;//12'd103;
+	vrefdelay <= 16'hFFEA;//16'hFFF3;12'd13;
+`endif
 `ifdef XGA1024x768	
 	windowWidth <= 12'd1024;
 	windowHeight <= 12'd768;
@@ -1347,7 +1380,9 @@ else if (cs_edge && we && adri[13:3]==REG_COLOR)
 
 reg lef;	// load even fifo
 reg lof;	// load odd fifo
+reg bhsync1, bhsync2;
 
+/*
 edge_det edh1
 (
 	.rst(rst_i),
@@ -1358,13 +1393,27 @@ edge_det edh1
 	.ne(),
 	.ee()
 );
+*/
+modHsync3 uh31
+(
+	.rst(rst_i),
+	.clk(vclk),
+	.hsync(hsync_o),
+	.hsync3(pe_hsync)
+);
+
+// synchronize to bus clock domain.
+always_ff @(posedge m_bus_o.clk)
+	bhsync1 <= hsync_o;
+always_ff @(posedge m_bus_o.clk)
+	bhsync2 <= bhsync1;
 
 edge_det edh2
 (
 	.rst(rst_i),
 	.clk(m_bus_o.clk),
 	.ce(1'b1),
-	.i(hsync_i),
+	.i(bhsync2),
 	.pe(pe_hsync2),
 	.ne(),
 	.ee()
@@ -1900,123 +1949,56 @@ always_comb
    // Xilinx Parameterized Macro, version 2024.2
 
    xpm_fifo_async #(
-      .CASCADE_HEIGHT(0),            // DECIMAL
-      .CDC_SYNC_STAGES(2),           // DECIMAL
-      .DOUT_RESET_VALUE("0"),        // String
-      .ECC_MODE("no_ecc"),           // String
-      .EN_SIM_ASSERT_ERR("warning"), // String
-      .FIFO_MEMORY_TYPE("auto"),     // String
-      .FIFO_READ_LATENCY(1),         // DECIMAL
-      .FIFO_WRITE_DEPTH(256),       // DECIMAL
-      .FULL_RESET_VALUE(0),          // DECIMAL
-      .PROG_EMPTY_THRESH(10),        // DECIMAL
-      .PROG_FULL_THRESH(250),         // DECIMAL
-      .RD_DATA_COUNT_WIDTH(8),       // DECIMAL
-      .READ_DATA_WIDTH(MDW),          // DECIMAL
-      .READ_MODE("std"),             // String
-      .RELATED_CLOCKS(0),            // DECIMAL
+      .CASCADE_HEIGHT(0),
+      .CDC_SYNC_STAGES(2),
+      .DOUT_RESET_VALUE("0"),
+      .ECC_MODE("no_ecc"),
+      .EN_SIM_ASSERT_ERR("warning"),
+      .FIFO_MEMORY_TYPE("auto"),
+      .FIFO_READ_LATENCY(1),
+      .FIFO_WRITE_DEPTH(256),
+      .FULL_RESET_VALUE(0),
+      .PROG_EMPTY_THRESH(10),
+      .PROG_FULL_THRESH(250),
+      .RD_DATA_COUNT_WIDTH(8),
+      .READ_DATA_WIDTH(MDW),
+      .READ_MODE("std"),
+      .RELATED_CLOCKS(0),
       .SIM_ASSERT_CHK(0),            // DECIMAL; 0=disable simulation messages, 1=enable simulation messages
-      .USE_ADV_FEATURES("0000"),     // String
-      .WAKEUP_TIME(0),               // DECIMAL
-      .WRITE_DATA_WIDTH(MDW),         // DECIMAL
-      .WR_DATA_COUNT_WIDTH(8)        // DECIMAL
+      .USE_ADV_FEATURES("0000"),
+      .WAKEUP_TIME(0),
+      .WRITE_DATA_WIDTH(MDW),
+      .WR_DATA_COUNT_WIDTH(8)
    )
    xpm_fifo_async_inst (
-      .almost_empty(),   						// 1-bit output: Almost Empty : When asserted, this signal indicates that
-                                     // only one more read can be performed before the FIFO goes to empty.
-
-      .almost_full(),     					// 1-bit output: Almost Full: When asserted, this signal indicates that
-                                     // only one more write can be performed before the FIFO is full.
-
-      .data_valid(),       					// 1-bit output: Read Data Valid: When asserted, this signal indicates
-                                     // that valid data is available on the output bus (dout).
-
-      .dbiterr(),				             // 1-bit output: Double Bit Error: Indicates that the ECC decoder detected
-                                     // a double-bit error and data in the FIFO core is corrupted.
-
-      .dout(rgbo1e),                 // READ_DATA_WIDTH-bit output: Read Data: The output data bus is driven
-                                     // when reading the FIFO.
-
-      .empty(),			                 // 1-bit output: Empty Flag: When asserted, this signal indicates that the
-                                     // FIFO is empty. Read requests are ignored when the FIFO is empty,
-                                     // initiating a read while empty is not destructive to the FIFO.
-
-      .full(),  	                   // 1-bit output: Full Flag: When asserted, this signal indicates that the
-                                     // FIFO is full. Write requests are ignored when the FIFO is full,
-                                     // initiating a write when the FIFO is full is not destructive to the
-                                     // contents of the FIFO.
-
-      .overflow(),           				// 1-bit output: Overflow: This signal indicates that a write request
-                                     // (wren) during the prior clock cycle was rejected, because the FIFO is
-                                     // full. Overflowing the FIFO is not destructive to the contents of the
-                                     // FIFO.
-
-      .prog_empty(),					       // 1-bit output: Programmable Empty: This signal is asserted when the
-                                     // number of words in the FIFO is less than or equal to the programmable
-                                     // empty threshold value. It is de-asserted when the number of words in
-                                     // the FIFO exceeds the programmable empty threshold value.
-
-      .prog_full(),					         // 1-bit output: Programmable Full: This signal is asserted when the
-                                     // number of words in the FIFO is greater than or equal to the
-                                     // programmable full threshold value. It is de-asserted when the number of
-                                     // words in the FIFO is less than the programmable full threshold value.
-
-      .rd_data_count(),							 // RD_DATA_COUNT_WIDTH-bit output: Read Data Count: This bus indicates the
-                                     // number of words read from the FIFO.
-
-      .rd_rst_busy(rd_rst_busy),     // 1-bit output: Read Reset Busy: Active-High indicator that the FIFO read
-                                     // domain is currently in a reset state.
-
-      .sbiterr(),					           // 1-bit output: Single Bit Error: Indicates that the ECC decoder detected
-                                     // and fixed a single-bit error.
-
-      .underflow(),					         // 1-bit output: Underflow: Indicates that the read request (rd_en) during
-                                     // the previous clock cycle was rejected because the FIFO is empty. Under
-                                     // flowing the FIFO is not destructive to the FIFO.
-
-      .wr_ack(),			               // 1-bit output: Write Acknowledge: This signal indicates that a write
-                                     // request (wr_en) during the prior clock cycle is succeeded.
-
-      .wr_data_count(), 							// WR_DATA_COUNT_WIDTH-bit output: Write Data Count: This bus indicates
-                                     // the number of words written into the FIFO.
-
-      .wr_rst_busy(wr_rst_busy),     // 1-bit output: Write Reset Busy: Active-High indicator that the FIFO
-                                     // write domain is currently in a reset state.
-
-      .din(m_bus_o.resp.dat), 			 // WRITE_DATA_WIDTH-bit input: Write Data: The input data bus used when
-                                     // writing the FIFO.
-
-      .injectdbiterr(1'b0), // 1-bit input: Double Bit Error Injection: Injects a double bit error if
-                                     // the ECC feature is used on block RAMs or UltraRAM macros.
-
-      .injectsbiterr(1'b0), // 1-bit input: Single Bit Error Injection: Injects a single bit error if
-                                     // the ECC feature is used on block RAMs or UltraRAM macros.
-
-      .rd_clk(vclk),                 // 1-bit input: Read clock: Used for read operation. rd_clk must be a free
-                                     // running clock.
-
-      .rd_en(rd_en),                 // 1-bit input: Read Enable: If the FIFO is not empty, asserting this
-                                     // signal causes data (on dout) to be read from the FIFO. Must be held
-                                     // active-low when rd_rst_busy is active high.
-
-      .rst(rst_i|fifo_wrst),         // 1-bit input: Reset: Must be synchronous to wr_clk. The clock(s) can be
-                                     // unstable at the time of applying reset, but reset must be released only
-                                     // after the clock(s) is/are stable.
-
-      .sleep(!vFetch),               // 1-bit input: Dynamic power saving: If sleep is High, the memory/fifo
-                                     // block is in power saving mode.
-
-      .wr_clk(m_bus_o.clk),               // 1-bit input: Write clock: Used for write operation. wr_clk must be a
-                                     // free running clock.
-
-      .wr_en(wr_en)                  // 1-bit input: Write Enable: If the FIFO is not full, asserting this
-                                     // signal causes data (on din) to be written to the FIFO. Must be held
-                                     // active-low when rst or wr_rst_busy is active high.
-
+      .almost_empty(),
+      .almost_full(),
+      .data_valid(),
+      .dbiterr(),
+      .dout(rgbo1e),
+      .empty(),
+      .full(),
+      .overflow(),
+      .prog_empty(),
+      .prog_full(),
+      .rd_data_count(),
+      .rd_rst_busy(rd_rst_busy),
+      .sbiterr(),
+      .underflow(),
+      .wr_ack(),
+      .wr_data_count(),
+      .wr_rst_busy(wr_rst_busy),
+      .din(m_bus_o.resp.dat),
+      .injectdbiterr(1'b0),
+      .injectsbiterr(1'b0),
+      .rd_clk(vclk),
+      .rd_en(rd_en),
+      .rst(rst_i|fifo_wrst),
+      .sleep(1'b0),
+      .wr_clk(m_bus_o.clk),
+      .wr_en(wr_en)
    );
 
-   // End of xpm_fifo_async_inst instantiation
-				
 				
 endmodule
 
@@ -2374,3 +2356,27 @@ else begin
 end
 
 endmodule
+
+// Shape hsync pulse to be 3 clocks wide.
+
+module modHsync3(rst, clk, hsync, hsync3);
+input rst;
+input clk;
+input hsync;
+output reg hsync3;
+begin
+reg r1,r2,r3;
+
+always_ff @(posedge clk)
+	if (rst)
+		hsync3 <= 1'b0;
+	else begin
+		r1 <= hsync;
+		r2 <= r1;
+		r3 <= r2;
+		hsync3 <= hsync & ~r3;
+	end
+end
+
+endmodule
+
