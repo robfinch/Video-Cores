@@ -143,7 +143,8 @@ parameter GR_WIDTH = 32'd800;
 parameter GR_HEIGHT = 32'd600;
 parameter MDW = 256;
 
-parameter pDevName = "UNKNOWN     ";
+parameter pReverseByteOrder = 1'b0;
+parameter pDevName = "UNKNOWN         ";
 
 parameter CFG_BUS = 6'd0;
 parameter CFG_DEVICE = 5'd3;
@@ -361,6 +362,14 @@ parameter CFG_ROM_FILENAME = "ddbb32_config.mem";
   } wbs_state_e;
   wbs_state_e state;
 
+wb_cmd_request32_t wbs_req_bof;
+always_comb
+begin
+	wbs_req_bof = wbs_req;
+	if (pReverseByteOrder)
+		wbs_req_bof.dat = {wbs_req.dat[7:0],wbs_req.dat[15:8],wbs_req.dat[23:16],wbs_req.dat[31:24]};
+end
+
   //
   // Module body
   //
@@ -393,7 +402,7 @@ uddbb1
 	.irq_i({2'b00,inta_o,empty_irq}),
 	.cs_i(cs_i),
 	.resp_busy_i(),
-	.req_i(wbs_req),
+	.req_i(wbs_req_bof),
 	.resp_o(ddbb_resp),
 	.cs_bar0_o(cs),
 	.cs_bar1_o(),
@@ -415,15 +424,18 @@ uddbb1
 	edge_det ued10 (.rst(rst_i), .clk(wbs_clk_i), .ce(1'b1), .i(rdy3), .pe(rdy3pe), .ne(), .ee());
   always_comb
   begin
-  	if (cfg_acc)
+  	if (cfg_acc) begin
   		wbs_resp = ddbb_resp;
+  		if (pReverseByteOrder)
+  			wbs_resp.dat = {ddbb_resp.dat[7:0],ddbb_resp.dat[15:8],ddbb_resp.dat[23:16],ddbb_resp.dat[31:24]};
+  	end
   	else if (acc) begin
 	  	wbs_resp = {$bits(wb_cmd_response32_t){1'b0}};
 	  	wbs_resp.tid = wbs_req.tid;
 	  	wbs_resp.ack = wbs_req.we ? wr_ack : rdy3pe;
 	  	wbs_resp.rty = 1'b0;
 	  	wbs_resp.err = ~acc32 ? wishbone_pkg::ERR : wishbone_pkg::OKAY;
-	  	wbs_resp.dat = (wbs_req.adr[REG_ADR_HIBIT] ? {dato[7:0],dato[15:8],dato[23:16],dato[31:24]}: dato);
+	  	wbs_resp.dat = (pReverseByteOrder ? {dato[7:0],dato[15:8],dato[23:16],dato[31:24]}: dato);
 	  	wbs_resp.stall = 1'b0;//prog_full;
   	end
   	else
@@ -908,9 +920,7 @@ always_ff @(posedge wbs_clk_i)
       .wr_ack(wr_ack),
       .wr_data_count(instruction_fifo_count),
       .wr_rst_busy(wr_rst_busy),
-      .din({REG_ADR,
-      	wbs_req.adr[REG_ADR_HIBIT] ? {wbs_req.dat[7:0],wbs_req.dat[15:8],wbs_req.dat[23:16],wbs_req.dat[31:24]} :
-      	wbs_req.dat}),
+      .din({REG_ADR,wbs_req_bof.dat}),
       .injectdbiterr(1'b0),
       .injectsbiterr(1'b0),
       .rd_clk(clk_i),

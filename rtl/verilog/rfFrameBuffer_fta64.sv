@@ -100,7 +100,9 @@ parameter BUSWID = 64;
 parameter INTERNAL_SYNCGEN = 1'b1;
 parameter CORENO = 6'd62;
 parameter CHANNEL = 3'd1;
+parameter pReverseByteOrder = 1'b0;
 
+parameter pDevName = "FRAMEBUF        ";
 //parameter FBC_ADDR = 32'hFED70001;
 parameter FBC_ADDR = 32'hFD200001;
 parameter FBC_ADDR_MASK = 32'hFFFF0000;
@@ -498,8 +500,6 @@ fta_cmd_response32_t cfg_resp;
 `endif
 reg [5:0] max_nburst;
 reg [7:0] burst_len;
-reg big_endian;
-wire be1;
 
 always_ff @(posedge s_clk_i)
 	reqd <= s_req_i;
@@ -510,7 +510,7 @@ always_ff @(posedge s_clk_i)
 always_ff @(posedge s_clk_i)
 	adri <= s_req_i.adr;
 always_ff @(posedge s_clk_i)
-	if (s_req_i.adr[15])
+	if (pReverseByteOrder)
 		dat <= (BUSWID==32) ? {2{s_req_i.dat[7:0],s_req_i.dat[15:8],s_req_i.dat[23:16],s_req_i.dat[31:24]}} :
 			{s_req_i.dat[ 7: 0],s_req_i.dat[15: 8],s_req_i.dat[23:16],s_req_i.dat[31:24],
 			 s_req_i.dat[39:32],s_req_i.dat[47:40],s_req_i.dat[55:48],s_req_i.dat[63:56]};
@@ -523,8 +523,6 @@ always_comb
 	cs_map = cs_fbc && adri[14]==1'd1;
 always_comb
 	cs_reg = cs_fbc && adri[14]==1'd0;
-always_comb
-	big_endian = adri[15];
 
 always_ff @(posedge s_clk_i)
 if (rst_i)
@@ -541,7 +539,7 @@ else begin
 		s_resp_o.rty <= 1'b0;
 		s_resp_o.pri <= 4'd7;
 		s_resp_o.adr <= s_resp1.adr;
-		if (be1)
+		if (pReverseByteOrder)
 			s_resp_o.dat <= (BUSWID==32) ? (s_resp1.adr[2] ? 
 				 {s_dat_o[39:32],s_dat_o[47:40],s_dat_o[55:48],s_dat_o[63:56]} :
 				 {s_dat_o[ 7: 0],s_dat_o[15: 8],s_dat_o[23:16],s_dat_o[31:24]}) :
@@ -556,7 +554,6 @@ vtdl #(.WID(1), .DEP(16)) urdyd1 (.clk(s_clk_i), .ce(1'b1), .a(4'd1), .d(cs_map)
 vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(s_clk_i), .ce(1'b1), .a(4'd0), .d((cs_map|cs_edge|cs_config) & ~we), .q(s_resp1.ack));
 vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(s_clk_i), .ce(1'b1), .a(4'd1), .d(s_req_i.tid), .q(s_resp1.tid));
 vtdl #(.WID(32), .DEP(16)) urdyd5 (.clk(s_clk_i), .ce(1'b1), .a(4'd1), .d(s_req_i.adr), .q(s_resp1.adr));
-vtdl #(.WID(1), .DEP(16)) urdyd6 (.clk(s_clk_i), .ce(1'b1), .a(4'd0), .d(big_endian), .q(be1));
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -636,6 +633,7 @@ wire [BUSWID-1:0] cfg_out;
 generate begin : gConfigSpace
 	if (BUSWID==32) begin
 		ddbb32_config #(
+			.pDevName(pDevName),
 			.CFG_BUS(CFG_BUS),
 			.CFG_DEVICE(CFG_DEVICE),
 			.CFG_FUNC(CFG_FUNC),
@@ -670,6 +668,7 @@ generate begin : gConfigSpace
 	end
 	else if (BUSWID==64) begin
 		ddbb64_config #(
+			.pDevName(pDevName),
 			.CFG_BUS(CFG_BUS),
 			.CFG_DEVICE(CFG_DEVICE),
 			.CFG_FUNC(CFG_FUNC),
@@ -1381,8 +1380,8 @@ else if (cs_edge && we && adri[13:3]==REG_COLOR)
 reg lef;	// load even fifo
 reg lof;	// load odd fifo
 reg bhsync1, bhsync2;
+wire pe_hsync3;
 
-/*
 edge_det edh1
 (
 	.rst(rst_i),
@@ -1393,14 +1392,16 @@ edge_det edh1
 	.ne(),
 	.ee()
 );
-*/
+
+/*
 modHsync3 uh31
 (
 	.rst(rst_i),
 	.clk(vclk),
 	.hsync(hsync_o),
-	.hsync3(pe_hsync)
+	.hsync3(pe_hsync3)
 );
+*/
 
 // synchronize to bus clock domain.
 always_ff @(posedge m_bus_o.clk)

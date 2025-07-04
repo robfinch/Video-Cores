@@ -37,8 +37,8 @@ parameter fifo_depth     = 11;
 
 parameter REG_ADR_HIBIT = 8;
 parameter MDW = 256;
-
-parameter pDevName = "GFXACCEL    ";
+parameter pReverseByteOrder = 1'b0;
+parameter pDevName = "GFXACCEL        ";
 
 parameter CFG_BUS = 6'd0;
 parameter CFG_DEVICE = 5'd3;
@@ -208,6 +208,7 @@ wire [15:0] color_comp;
 
 // Slave wishbone interface. Reads wishbone bus and fills registers
 gfx_wbs #(
+	.pReverseByteOrder(pReverseByteOrder),
 	.pDevName(pDevName),
 	
 	.CFG_BUS(CFG_BUS),
