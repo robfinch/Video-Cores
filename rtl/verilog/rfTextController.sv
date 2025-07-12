@@ -132,6 +132,7 @@ parameter TEXT_CELL_COUNT = 32768;
 parameter SCREEN_FORMAT = 1;		// 32-bit character cells
 parameter SVGA800x600 = 1;
 parameter XGA1024x768 = 0;
+parameter pReverseByteOrder = 1'b0;
 
 parameter pDevName = "TEXTVIDEO       ";
 parameter RAM_ADDR = 32'hFD000001;
@@ -261,9 +262,13 @@ reg [63:0] cfg_dat [0:31];
 reg [63:0] cfg_out;
 
 function [63:0] fnRbo;
-input n;
 input [63:0] i;
-	fnRbo = n ? {i[7:0],i[15:8],i[23:16],i[31:24],i[39:32],i[47:40],i[55:48],i[63:56]} : i;
+	fnRbo = {i[7:0],i[15:8],i[23:16],i[31:24],i[39:32],i[47:40],i[55:48],i[63:56]};
+endfunction
+
+function [31:0] fnRbo32;
+input [31:0] i;
+	fnRbo32 = {i[7:0],i[15:8],i[23:16],i[31:24]};
 endfunction
 
 //--------------------------------------------------------------------
@@ -287,6 +292,15 @@ reg [31:0] tc_ram_addr;
 reg [31:0] tc_cbm_addr;
 reg [31:0] tc_reg_addr;
 reg [63:0] dato;
+reg [63:0] dati;
+
+always_comb
+	if (BUSWID==64) begin
+		dati = dat_i;
+	end
+	else begin
+		dati = (BUSWID==32) ? {2{dat_i}} : {4{dat_i}};
+	end
 
 always_ff @(posedge clk_i)
 	cs_config <= cyc_i & stb_i & cs_config_i && adr_i[27:22]==CFG_BUS && adr_i[21:17]==CFG_DEVICE && adr_i[16:14]==CFG_FUNC;
@@ -319,12 +333,7 @@ always_ff @(posedge clk_i)
 always_ff @(posedge clk_i)
 	radr_i <= adr_i;
 always_ff @(posedge clk_i)
-	if (BUSWID==64) begin
-		rdat_i <= dat_i;
-	end
-	else begin
-		rdat_i <= (BUSWID==32) ? {2{dat_i}} : {4{dat_i}};
-	end
+	rdat_i <= pReverseByteOrder ? fnRbo(dati) : dati;
 
 // Register outputs
 always_ff @(posedge clk_i)
@@ -356,12 +365,10 @@ else
 	dato <= 32'd0;
 
 always_comb
-if (BUSWID==64) begin
-	dat_o = dato;
-end
-else begin
-	dat_o = dato;
-end
+if (BUSWID==64)
+	dat_o = pReverseByteOrder ? fnRbo(dato) : dato;
+else
+	dat_o = pReverseByteOrder ? fnRbo32(dato) : dato;
 
 //always @(posedge clk_i)
 //	if (cs_text) begin

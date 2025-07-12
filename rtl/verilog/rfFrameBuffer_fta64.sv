@@ -433,7 +433,7 @@ end
 always_comb
 begin
 	s_bus_i.resp.tid = s_resp_o.tid;
-	s_bus_i.resp.adr = s_resp_o.adr;
+//	s_bus_i.resp.adr = s_resp_o.adr;
 	s_bus_i.resp.dat = s_resp_o.dat;
 	s_bus_i.resp.ack = s_resp_o.ack;
 	s_bus_i.resp.stall = s_resp_o.stall;
@@ -524,6 +524,7 @@ always_comb
 always_comb
 	cs_reg = cs_fbc && adri[14]==1'd0;
 
+wire [31:0] s_resp1_adr;
 always_ff @(posedge s_clk_i)
 if (rst_i)
 	s_resp_o <= {$bits(fta_cmd_response64_t){1'b0}};
@@ -538,22 +539,22 @@ else begin
 		s_resp_o.err <= fta_bus_pkg::OKAY;
 		s_resp_o.rty <= 1'b0;
 		s_resp_o.pri <= 4'd7;
-		s_resp_o.adr <= s_resp1.adr;
+//		s_resp_o.adr <= s_resp1.adr;
 		if (pReverseByteOrder)
-			s_resp_o.dat <= (BUSWID==32) ? (s_resp1.adr[2] ? 
+			s_resp_o.dat <= (BUSWID==32) ? (s_resp1_adr[2] ? 
 				 {s_dat_o[39:32],s_dat_o[47:40],s_dat_o[55:48],s_dat_o[63:56]} :
 				 {s_dat_o[ 7: 0],s_dat_o[15: 8],s_dat_o[23:16],s_dat_o[31:24]}) :
 				 {s_dat_o[ 7: 0],s_dat_o[15: 8],s_dat_o[23:16],s_dat_o[31:24],
 				  s_dat_o[39:32],s_dat_o[47:40],s_dat_o[55:48],s_dat_o[63:56]};
 		else
-			s_resp_o.dat <= (BUSWID==32) ? (s_resp1.adr[2] ? s_dat_o[63:32] : s_dat_o[31:0]) : s_dat_o;
+			s_resp_o.dat <= (BUSWID==32) ? (s_resp1_adr[2] ? s_dat_o[63:32] : s_dat_o[31:0]) : s_dat_o;
 	end
 end
 
 vtdl #(.WID(1), .DEP(16)) urdyd1 (.clk(s_clk_i), .ce(1'b1), .a(4'd1), .d(cs_map), .q(latch_map));
 vtdl #(.WID(1), .DEP(16)) urdyd2 (.clk(s_clk_i), .ce(1'b1), .a(4'd0), .d((cs_map|cs_edge|cs_config) & ~we), .q(s_resp1.ack));
 vtdl #(.WID($bits(fta_tranid_t)), .DEP(16)) urdyd4 (.clk(s_clk_i), .ce(1'b1), .a(4'd1), .d(s_req_i.tid), .q(s_resp1.tid));
-vtdl #(.WID(32), .DEP(16)) urdyd5 (.clk(s_clk_i), .ce(1'b1), .a(4'd1), .d(s_req_i.adr), .q(s_resp1.adr));
+vtdl #(.WID(32), .DEP(16)) urdyd5 (.clk(s_clk_i), .ce(1'b1), .a(4'd1), .d(s_req_i.adr), .q(s_resp1_adr));
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -1466,7 +1467,7 @@ wire vFetch = !vblank;//pixelRow < windowHeight;
 reg fifo_rrst;
 reg fifo_wrst;
 reg [3:0] wrstcnt;
-always_comb fifo_rrst = pe_hsync;	// pixelCol==16'hFFF0;
+always_comb fifo_rrst = hsync_o;	// pixelCol==16'hFFF0;
 
 always_ff @(posedge m_bus_o.clk)
 if (m_bus_o.rst)
@@ -2365,10 +2366,11 @@ input rst;
 input clk;
 input hsync;
 output reg hsync3;
-begin
+
 reg r1,r2,r3;
 
 always_ff @(posedge clk)
+begin
 	if (rst)
 		hsync3 <= 1'b0;
 	else begin
